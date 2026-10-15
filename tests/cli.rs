@@ -440,7 +440,9 @@ fn app_deploy_end_to_end() {
         .stdout(contains("Deploying myapp-staging to dev"))
         .stdout(contains("services.ingress[docs]: skipped (optional and no domains given)"))
         .stdout(contains("uploaded 2 files"))
-        .stdout(contains("myapp-staging is deployed"));
+        .stdout(contains("myapp-staging: deployed ("))
+        .stdout(contains("database  system-data      postgres16: database myapp_staging_system_data, user myapp_staging_system_data"))
+        .stdout(contains("ingress   ui-front         caddy-main: staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000"));
 
     // Sources: no .git and no config files (the overlay holds secrets).
     let instance = server.server_home.join("apps/myapp/staging");
@@ -507,5 +509,125 @@ fn app_deploy_rejects_domain_used_by_another_instance() {
         .run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-other.yaml"], &running)
         .code(3)
         .stderr(contains("domain `staging.example.com` is already used by myapp/staging (ui-front)"));
+}
+
+/// A server with myapp-staging deployed; returns the server.
+fn server_with_app() -> LocalServer {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/depap.yaml,app/.depap-staging.yaml"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    server.take_docker_log();
+    server
+}
+
+#[test]
+fn app_state_by_name_or_files() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .success()
+        .stdout(contains("myapp-staging: deployed"))
+        .stdout(contains("app  running healthy"))
+        .stdout(contains("database  system-data"));
+    server
+        .run(&["app", "state", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running)
+        .success();
+    // Without the overlay the prefix is `main`, which is not deployed.
+    server
+        .run(&["app", "state", "-f", "app/depap.yaml"], &running)
+        .code(3)
+        .stderr(contains("myapp-main is not deployed"));
+}
+
+#[test]
+fn app_remove_keeps_database_unless_purged() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let site = server
+        .server_home
+        .join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy");
+    let db_record = server
+        .server_home
+        .join("connectors/database/postgres16/myapp-staging-system-data.yaml");
+    assert!(site.exists() && db_record.exists());
+
+    // Without a terminal and without --yes, nothing happens.
+    server
+        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+
+    server
+        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "ingress", "--yes"], &running)
+        .code(2)
+        .stderr(contains("ingress links have no data to purge"));
+    server
+        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "queue", "--yes"], &running)
+        .code(2)
+        .stderr(contains("unknown kind"));
+
+    server
+        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--yes"], &running)
+        .success()
+        .stdout(contains("Removed myapp-staging."));
+    let log = server.take_docker_log();
+    let position = |needle: &str| log.find(needle).unwrap_or_else(|| panic!("{needle:?} not in\n{log}"));
+    assert!(position("caddy reload") < position("down --remove-orphans"), "{log}");
+    assert!(!log.contains("DROP"), "database is kept: {log}");
+    assert!(!site.exists() && !db_record.exists());
+    assert!(!server.server_home.join("apps/myapp").exists());
+    assert!(!server.read_server_file("state.yaml").contains("myapp"));
+
+    server
+        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .code(3);
+}
+
+#[test]
+fn app_remove_purge_database() {
+    let server = server_with_app();
+    server
+        .run(
+            &["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "database", "--yes", "--volumes"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("link database system-data to postgres16, and delete its data"));
+    let log = server.take_docker_log();
+    assert!(log.contains("DROP DATABASE IF EXISTS \"myapp_staging_system_data\" WITH (FORCE);"), "{log}");
+    assert!(log.contains("DROP ROLE IF EXISTS \"myapp_staging_system_data\";"), "{log}");
+    assert!(log.contains("down --remove-orphans -v"), "{log}");
+}
+
+#[test]
+fn app_state_reports_stopped_service_as_unhealthy() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: ., restart: unless-stopped}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["app", "deploy", "--apply", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running)
+        .success();
+
+    // The fake reports one container `app`; make it the long-running service.
+    let fake = server.env.work.path().join("bin/docker");
+    let script = fs::read_to_string(&fake).unwrap().replace("app running 0 healthy", "front-webapp exited 0");
+    fs::write(&fake, script).unwrap();
+    server
+        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .code(4)
+        .stdout(contains("front-webapp  exited 0 (stopped)  ← not healthy"));
 }
 

@@ -1,17 +1,16 @@
 //! `depap app deploy` (spec §10.8).
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
 use serde_yaml_ng::Value;
 
 use super::contribution::Contribution;
+use super::instance::{self, Instance, PinnedLink, PinnedLinks};
 use super::sources;
 use crate::config::app::{LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
-use crate::connector::{Connector, shell_quote};
+use crate::connector::Connector;
 use crate::error::DepapError;
 use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
@@ -19,8 +18,6 @@ use crate::server::state::{self, Report, Status};
 use crate::server::state_file::{DeployStatus, StateFile};
 use crate::server::SERVER_CONFIG_FILE;
 use crate::shared::{self, AppCtx, Kind, Resolution, ServerCtx, SharedAppConfig};
-
-const OVERRIDE_FILE: &str = "compose/depap.override.yaml";
 
 pub struct Options {
     pub apply: bool,
@@ -41,17 +38,6 @@ impl Link<'_> {
     fn path(&self) -> String {
         format!("services.{}[{}]", self.kind.name(), self.name)
     }
-}
-
-/// `depap-env.yaml`: which shared apps this instance uses.
-#[derive(Serialize)]
-struct PinnedLink<'a> {
-    kind: &'a str,
-    entry: &'a str,
-    instance: &'a str,
-    #[serde(rename = "type")]
-    type_name: &'a str,
-    version: Option<u32>,
 }
 
 pub fn deploy(
@@ -86,10 +72,10 @@ pub fn deploy(
     let links = resolve_links(&ctx, loaded, &report, &state_file)?;
     let files = sources::collect(&loaded.base_dir, &app.deployment, config_files)?;
 
-    let instance = app.instance();
+    let project = app.instance();
     if options.dry_run {
         println!("Dry run: nothing is changed on the server.");
-        println!("  instance {instance}: {} files to upload", files.len());
+        println!("  instance {project}: {} files to upload", files.len());
         for link in &links {
             println!("  {}: uses {} {}", link.path(), link.shared.type_name, link.shared.name);
         }
@@ -98,7 +84,7 @@ pub fn deploy(
 
     // 2. Upload and render.
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
-    let dir = format!("apps/{}/{}", app.name, app.prefix);
+    let dir = instance::dir(&app.name, &app.prefix);
     let archive = sources::pack(&loaded.base_dir, &files)?;
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;
     println!("  uploaded {} files", files.len());
@@ -118,44 +104,44 @@ pub fn deploy(
             .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
     }
     let override_yaml = contribution.override_yaml(&loaded.compose)?;
-    connector.write_file(&ctx.path(&format!("{dir}/{OVERRIDE_FILE}")), override_yaml.as_bytes(), 0o600)?;
-    let effective = serde_yaml_ng::to_string(&app.without_secrets()?)?;
-    connector.write_file(&ctx.path(&format!("{dir}/depap.yaml")), effective.as_bytes(), 0o644)?;
-    let pinned: Vec<PinnedLink> = links
-        .iter()
-        .map(|link| PinnedLink {
-            kind: link.kind.name(),
-            entry: link.name,
-            instance: &link.shared.name,
-            type_name: &link.shared.type_name,
-            version: link.shared.version,
-        })
-        .collect();
-    let pinned = serde_yaml_ng::to_string(&BTreeMap::from([("links", pinned)]))?;
-    connector.write_file(&ctx.path(&format!("{dir}/depap-env.yaml")), pinned.as_bytes(), 0o644)?;
+    let write = |file: &str, text: &str, mode| connector.write_file(&ctx.path(&format!("{dir}/{file}")), text.as_bytes(), mode);
+    write(instance::OVERRIDE_FILE, &override_yaml, 0o600)?;
+    let stored_config = app.without_secrets()?;
+    write(instance::CONFIG_FILE, &serde_yaml_ng::to_string(&stored_config)?, 0o644)?;
+    let pinned = PinnedLinks {
+        links: links
+            .iter()
+            .map(|link| PinnedLink {
+                kind: link.kind.name().to_string(),
+                entry: link.name.to_string(),
+                instance: link.shared.name.clone(),
+                type_name: link.shared.type_name.clone(),
+                version: link.shared.version,
+            })
+            .collect(),
+    };
+    write(instance::LINKS_FILE, &serde_yaml_ng::to_string(&pinned)?, 0o644)?;
 
     state_file.set_app(&app.name, &app.prefix, DeployStatus::Candidate);
     state_file.save(&ctx)?;
     if !options.apply {
-        println!("Files are on the server. Run again with --apply to start {instance}.");
+        println!("Files are on the server. Run again with --apply to start {project}.");
         return Ok(());
     }
 
     // 3. Apply. On failure the instance is marked `failed`.
-    match apply(&ctx, loaded, &links, &dir) {
-        Ok(services) => {
+    match apply(&ctx, loaded, &links) {
+        Ok(()) => {
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
-            println!("{instance} is deployed:");
-            for line in services.lines() {
-                println!("  {line}");
-            }
+            println!();
+            super::state::print(&ctx, &Instance { app: stored_config, links: pinned.links })?;
             Ok(())
         }
         Err(err) => {
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Failed);
             state_file.save(&ctx)?;
-            Err(not_ready(&format!("{instance} failed: {err:#}")))
+            Err(not_ready(&format!("{project} failed: {err:#}")))
         }
     }
 }
@@ -208,8 +194,8 @@ fn resolve_links<'a>(
     Ok(links)
 }
 
-/// Run hooks and docker compose; returns the final `docker compose ps` output.
-fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link], dir: &str) -> Result<String> {
+/// Run hooks and docker compose.
+fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
     let app = &loaded.config;
     for link in links {
         let link_ctx = AppCtx { server: ctx, app, shared: &link.shared };
@@ -219,12 +205,7 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link], dir: &str) -> Resu
     }
 
     let project = app.instance();
-    let compose = format!(
-        "cd {} && docker compose -p {} --project-directory sources -f {} -f {OVERRIDE_FILE}",
-        shell_quote(&ctx.path(dir)),
-        shell_quote(&project),
-        shell_quote(&format!("sources/{}", app.deployment.compose_file)),
-    );
+    let compose = instance::compose_command(ctx, app);
     if app.deployment.build {
         println!("  building images ...");
         ctx.connector.exec(&format!("{compose} build -q"))?;
@@ -233,7 +214,7 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link], dir: &str) -> Resu
     }
     println!("  starting {project} ...");
     ctx.connector.exec(&format!("{compose} up -d --remove-orphans"))?;
-    let services = wait_until_ready(ctx.connector, &project)?;
+    wait_until_ready(ctx.connector, &project)?;
 
     for link in links {
         let link_ctx = AppCtx { server: ctx, app, shared: &link.shared };
@@ -241,7 +222,7 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link], dir: &str) -> Resu
             .after_apply_application(&link_ctx, link.entry)
             .with_context(|| link.path())?;
     }
-    Ok(services)
+    Ok(())
 }
 
 fn not_ready(message: &str) -> anyhow::Error {

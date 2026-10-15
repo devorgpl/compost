@@ -8,7 +8,7 @@ use serde_yaml_ng::Value;
 
 use super::{AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link};
 use crate::config::app::AppConfig;
-use base::{DatabaseLink, Endpoint};
+use base::{DatabaseLink, DatabaseRecord, Endpoint};
 
 pub const KIND: &str = "database";
 
@@ -40,12 +40,25 @@ pub trait DatabaseType: Sync {
         Ok(())
     }
 
+    /// Delete the link record; with `purge`, drop the database and user first.
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
+        if purge {
+            if let Some(record) = base::read_record(ctx, entry)? {
+                self.drop_database(ctx, &record)?;
+            }
+        }
+        base::remove_application(ctx, entry)
+    }
+
     // Type-specific, no default.
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
 
     /// Create the database and its user, before the app starts.
     fn before_apply_application(&self, ctx: &AppCtx, link: &DatabaseLink) -> Result<()>;
+
+    /// Delete the database and user of a link (`app remove --purge database`).
+    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord) -> Result<()>;
 }
 
 static TYPES: &[&dyn DatabaseType] = &[&postgres::Postgres];
@@ -98,6 +111,18 @@ impl Kind for DatabaseKind {
 
     fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
         find_type(&ctx.shared.type_name)?.after_apply_application(ctx, &parse_link(link)?)
+    }
+
+    fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String> {
+        base::describe_link(ctx, entry)
+    }
+
+    fn supports_purge(&self) -> bool {
+        true
+    }
+
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.remove_application(ctx, entry, purge)
     }
 }
 

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::KIND;
 use crate::config::app::AppConfig;
 use crate::config::check_name;
+use crate::connector::shell_quote;
 use crate::shared::{AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir};
 
 /// Docker network shared by the ingress and every app service it routes to.
@@ -175,6 +176,34 @@ pub fn prepare_application(ctx: &AppCtx, link: &IngressLink, out: &mut Contribut
 fn record_path(ctx: &AppCtx, entry: &str) -> String {
     let dir = connectors_dir(KIND, &ctx.shared.name);
     ctx.server.path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
+}
+
+pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<IngressRecord>> {
+    let path = record_path(ctx, entry);
+    match ctx.server.connector.read_file(&path)? {
+        None => Ok(None),
+        Some(text) => Ok(Some(serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?)),
+    }
+}
+
+/// e.g. `staging.example.com  /ui → myapp-staging-front-webapp:8080`
+pub fn describe_link(ctx: &AppCtx, entry: &str) -> Result<String> {
+    let Some(record) = read_record(ctx, entry)? else {
+        return Ok("no link record".to_string());
+    };
+    let routes: Vec<String> = record
+        .routes
+        .iter()
+        .map(|r| format!("{} → {}", r.path, r.upstream))
+        .collect();
+    Ok(format!("{}  {}", record.domains.join(", "), routes.join(", ")))
+}
+
+/// Delete the link record.
+pub fn remove_application(ctx: &AppCtx, entry: &str) -> Result<()> {
+    let path = shell_quote(&record_path(ctx, entry));
+    ctx.server.connector.exec(&format!("rm -f -- {path}"))?;
+    Ok(())
 }
 
 /// A domain may be served by only one link.

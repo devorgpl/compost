@@ -11,7 +11,7 @@ use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared::{self, SharedAppConfig};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Shared apps grouped by kind. Core does not know kind names; each key is

@@ -604,7 +604,7 @@ Shared apps missing from the new config are reported as `orphaned` and left runn
    3. Wait up to 60 s until every container is running (healthy, if it has a healthcheck) or has exited with code 0. An exit with another code fails at once.
    4. `after_apply_application` for each link.
    5. Mark `deployed`, or `failed` and exit 3.
-7. Print the services' state. (Until `app state` exists, this is the `docker compose ps` summary.)
+7. Print the same view as `app state`.
 
 Generated `depap.override.yaml` for the API example (§12.4):
 ```yaml
@@ -647,13 +647,13 @@ Reads `name` and `prefix` from the given files (defaults as in deploy), or takes
 - ingress links: domains → path → upstream
 - database links: instance, database, user (never the password)
 
-Exit 0 if all long-running services are running, 4 otherwise. Services that ran once and exited with code 0 (e.g. migrations) count as OK.
+Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it runs (and its healthcheck passes), or when it exited with code 0, like a migration. Exception: a service with `restart: always` or `unless-stopped` is meant to keep running. If it has exited, it was stopped and is not healthy, whatever its exit code. Status is read from the files deploy stored on the server, so the app's repository is not needed.
 
 ### 10.10 `depap app remove [-f … | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
 `--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
 
 1. Validate the `--purge` values. Preflight and lock. Ask for confirmation unless `--yes`. The prompt lists what will be purged.
-2. `remove_application` for each link, in reverse `apply_order` (ingress first, so traffic stops before containers go).
+2. `remove_application` for each link, in reverse `apply_order` (ingress first, so traffic stops before containers go). The hook gets the link's name, not its config: with `--app`/`--prefix` no config files are given, so kinds work from their link records. A link whose shared app is no longer configured is left as it is, with a warning. Postgres purges with `DROP DATABASE … WITH (FORCE)` because the app is still connected at this point (requires postgres 13+).
 3. `C down --remove-orphans` (plus `-v` with `--volumes`).
 4. Delete `apps/<app>/<prefix>/` and the `state.yaml` entry.
 

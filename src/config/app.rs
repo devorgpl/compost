@@ -88,6 +88,15 @@ pub struct ComposeService {
     /// The service lists its own `networks`.
     pub has_networks: bool,
     pub network_mode: Option<String>,
+    pub restart: Option<String>,
+}
+
+impl ComposeService {
+    /// Docker restarts it after it exits, so an exited container was stopped
+    /// on purpose; one-shot jobs (like migrations) do not use these policies.
+    pub fn keeps_running(&self) -> bool {
+        matches!(self.restart.as_deref(), Some("always" | "unless-stopped"))
+    }
 }
 
 /// A validated application with everything loaded from disk.
@@ -216,7 +225,7 @@ pub fn env_value(value: &Value) -> Option<String> {
     }
 }
 
-fn default_prefix() -> String {
+pub fn default_prefix() -> String {
     DEFAULT_PREFIX.to_string()
 }
 
@@ -243,6 +252,7 @@ impl ComposeFile {
                         .get("network_mode")
                         .and_then(Value::as_str)
                         .map(str::to_string),
+                    restart: service.get("restart").and_then(Value::as_str).map(str::to_string),
                 },
             );
         }

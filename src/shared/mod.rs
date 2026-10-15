@@ -172,6 +172,18 @@ pub trait Kind: Sync {
 
     /// After the application's containers started.
     fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()>;
+
+    /// One line about a deployed link, for `app state`.
+    fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String>;
+
+    /// `--purge <kind>` is allowed: the kind holds data of the app.
+    fn supports_purge(&self) -> bool {
+        false
+    }
+
+    /// Undo a link on `app remove`; with `purge`, also delete the app's data.
+    /// Gets the link's name only: the app's config files may not be at hand.
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()>;
 }
 
 /// Parse a link entry into a kind's own struct.

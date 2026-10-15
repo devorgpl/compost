@@ -142,19 +142,11 @@ impl IngressType for Caddy {
         )?;
 
         let connector = ctx.server.connector;
-        let dir = ctx.server.path(&shared_dir(KIND, &ctx.shared.name));
-        let site_path = format!("{dir}/conf/sites/{}.caddy", ctx.link_id(&link.name));
+        let site_path = site_path(ctx, &link.name);
         let previous = connector.read_file(&site_path)?;
         connector.write_file(&site_path, site.as_bytes(), 0o644)?;
 
-        let caddy_command = |command: &str| {
-            format!(
-                "cd {} && docker compose -p {} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile",
-                shell_quote(&dir),
-                shell_quote(&project_name(KIND, &ctx.shared.name))
-            )
-        };
-        if let Err(err) = connector.exec(&caddy_command("validate")) {
+        if let Err(err) = connector.exec(&caddy_command(ctx, "validate")) {
             match previous {
                 Some(previous) => connector.write_file(&site_path, previous.as_bytes(), 0o644)?,
                 None => {
@@ -164,10 +156,36 @@ impl IngressType for Caddy {
             return Err(err.context("Caddy rejected the generated site configuration"));
         }
         connector
-            .exec(&caddy_command("reload"))
+            .exec(&caddy_command(ctx, "reload"))
             .context("Caddy could not reload its configuration")?;
         Ok(())
     }
+
+    /// Extends the generic removal: also delete the site file and reload.
+    fn remove_application(&self, ctx: &AppCtx, entry: &str) -> Result<()> {
+        base::remove_application(ctx, entry)?;
+        let connector = ctx.server.connector;
+        connector.exec(&format!("rm -f -- {}", shell_quote(&site_path(ctx, entry))))?;
+        connector
+            .exec(&caddy_command(ctx, "reload"))
+            .context("Caddy could not reload its configuration")?;
+        Ok(())
+    }
+}
+
+/// `conf/sites/<instance>-<entry>.caddy` in the Caddy folder.
+fn site_path(ctx: &AppCtx, entry: &str) -> String {
+    let dir = shared_dir(KIND, &ctx.shared.name);
+    ctx.server.path(&format!("{dir}/conf/sites/{}.caddy", ctx.link_id(entry)))
+}
+
+/// Run `caddy <command>` on the main Caddyfile inside the running container.
+fn caddy_command(ctx: &AppCtx, command: &str) -> String {
+    format!(
+        "cd {} && docker compose -p {} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile",
+        shell_quote(&ctx.server.path(&shared_dir(KIND, &ctx.shared.name))),
+        shell_quote(&project_name(KIND, &ctx.shared.name))
+    )
 }
 
 #[cfg(test)]

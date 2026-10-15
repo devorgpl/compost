@@ -4,7 +4,7 @@ use anyhow::{Result, bail, ensure};
 use minijinja::context;
 use serde::Deserialize;
 
-use super::base::{self, DatabaseLink, Endpoint};
+use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint};
 use super::{DatabaseType, KIND};
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
@@ -50,22 +50,20 @@ impl DatabaseType for Postgres {
     fn before_apply_application(&self, ctx: &AppCtx, link: &DatabaseLink) -> Result<()> {
         let credentials = base::credentials(ctx, link)?;
         let sql = provisioning_sql(&credentials.name, &credentials.user, &credentials.password);
-        let dir = ctx.server.path(&shared_dir(KIND, &ctx.shared.name));
-        let script = format!(
-            "cd {} && docker compose -p {} exec -T postgres psql -U postgres -d postgres -q -v ON_ERROR_STOP=1",
-            shell_quote(&dir),
-            shell_quote(&project_name(KIND, &ctx.shared.name))
+        run_sql(ctx, &sql).map_err(|e| e.context(format!("creating database `{}` failed", credentials.name)))
+    }
+
+    /// `WITH (FORCE)` disconnects the app, which is still running (postgres 13+).
+    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord) -> Result<()> {
+        ensure!(
+            is_identifier(&record.db_name) && is_identifier(&record.db_user),
+            "unexpected names in the link record"
         );
-        // The SQL holds the password, so it goes through stdin.
-        let output = ctx.server.connector.run(&script, Some(sql.as_bytes()))?;
-        if !output.success() {
-            bail!(
-                "creating database `{}` failed: {}",
-                credentials.name,
-                output.stderr.trim()
-            );
-        }
-        Ok(())
+        let sql = format!(
+            "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\nDROP ROLE IF EXISTS \"{}\";\n",
+            record.db_name, record.db_user
+        );
+        run_sql(ctx, &sql).map_err(|e| e.context(format!("dropping database `{}` failed", record.db_name)))
     }
 
     /// Extends the generic database validation with Postgres' own settings.
@@ -141,6 +139,22 @@ impl DatabaseType for Postgres {
             networks: Vec::new(),
         })
     }
+}
+
+/// Run SQL as the superuser inside the postgres container. SQL can hold
+/// passwords, so it goes through stdin, never on the command line.
+fn run_sql(ctx: &AppCtx, sql: &str) -> Result<()> {
+    let dir = ctx.server.path(&shared_dir(KIND, &ctx.shared.name));
+    let script = format!(
+        "cd {} && docker compose -p {} exec -T postgres psql -U postgres -d postgres -q -v ON_ERROR_STOP=1",
+        shell_quote(&dir),
+        shell_quote(&project_name(KIND, &ctx.shared.name))
+    );
+    let output = ctx.server.connector.run(&script, Some(sql.as_bytes()))?;
+    if !output.success() {
+        bail!("{}", output.stderr.trim());
+    }
+    Ok(())
 }
 
 /// `^[a-z_][a-z0-9_]{0,62}$`: safe to use unquoted and inside double quotes.

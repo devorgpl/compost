@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::KIND;
 use crate::config::app::AppConfig;
+use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir, generate_password,
 };
@@ -161,7 +162,7 @@ fn record_path(ctx: &AppCtx, entry: &str) -> String {
     ctx.server.path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
 }
 
-fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<DatabaseRecord>> {
+pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<DatabaseRecord>> {
     let path = record_path(ctx, entry);
     match ctx.server.connector.read_file(&path)? {
         None => Ok(None),
@@ -169,6 +170,21 @@ fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<DatabaseRecord>> {
             serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?,
         )),
     }
+}
+
+/// e.g. `database mystagingappdb, user myappuser` (never the password).
+pub fn describe_link(ctx: &AppCtx, entry: &str) -> Result<String> {
+    Ok(match read_record(ctx, entry)? {
+        Some(record) => format!("database {}, user {}", record.db_name, record.db_user),
+        None => "no link record".to_string(),
+    })
+}
+
+/// Delete the link record. The database itself stays unless purged.
+pub fn remove_application(ctx: &AppCtx, entry: &str) -> Result<()> {
+    let path = shell_quote(&record_path(ctx, entry));
+    ctx.server.connector.exec(&format!("rm -f -- {path}"))?;
+    Ok(())
 }
 
 /// Join the database network, set the mapped variables, write the link record.

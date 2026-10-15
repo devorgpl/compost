@@ -33,6 +33,10 @@ pub trait IngressType: Sync {
         Ok(())
     }
 
+    fn remove_application(&self, ctx: &AppCtx, entry: &str) -> Result<()> {
+        base::remove_application(ctx, entry)
+    }
+
     // Type-specific, no default.
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
@@ -95,6 +99,15 @@ impl Kind for IngressKind {
 
     fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
         find_type(&ctx.shared.type_name)?.after_apply_application(ctx, &parse_link(link)?)
+    }
+
+    fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String> {
+        base::describe_link(ctx, entry)
+    }
+
+    /// Routing has no data to purge; `--purge ingress` is rejected before this runs.
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, _purge: bool) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.remove_application(ctx, entry)
     }
 }
 

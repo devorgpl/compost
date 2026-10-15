@@ -1,5 +1,6 @@
 //! `state.yaml`: what depap deployed on the server (spec §8.2). Only depap writes it.
 
+use std::fmt;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -53,6 +54,16 @@ pub enum DeployStatus {
     Failed,
 }
 
+impl fmt::Display for DeployStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            DeployStatus::Candidate => "candidate",
+            DeployStatus::Deployed => "deployed",
+            DeployStatus::Failed => "failed",
+        })
+    }
+}
+
 impl Default for StateFile {
     fn default() -> Self {
         Self {
@@ -98,6 +109,14 @@ impl StateFile {
             Some(existing) => *existing = record,
             None => self.shared.push(record),
         }
+    }
+
+    pub fn app(&self, name: &str, prefix: &str) -> Option<&AppRecord> {
+        self.apps.iter().find(|r| r.name == name && r.prefix == prefix)
+    }
+
+    pub fn remove_app(&mut self, name: &str, prefix: &str) {
+        self.apps.retain(|r| !(r.name == name && r.prefix == prefix));
     }
 
     /// Add or update the record of an application instance.
