@@ -11,7 +11,6 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::local::DepapHome;
-use crate::error::DepapError;
 
 #[derive(Debug, Parser)]
 #[command(name = "depap", version, about = "Manage docker-based server deployments")]
@@ -94,8 +93,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, cli.verbose),
-        Command::Connector(ConnectorCommand::List) => {
-            Err(DepapError::NotImplemented("connector list").into())
-        }
+        Command::Connector(ConnectorCommand::List) => server::connector_list(&home, server, cli.verbose),
     }
 }

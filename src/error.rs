@@ -13,9 +13,6 @@ pub enum DepapError {
     /// The command ran, but the final state check is not healthy.
     #[error("{0}")]
     Unhealthy(String),
-    /// Command exists in the CLI but has no implementation yet.
-    #[error("`{0}` is not implemented yet")]
-    NotImplemented(&'static str),
 }
 
 impl DepapError {
@@ -24,7 +21,6 @@ impl DepapError {
             DepapError::Config(_) => 2,
             DepapError::ServerNotReady(_) => 3,
             DepapError::Unhealthy(_) => 4,
-            DepapError::NotImplemented(_) => 1,
         }
     }
 }

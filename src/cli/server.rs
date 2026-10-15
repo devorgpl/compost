@@ -11,6 +11,7 @@ use crate::config::{check_name, server::ServerConfig};
 use crate::connector;
 use crate::error::{DepapError, config_err};
 use crate::server::deploy::{self, Options};
+use crate::server::links;
 use crate::server::state::{self, Status};
 
 const SERVER_FILE: &str = "depap-server.yaml";
@@ -165,6 +166,14 @@ pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose:
         return state(home, Some(&server.name), verbose);
     }
     Ok(())
+}
+
+/// `depap connector list` (spec §10.11).
+pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, verbose);
+    links::list(connector.as_ref(), server.server_home(), &manager.manager_key)
 }
 
 /// `depap-server.yaml` plus the secrets file when it exists (spec §7).

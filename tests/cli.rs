@@ -631,3 +631,38 @@ fn app_state_reports_stopped_service_as_unhealthy() {
         .stdout(contains("front-webapp  exited 0 (stopped)  ← not healthy"));
 }
 
+#[test]
+fn connector_list_shows_links_per_shared_app() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["connector", "list"], &running)
+        .success()
+        .stdout(contains(
+            "database\n└─ postgres16  postgres 16  running\n   └─ myapp-staging/system-data  database myapp_staging_system_data, user myapp_staging_system_data  app: deployed\n",
+        ))
+        .stdout(contains(
+            "ingress\n└─ caddy-main  caddy -  running\n   └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000  app: deployed\n",
+        ));
+
+    // A record left behind without its instance is shown, not hidden.
+    fs::remove_dir_all(server.server_home.join("apps/myapp/staging")).unwrap();
+    server
+        .run(&["connector", "list"], &running)
+        .success()
+        .stdout(contains("myapp-staging/ui-front  app not deployed (leftover record myapp-staging-ui-front.yaml)"));
+
+    server
+        .run(&["app", "remove", "--app", "other", "--prefix", "x", "--yes"], &running)
+        .code(3);
+}
+
+#[test]
+fn connector_list_on_fresh_server() {
+    let server = LocalServer::new();
+    server
+        .run(&["connector", "list"], &[])
+        .success()
+        .stdout(contains("depap has not deployed anything"));
+}
+

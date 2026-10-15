@@ -658,15 +658,18 @@ Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it ru
 4. Delete `apps/<app>/<prefix>/` and the `state.yaml` entry.
 
 ### 10.11 `depap connector list`
-Tree built from `connectors/` and `state.yaml`:
+Tree built from `connectors/`, the state checks and `state.yaml`. Kinds come from the server config, and links from the link records of each shared app (`root-*` files describe the shared app itself and are skipped). Every link record starts with `app`, `prefix` and `entry`, so core reads records of any kind; the line itself comes from the kind's `describe_link`, the same one `app state` uses.
 ```
-ingress
-└─ caddy-main  caddy 2  running
-   └─ myapp-staging/ui-front  staging.domain.tld  /ui → front-webapp:8080   app: deployed
 database
-└─ postgres16  postgres 16  healthy
-   └─ myapp-staging/system-data  db=mystagingappdb user=myappuser          app: deployed
+└─ postgres16  postgres 16  running
+   ├─ myapp-prod/system-data  database myapp_prod_system_data, user myapp_prod_system_data  app: deployed
+   └─ myapp-staging/system-data  database myapp_staging_system_data, user myapp_staging_system_data  app: deployed
+ingress
+└─ caddy-main  caddy -  running
+   ├─ myapp-prod/ui-front  prod.example.com  /ui → myapp-prod-front-webapp:8080  app: deployed
+   └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080  app: deployed
 ```
+A record whose instance no longer exists is shown as `app not deployed (leftover record …)`, not hidden. On a server depap has not deployed to, it prints a notice and exits 0.
 
 ## 11. Security
 
