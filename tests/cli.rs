@@ -884,6 +884,38 @@ fn connector_list_shows_links_per_shared_app() {
 }
 
 #[test]
+fn app_list_shows_deployed_instances() {
+    let server = LocalServer::new();
+    server
+        .run(&["app", "list"], &[])
+        .success()
+        .stdout(contains("depap has not deployed anything"));
+
+    let server = server_with_app();
+    server
+        .run(&["app", "list"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .success()
+        .stdout(contains("myapp-staging  deployed   running"));
+    server
+        .run(&["app", "list"], &[])
+        .success()
+        .stdout(contains("myapp-staging  deployed   not running"));
+
+    server
+        .run(
+            &[
+                "app", "remove", "--app", "myapp", "--prefix", "staging", "--yes",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    server
+        .run(&["app", "list"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .success()
+        .stdout(contains("No applications deployed."));
+}
+
+#[test]
 fn connector_list_on_fresh_server() {
     let server = LocalServer::new();
     server

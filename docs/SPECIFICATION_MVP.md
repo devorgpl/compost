@@ -21,7 +21,7 @@ Key words MUST, SHOULD and MAY are used as in RFC 2119.
 - Linking user applications to shared applications:
   - ingress link: domains + path routes → app service port
   - database link: database + role creation, connection variables injected into app services
-- Commands: `init`, `server define|list|state|deploy`, `connect`, `disconnect`, `app deploy|state|remove`, `connector list`.
+- Commands: `init`, `server define|list|state|deploy`, `connect`, `disconnect`, `app list|deploy|state|remove`, `connector list`.
 
 ### 1.2 Out of scope (0.1)
 WebUI, API server, satellites, OIDC, S3, logs, metrics, backup/restore, more than one ingress type, ingress/database tags, removing shared applications, rollback, secret encryption at rest, image registries (images are built on the server or pulled from public registries), Windows as a server.
@@ -675,6 +675,14 @@ ingress
    └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080  app: deployed
 ```
 A record whose instance no longer exists is shown as `app not deployed (leftover record …)`, not hidden. On a server depap has not deployed to, it prints a notice and exits 0.
+
+### 10.12 `depap app list`
+One line per application instance in `state.yaml`, sorted by name and prefix: the instance, its deploy status, whether its compose project has a running container, and when the record was last updated.
+```
+myapp-prod     deployed   running      2026-10-14T09:12:03Z
+myapp-staging  candidate  not running  2026-10-15T07:40:51Z
+```
+Instances are listed from `state.yaml` only, so the app's repository is not needed. On a server depap has not deployed to, it prints a notice and exits 0.
 
 ## 11. Security
 

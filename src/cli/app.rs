@@ -1,4 +1,4 @@
-//! `depap app …` commands (spec §10.8–§10.10).
+//! `depap app …` commands (spec §10.8–§10.10, §10.12).
 
 use std::path::PathBuf;
 
@@ -7,7 +7,7 @@ use clap::{Args, Subcommand};
 use serde::Deserialize;
 
 use super::DeployArgs;
-use crate::app::{deploy, remove, state};
+use crate::app::{deploy, list, remove, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{DepapHome, ServerEntry};
 use crate::config::{check_name, merge};
@@ -18,6 +18,8 @@ const APP_FILE: &str = "depap.yaml";
 
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
+    /// List the application instances deployed on the server
+    List,
     /// Deploy the application instance described by the given files
     Deploy(AppDeployArgs),
     /// Show the state of an application instance
@@ -89,6 +91,14 @@ pub fn run(
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     match command {
+        AppCommand::List => {
+            let connector = connector::open(&server, home, verbose)?;
+            list::list(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+            )
+        }
         AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, verbose),
         AppCommand::State(args) => {
             let (name, prefix) = instance_id(&args)?;

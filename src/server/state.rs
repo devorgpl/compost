@@ -135,7 +135,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
     Ok(report)
 }
 
-fn is_project_running(connector: &dyn Connector, project: &str) -> Result<bool> {
+pub fn is_project_running(connector: &dyn Connector, project: &str) -> Result<bool> {
     let label = shell_quote(&format!("label=com.docker.compose.project={project}"));
     let ids = connector.exec(&format!(
         "docker ps -q --filter {label} --filter status=running"
