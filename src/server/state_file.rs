@@ -93,7 +93,9 @@ impl StateFile {
     }
 
     pub fn shared(&self, kind: &str, name: &str) -> Option<&SharedRecord> {
-        self.shared.iter().find(|r| r.kind == kind && r.name == name)
+        self.shared
+            .iter()
+            .find(|r| r.kind == kind && r.name == name)
     }
 
     /// Add or update the record of a shared app.
@@ -105,18 +107,25 @@ impl StateFile {
             config_hash: config_hash.to_string(),
             updated_at: now(),
         };
-        match self.shared.iter_mut().find(|r| r.kind == kind && r.name == name) {
+        match self
+            .shared
+            .iter_mut()
+            .find(|r| r.kind == kind && r.name == name)
+        {
             Some(existing) => *existing = record,
             None => self.shared.push(record),
         }
     }
 
     pub fn app(&self, name: &str, prefix: &str) -> Option<&AppRecord> {
-        self.apps.iter().find(|r| r.name == name && r.prefix == prefix)
+        self.apps
+            .iter()
+            .find(|r| r.name == name && r.prefix == prefix)
     }
 
     pub fn remove_app(&mut self, name: &str, prefix: &str) {
-        self.apps.retain(|r| !(r.name == name && r.prefix == prefix));
+        self.apps
+            .retain(|r| !(r.name == name && r.prefix == prefix));
     }
 
     /// Add or update the record of an application instance.
@@ -127,7 +136,11 @@ impl StateFile {
             status,
             updated_at: now(),
         };
-        match self.apps.iter_mut().find(|r| r.name == name && r.prefix == prefix) {
+        match self
+            .apps
+            .iter_mut()
+            .find(|r| r.name == name && r.prefix == prefix)
+        {
             Some(existing) => *existing = record,
             None => self.apps.push(record),
         }

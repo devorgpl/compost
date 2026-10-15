@@ -27,7 +27,12 @@ impl ContainerStatus {
     fn parse(line: &str) -> Self {
         let mut fields = line.split_whitespace().map(str::to_string);
         let mut next = || fields.next().unwrap_or_default();
-        Self { service: next(), state: next(), exit_code: next(), health: next() }
+        Self {
+            service: next(),
+            state: next(),
+            exit_code: next(),
+            health: next(),
+        }
     }
 
     /// Running (and healthy, if it has a healthcheck), or finished successfully
@@ -89,7 +94,11 @@ pub fn wait_until_ready(connector: &dyn Connector, project: &str) -> Result<Vec<
             return Ok(containers);
         }
         if Instant::now() >= deadline {
-            bail!("not ready after {}s:\n{}", START_TIMEOUT.as_secs(), summary(&containers));
+            bail!(
+                "not ready after {}s:\n{}",
+                START_TIMEOUT.as_secs(),
+                summary(&containers)
+            );
         }
         sleep(POLL_INTERVAL);
     }
@@ -133,6 +142,9 @@ mod tests {
         assert_eq!(describe("web running 0"), "running");
         assert_eq!(describe("migration exited 0"), "exited 0 (finished)");
         assert_eq!(describe("migration exited 2"), "exited 2");
-        assert_eq!(ContainerStatus::parse("web exited 0").describe(true), "exited 0 (stopped)");
+        assert_eq!(
+            ContainerStatus::parse("web exited 0").describe(true),
+            "exited 0 (stopped)"
+        );
     }
 }

@@ -30,14 +30,26 @@ mod tests {
 
     #[test]
     fn accepts_valid_names() {
-        for name in ["a", "prod1", "caddy-main", "x234567890123456789012345678901"] {
+        for name in [
+            "a",
+            "prod1",
+            "caddy-main",
+            "x234567890123456789012345678901",
+        ] {
             assert!(check_name("name", name).is_ok(), "{name}");
         }
     }
 
     #[test]
     fn rejects_invalid_names() {
-        for name in ["", "1abc", "Prod", "my_app", "-a", "x2345678901234567890123456789012"] {
+        for name in [
+            "",
+            "1abc",
+            "Prod",
+            "my_app",
+            "-a",
+            "x2345678901234567890123456789012",
+        ] {
             assert!(check_name("name", name).is_err(), "{name}");
         }
     }

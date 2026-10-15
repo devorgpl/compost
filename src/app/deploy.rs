@@ -12,11 +12,11 @@ use crate::config::app::{LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
 use crate::error::DepapError;
+use crate::server::SERVER_CONFIG_FILE;
 use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
 use crate::server::state::{self, Report, Status};
 use crate::server::state_file::{DeployStatus, StateFile};
-use crate::server::SERVER_CONFIG_FILE;
 use crate::shared::{self, AppCtx, Kind, Resolution, ServerCtx, SharedAppConfig};
 
 pub struct Options {
@@ -66,7 +66,10 @@ pub fn deploy(
     }
     let ctx = ServerCtx {
         connector,
-        home: report.home.clone().context("server home was not resolved")?,
+        home: report
+            .home
+            .clone()
+            .context("server home was not resolved")?,
     };
     let mut state_file = StateFile::load(&ctx)?;
     let links = resolve_links(&ctx, loaded, &report, &state_file)?;
@@ -77,7 +80,12 @@ pub fn deploy(
         out!("Dry run: nothing is changed on the server.");
         out!("  instance {project}: {} files to upload", files.len());
         for link in &links {
-            out!("  {}: uses {} {}", link.path(), link.shared.type_name, link.shared.name);
+            out!(
+                "  {}: uses {} {}",
+                link.path(),
+                link.shared.type_name,
+                link.shared.name
+            );
         }
         return Ok(());
     }
@@ -97,17 +105,27 @@ pub fn deploy(
         }
     }
     for link in &links {
-        let link_ctx = AppCtx { server: &ctx, app, shared: &link.shared };
+        let link_ctx = AppCtx {
+            server: &ctx,
+            app,
+            shared: &link.shared,
+        };
         // Fails on server-side conflicts, e.g. a domain used by another instance.
         link.kind
             .prepare_application(&link_ctx, link.entry, &mut contribution)
             .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
     }
     let override_yaml = contribution.override_yaml(&loaded.compose)?;
-    let write = |file: &str, text: &str, mode| connector.write_file(&ctx.path(&format!("{dir}/{file}")), text.as_bytes(), mode);
+    let write = |file: &str, text: &str, mode| {
+        connector.write_file(&ctx.path(&format!("{dir}/{file}")), text.as_bytes(), mode)
+    };
     write(instance::OVERRIDE_FILE, &override_yaml, 0o600)?;
     let stored_config = app.without_secrets()?;
-    write(instance::CONFIG_FILE, &serde_yaml_ng::to_string(&stored_config)?, 0o644)?;
+    write(
+        instance::CONFIG_FILE,
+        &serde_yaml_ng::to_string(&stored_config)?,
+        0o644,
+    )?;
     let pinned = PinnedLinks {
         links: links
             .iter()
@@ -120,7 +138,11 @@ pub fn deploy(
             })
             .collect(),
     };
-    write(instance::LINKS_FILE, &serde_yaml_ng::to_string(&pinned)?, 0o644)?;
+    write(
+        instance::LINKS_FILE,
+        &serde_yaml_ng::to_string(&pinned)?,
+        0o644,
+    )?;
 
     state_file.set_app(&app.name, &app.prefix, DeployStatus::Candidate);
     state_file.save(&ctx)?;
@@ -135,7 +157,13 @@ pub fn deploy(
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
             out!();
-            super::state::print(&ctx, &Instance { app: stored_config, links: pinned.links })?;
+            super::state::print(
+                &ctx,
+                &Instance {
+                    app: stored_config,
+                    links: pinned.links,
+                },
+            )?;
             Ok(())
         }
         Err(err) => {
@@ -186,7 +214,12 @@ fn resolve_links<'a>(
             .resolve(entry, &available)
             .map_err(|e| not_ready(&format!("{path}: {e:#}")))?;
         match resolution {
-            Resolution::Use(shared) => links.push(Link { kind, name, entry, shared: shared.clone() }),
+            Resolution::Use(shared) => links.push(Link {
+                kind,
+                name,
+                entry,
+                shared: shared.clone(),
+            }),
             Resolution::Skip(reason) => out!("  {path}: skipped ({reason})"),
         }
     }
@@ -198,7 +231,11 @@ fn resolve_links<'a>(
 fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
     let app = &loaded.config;
     for link in links {
-        let link_ctx = AppCtx { server: ctx, app, shared: &link.shared };
+        let link_ctx = AppCtx {
+            server: ctx,
+            app,
+            shared: &link.shared,
+        };
         link.kind
             .before_apply_application(&link_ctx, link.entry)
             .with_context(|| link.path())?;
@@ -210,14 +247,20 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
         out!("  building images ...");
         ctx.connector.exec(&format!("{compose} build -q"))?;
     } else {
-        ctx.connector.exec(&format!("{compose} pull -q --ignore-buildable"))?;
+        ctx.connector
+            .exec(&format!("{compose} pull -q --ignore-buildable"))?;
     }
     out!("  starting {project} ...");
-    ctx.connector.exec(&format!("{compose} up -d --remove-orphans"))?;
+    ctx.connector
+        .exec(&format!("{compose} up -d --remove-orphans"))?;
     wait_until_ready(ctx.connector, &project)?;
 
     for link in links {
-        let link_ctx = AppCtx { server: ctx, app, shared: &link.shared };
+        let link_ctx = AppCtx {
+            server: ctx,
+            app,
+            shared: &link.shared,
+        };
         link.kind
             .after_apply_application(&link_ctx, link.entry)
             .with_context(|| link.path())?;

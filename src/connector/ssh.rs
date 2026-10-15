@@ -34,8 +34,10 @@ pub struct Ssh {
 impl Ssh {
     fn args(&self, script: &str) -> Vec<String> {
         let mut args: Vec<String> = [
-            "-o", "BatchMode=yes",      // never prompt for passwords; fail instead
-            "-o", "ConnectTimeout=10",
+            "-o",
+            "BatchMode=yes", // never prompt for passwords; fail instead
+            "-o",
+            "ConnectTimeout=10",
             "-p",
         ]
         .map(String::from)
@@ -106,11 +108,22 @@ mod tests {
         assert_eq!(
             ssh.args("echo 'hi'"),
             [
-                "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222",
-                "-i", "~/.ssh/id_ed25519",
-                "-o", "ControlMaster=auto", "-o", "ControlPath=/home/u/.depap/ssh/%C",
-                "-o", "ControlPersist=60",
-                "--", "depapuser@10.0.0.1",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-p",
+                "2222",
+                "-i",
+                "~/.ssh/id_ed25519",
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                "ControlPath=/home/u/.depap/ssh/%C",
+                "-o",
+                "ControlPersist=60",
+                "--",
+                "depapuser@10.0.0.1",
                 r"sh -c 'echo '\''hi'\'''",
             ]
         );
@@ -118,7 +131,10 @@ mod tests {
 
     #[test]
     fn no_connection_sharing_for_long_paths() {
-        assert_eq!(control_path(Path::new("/home/u/.depap/ssh")).as_deref(), Some("/home/u/.depap/ssh/%C"));
+        assert_eq!(
+            control_path(Path::new("/home/u/.depap/ssh")).as_deref(),
+            Some("/home/u/.depap/ssh/%C")
+        );
         assert_eq!(control_path(&Path::new("/tmp").join("x".repeat(80))), None);
     }
 }

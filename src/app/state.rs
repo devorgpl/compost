@@ -25,7 +25,11 @@ pub fn state(
     if print(&ctx, &instance)? {
         Ok(())
     } else {
-        Err(DepapError::Unhealthy(format!("{}: some services are not running", instance.app.instance())).into())
+        Err(DepapError::Unhealthy(format!(
+            "{}: some services are not running",
+            instance.app.instance()
+        ))
+        .into())
     }
 }
 
@@ -33,9 +37,10 @@ pub fn state(
 pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     let app = &instance.app;
     let state_file = StateFile::load(ctx)?;
-    let status = state_file
-        .app(&app.name, &app.prefix)
-        .map_or_else(|| "unknown".to_string(), |r| format!("{} ({})", r.status, r.updated_at));
+    let status = state_file.app(&app.name, &app.prefix).map_or_else(
+        || "unknown".to_string(),
+        |r| format!("{} ({})", r.status, r.updated_at),
+    );
     out!("{}: {status}", app.instance());
 
     let containers = compose::ps(ctx.connector, &app.instance())?;
@@ -44,7 +49,11 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         out!("    none running");
     }
     let compose = stored_compose_file(ctx, instance)?;
-    let width = containers.iter().map(|c| c.service.len()).max().unwrap_or(0);
+    let width = containers
+        .iter()
+        .map(|c| c.service.len())
+        .max()
+        .unwrap_or(0);
     let mut healthy = !containers.is_empty();
     for container in &containers {
         let keeps_running = compose
@@ -54,22 +63,38 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         let ok = container.is_healthy(keeps_running);
         healthy &= ok;
         let mark = if ok { "" } else { "  ← not healthy" };
-        out!("    {:<width$}  {}{mark}", container.service, container.describe(keeps_running));
+        out!(
+            "    {:<width$}  {}{mark}",
+            container.service,
+            container.describe(keeps_running)
+        );
     }
 
     if !instance.links.is_empty() {
         out!("  links:");
         let server_config = instance::server_config(ctx)?;
         for link in &instance.links {
-            let summary = match (shared::find_kind(&link.kind), link.shared_app(&server_config)) {
+            let summary = match (
+                shared::find_kind(&link.kind),
+                link.shared_app(&server_config),
+            ) {
                 (Some(kind), Some(shared)) => {
-                    let link_ctx = AppCtx { server: ctx, app, shared: &shared };
+                    let link_ctx = AppCtx {
+                        server: ctx,
+                        app,
+                        shared: &shared,
+                    };
                     kind.describe_link(&link_ctx, &link.entry)
                         .unwrap_or_else(|err| format!("cannot read link: {err:#}"))
                 }
                 _ => "shared app is no longer configured".to_string(),
             };
-            out!("    {:<9} {:<16} {}: {summary}", link.kind, link.entry, link.instance);
+            out!(
+                "    {:<9} {:<16} {}: {summary}",
+                link.kind,
+                link.entry,
+                link.instance
+            );
         }
     }
     Ok(healthy)
@@ -98,9 +123,10 @@ pub fn initialized_server<'a>(
     let report = server_state::check(connector, server_home, manager_key)?;
     match (report.status, report.home) {
         (Status::Ok | Status::Degraded, Some(home)) => Ok(ServerCtx { connector, home }),
-        (Status::Uninitialized, _) => {
-            Err(DepapError::ServerNotReady("depap has not deployed anything on this server".into()).into())
-        }
+        (Status::Uninitialized, _) => Err(DepapError::ServerNotReady(
+            "depap has not deployed anything on this server".into(),
+        )
+        .into()),
         (status, _) => Err(DepapError::ServerNotReady(format!(
             "server is {status}: {}",
             report.detail.unwrap_or_default()

@@ -122,7 +122,11 @@ impl AppConfig {
         let compose_path = base_dir.join(&config.deployment.compose_file);
         let compose = ComposeFile::read(&compose_path)?;
         config.validate(&compose)?;
-        Ok(LoadedApp { config, compose, base_dir })
+        Ok(LoadedApp {
+            config,
+            compose,
+            base_dir,
+        })
     }
 
     /// `<app>-<prefix>`: compose project name and instance ID.
@@ -252,7 +256,10 @@ impl ComposeFile {
                         .get("network_mode")
                         .and_then(Value::as_str)
                         .map(str::to_string),
-                    restart: service.get("restart").and_then(Value::as_str).map(str::to_string),
+                    restart: service
+                        .get("restart")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                 },
             );
         }
@@ -299,7 +306,10 @@ services:
     #[test]
     fn app_service_must_exist_in_compose() {
         let err = error("{name: a, app_services: [{name: web, service: nope}]}");
-        assert!(err.contains("app_services[web]: service `nope` is not in docker-compose.yaml"), "{err}");
+        assert!(
+            err.contains("app_services[web]: service `nope` is not in docker-compose.yaml"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -315,12 +325,16 @@ services:
     #[test]
     fn rejects_unknown_kind_and_unnamed_entries() {
         assert!(error("{name: a, services: {queue: []}}").contains("services.queue: unknown kind"));
-        assert!(error("{name: a, services: {database: [{type: postgres}]}}").contains("needs a `name`"));
+        assert!(
+            error("{name: a, services: {database: [{type: postgres}]}}").contains("needs a `name`")
+        );
     }
 
     #[test]
     fn rejects_non_scalar_environment() {
-        let err = error("{name: a, app_services: [{name: web, service: front-webapp, environment: {X: [1]}}]}");
+        let err = error(
+            "{name: a, app_services: [{name: web, service: front-webapp, environment: {X: [1]}}]}",
+        );
         assert!(err.contains("environment.X"), "{err}");
     }
 }

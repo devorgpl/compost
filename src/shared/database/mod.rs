@@ -6,7 +6,9 @@ mod postgres;
 use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
-use super::{AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link};
+use super::{
+    AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link,
+};
 use crate::config::app::AppConfig;
 use base::{DatabaseLink, DatabaseRecord, Endpoint};
 
@@ -37,7 +39,12 @@ pub trait DatabaseType: Sync {
         base::validate_link(link, app)
     }
 
-    fn prepare_application(&self, ctx: &AppCtx, link: &DatabaseLink, out: &mut Contribution) -> Result<()> {
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &DatabaseLink,
+        out: &mut Contribution,
+    ) -> Result<()> {
         base::prepare_application(ctx, link, &self.endpoint(), out)
     }
 
@@ -108,11 +115,20 @@ impl Kind for DatabaseKind {
         find_type(&link.type_name)?.validate_link(&link, app)
     }
 
-    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
+    fn resolve<'s>(
+        &self,
+        link: &Value,
+        available: &'s [SharedAppConfig],
+    ) -> Result<Resolution<'s>> {
         base::resolve(&parse_link(link)?, available)
     }
 
-    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution) -> Result<()> {
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &Value,
+        out: &mut Contribution,
+    ) -> Result<()> {
         find_type(&ctx.shared.type_name)?.prepare_application(ctx, &parse_link(link)?, out)
     }
 
@@ -142,7 +158,10 @@ fn find_type(name: &str) -> Result<&'static dyn DatabaseType> {
         Some(found) => Ok(found),
         None => {
             let known: Vec<_> = TYPES.iter().map(|t| t.type_name()).collect();
-            bail!("unknown database type `{name}` (known: {})", known.join(", "))
+            bail!(
+                "unknown database type `{name}` (known: {})",
+                known.join(", ")
+            )
         }
     }
 }

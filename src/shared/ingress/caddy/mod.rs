@@ -58,7 +58,10 @@ impl IngressType for Caddy {
         base::validate_config(config)?;
 
         if let Some(version) = config.version {
-            ensure!(version == 2, "only caddy version 2 is supported, got {version}");
+            ensure!(
+                version == 2,
+                "only caddy version 2 is supported, got {version}"
+            );
         }
         let caddy: CaddyConfig = config.configuration()?;
         ensure!(
@@ -67,10 +70,14 @@ impl IngressType for Caddy {
         );
         if let Some(email) = &caddy.acme_email {
             ensure!(
-                email.contains('@') && !email.contains(|c: char| c.is_whitespace() || "{}".contains(c)),
+                email.contains('@')
+                    && !email.contains(|c: char| c.is_whitespace() || "{}".contains(c)),
                 "acme_email `{email}` is not an email address"
             );
-            ensure!(caddy.tls == Tls::Auto, "acme_email is only used with `tls: auto`");
+            ensure!(
+                caddy.tls == Tls::Auto,
+                "acme_email is only used with `tls: auto`"
+            );
         }
         Ok(())
     }
@@ -98,7 +105,10 @@ impl IngressType for Caddy {
         // the caddy binary to bind ports 80 and 443 without root.
         let ids = ctx.connector.exec("id -u && id -g")?;
         let user = ids.split_whitespace().collect::<Vec<_>>().join(":");
-        ensure!(user.split(':').count() == 2, "unexpected output of `id`: {ids}");
+        ensure!(
+            user.split(':').count() == 2,
+            "unexpected output of `id`: {ids}"
+        );
 
         let compose = render_template(
             include_str!("templates/compose.yaml.j2"),
@@ -111,10 +121,8 @@ impl IngressType for Caddy {
                 network => base::NETWORK,
             },
         )?;
-        let caddyfile = render_template(
-            include_str!("templates/Caddyfile.j2"),
-            context! { options },
-        )?;
+        let caddyfile =
+            render_template(include_str!("templates/Caddyfile.j2"), context! { options })?;
 
         let dir = shared_dir(KIND, &config.name);
         Ok(Rendered {
@@ -141,7 +149,11 @@ impl IngressType for Caddy {
             .position(|r| r.path == "/")
             .map(|i| routes.remove(i).upstream);
         let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
-        let addresses: Vec<String> = link.domains.iter().map(|d| format!("{scheme}{d}")).collect();
+        let addresses: Vec<String> = link
+            .domains
+            .iter()
+            .map(|d| format!("{scheme}{d}"))
+            .collect();
         let site = render_template(
             include_str!("templates/site.caddy.j2"),
             context! {
@@ -188,7 +200,8 @@ impl IngressType for Caddy {
 /// `conf/sites/<instance>-<entry>.caddy` in the Caddy folder.
 fn site_path(ctx: &AppCtx, entry: &str) -> String {
     let dir = shared_dir(KIND, &ctx.shared.name);
-    ctx.server.path(&format!("{dir}/conf/sites/{}.caddy", ctx.link_id(entry)))
+    ctx.server
+        .path(&format!("{dir}/conf/sites/{}.caddy", ctx.link_id(entry)))
 }
 
 /// Run `caddy <command>` on the main Caddyfile inside the running container.
@@ -239,12 +252,20 @@ mod tests {
     fn render(text: &str) -> Rendered {
         let config: SharedAppConfig = serde_yaml_ng::from_str(text).unwrap();
         let connector = crate::connector::local::Local { verbose: false };
-        let ctx = ServerCtx { connector: &connector, home: "/nonexistent".into() };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: "/nonexistent".into(),
+        };
         Caddy.render(&ctx, &config).unwrap()
     }
 
     fn file<'a>(rendered: &'a Rendered, suffix: &str) -> &'a str {
-        &rendered.files.iter().find(|f| f.path.ends_with(suffix)).unwrap().contents
+        &rendered
+            .files
+            .iter()
+            .find(|f| f.path.ends_with(suffix))
+            .unwrap()
+            .contents
     }
 
     #[test]
@@ -253,32 +274,49 @@ mod tests {
         let compose = file(&rendered, "compose.yaml");
         assert!(compose.contains("image: caddy:2-alpine"), "{compose}");
         let id = |flag| {
-            let out = std::process::Command::new("id").arg(flag).output().unwrap().stdout;
+            let out = std::process::Command::new("id")
+                .arg(flag)
+                .output()
+                .unwrap()
+                .stdout;
             String::from_utf8(out).unwrap().trim().to_string()
         };
         let user = format!("user: \"{}:{}\"", id("-u"), id("-g"));
-        assert!(compose.contains(&user), "runs as the deploy user: {compose}");
+        assert!(
+            compose.contains(&user),
+            "runs as the deploy user: {compose}"
+        );
         assert!(compose.contains(r#""443:443/udp""#), "{compose}");
         assert!(compose.contains("networks: [depap-ingress]"), "{compose}");
-        assert!(compose.ends_with("external: true\n"), "keeps the final newline: {compose:?}");
+        assert!(
+            compose.ends_with("external: true\n"),
+            "keeps the final newline: {compose:?}"
+        );
 
         let caddyfile = file(&rendered, "conf/Caddyfile");
-        assert!(!caddyfile.contains('{'), "no global options block: {caddyfile}");
+        assert!(
+            !caddyfile.contains('{'),
+            "no global options block: {caddyfile}"
+        );
         assert!(caddyfile.contains("import /etc/caddy/sites/*.caddy"));
         assert_eq!(
             rendered.dirs,
-            ["shared/ingress/caddy-main/data", "shared/ingress/caddy-main/config"]
+            [
+                "shared/ingress/caddy-main/data",
+                "shared/ingress/caddy-main/config"
+            ]
         );
     }
 
     #[test]
     fn renders_tls_options_and_ports() {
-        let rendered = render(
-            "{name: c, type: caddy, configuration: {http_port: 8080, tls: off}}",
-        );
+        let rendered = render("{name: c, type: caddy, configuration: {http_port: 8080, tls: off}}");
         let compose = file(&rendered, "compose.yaml");
         assert!(compose.contains(r#""8080:80""#), "{compose}");
-        assert!(!compose.contains("443"), "https is not published: {compose}");
+        assert!(
+            !compose.contains("443"),
+            "https is not published: {compose}"
+        );
         assert!(file(&rendered, "conf/Caddyfile").contains("{\n\tauto_https off\n}"));
 
         let rendered = render("{name: c, type: caddy, configuration: {acme_email: a@b.c}}");

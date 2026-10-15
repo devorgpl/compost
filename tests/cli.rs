@@ -134,12 +134,19 @@ impl LocalServer {
             server_home.to_str().unwrap(),
         ])
         .success();
-        Self { env, server_home, path }
+        Self {
+            env,
+            server_home,
+            path,
+        }
     }
 
     fn manager_key(&self) -> String {
         let text = fs::read_to_string(self.env.home.path().join("depap-manager.yaml")).unwrap();
-        text.trim().trim_start_matches("manager_key:").trim().to_string()
+        text.trim()
+            .trim_start_matches("manager_key:")
+            .trim()
+            .to_string()
     }
 
     fn write_server_file(&self, name: &str, contents: &str) {
@@ -201,7 +208,9 @@ fn server_deploy_validates_merged_files() {
     server
         .run(&["server", "deploy", "--dry-run"], &[])
         .code(2)
-        .stderr(contains("shared.database[postgres16]: root_password must not be empty"));
+        .stderr(contains(
+            "shared.database[postgres16]: root_password must not be empty",
+        ));
 }
 
 #[test]
@@ -213,7 +222,9 @@ fn server_deploy_dry_run_changes_nothing() {
         .success()
         .stdout(contains("Dry run"))
         .stdout(contains("networks: depap-db-postgres16, depap-ingress"))
-        .stdout(contains("shared/database/postgres16/secrets/postgres.env  600  (secret)"));
+        .stdout(contains(
+            "shared/database/postgres16/secrets/postgres.env  600  (secret)",
+        ));
     assert!(!server.server_home.exists());
 }
 
@@ -237,17 +248,38 @@ fn server_deploy_then_apply() {
         .stdout(contains("Run again with --apply"));
     let log = server.take_docker_log();
     assert!(log.contains("docker network create depap-ingress"), "{log}");
-    assert!(log.contains("docker network create depap-db-postgres16"), "{log}");
+    assert!(
+        log.contains("docker network create depap-db-postgres16"),
+        "{log}"
+    );
     assert!(!log.contains(" up -d"), "{log}");
 
-    assert_eq!(server.read_server_file("manager_key").trim(), server.manager_key());
-    assert!(!server.server_home.join("lock").exists(), "lock is released");
-    let secret = server.server_home.join("shared/database/postgres16/secrets/postgres.env");
-    assert_eq!(fs::read_to_string(&secret).unwrap(), "POSTGRES_PASSWORD='s3cret'\n");
-    assert_eq!(fs::metadata(&secret).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        server.read_server_file("manager_key").trim(),
+        server.manager_key()
+    );
+    assert!(
+        !server.server_home.join("lock").exists(),
+        "lock is released"
+    );
+    let secret = server
+        .server_home
+        .join("shared/database/postgres16/secrets/postgres.env");
+    assert_eq!(
+        fs::read_to_string(&secret).unwrap(),
+        "POSTGRES_PASSWORD='s3cret'\n"
+    );
+    assert_eq!(
+        fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     let stored_config = server.read_server_file("depap-server.yaml");
     assert!(!stored_config.contains("s3cret"), "{stored_config}");
-    assert!(server.read_server_file("state.yaml").contains("status: candidate"));
+    assert!(
+        server
+            .read_server_file("state.yaml")
+            .contains("status: candidate")
+    );
 
     // Start: candidates are (re)created.
     let running = [("FAKE_DOCKER_RUNNING", "1")];
@@ -259,14 +291,21 @@ fn server_deploy_then_apply() {
         .stdout(contains("dev (local): OK"));
     let log = server.take_docker_log();
     assert!(
-        log.contains("docker compose -p depap-database-postgres16 up -d --quiet-pull --force-recreate"),
+        log.contains(
+            "docker compose -p depap-database-postgres16 up -d --quiet-pull --force-recreate"
+        ),
         "{log}"
     );
     let state = server.read_server_file("state.yaml");
-    assert!(!state.contains("candidate") && state.contains("status: deployed"), "{state}");
+    assert!(
+        !state.contains("candidate") && state.contains("status: deployed"),
+        "{state}"
+    );
 
     // Nothing changed: containers are left alone.
-    server.run(&["server", "deploy", "--apply"], &running).success();
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
     let log = server.take_docker_log();
     assert!(log.contains("up -d --quiet-pull\n"), "{log}");
     assert!(!log.contains("--force-recreate"), "{log}");
@@ -282,8 +321,12 @@ fn server_deploy_respects_lock() {
     server
         .run(&["server", "deploy"], &[])
         .code(3)
-        .stderr(contains("locked by another depap command (host=other pid=1)"));
-    server.run(&["server", "deploy", "--force-unlock"], &[]).success();
+        .stderr(contains(
+            "locked by another depap command (host=other pid=1)",
+        ));
+    server
+        .run(&["server", "deploy", "--force-unlock"], &[])
+        .success();
 }
 
 #[test]
@@ -338,8 +381,16 @@ fn state_reports_shared_apps() {
 fn state_of_unreachable_ssh_server() {
     let env = Env::new();
     env.depap(&["init"]).success();
-    env.depap(&["server", "define", "gone", "--address", "127.0.0.1", "--port", "1"])
-        .success();
+    env.depap(&[
+        "server",
+        "define",
+        "gone",
+        "--address",
+        "127.0.0.1",
+        "--port",
+        "1",
+    ])
+    .success();
     env.depap(&["-s", "gone", "server", "state"])
         .code(3)
         .stderr(contains("UNREACHABLE"))
@@ -403,7 +454,10 @@ fn server_with_shared_apps() -> LocalServer {
     let server = LocalServer::new();
     server.write_work_file("depap-server.yaml", SERVER_CONFIG);
     server
-        .run(&["server", "deploy", "--apply"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .run(
+            &["server", "deploy", "--apply"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
         .success();
     server.take_docker_log();
     server
@@ -413,10 +467,21 @@ fn server_with_shared_apps() -> LocalServer {
 fn app_deploy_needs_deployed_shared_apps() {
     let server = LocalServer::new();
     server.write_work_file("app/depap.yaml", APP_CONFIG);
-    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
     server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
     server
-        .run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &[])
+        .run(
+            &[
+                "app",
+                "deploy",
+                "-f",
+                "app/depap.yaml,app/.depap-staging.yaml",
+            ],
+            &[],
+        )
         .code(3)
         .stderr(contains("run `depap server deploy --apply` first"));
 }
@@ -465,62 +530,131 @@ fn app_deploy_end_to_end() {
         "DATABASE_PASSWORD: pa$$$$word",
         "DATABASE_URL: postgres://myapp_staging_system_data:pa%24%24word@postgres16:5432/myapp_staging_system_data",
     ] {
-        assert!(override_yaml.contains(expected), "missing {expected:?} in\n{override_yaml}");
+        assert!(
+            override_yaml.contains(expected),
+            "missing {expected:?} in\n{override_yaml}"
+        );
     }
     // backend-webapp has its own networks, so `default` is not added to it.
     let backend = override_yaml.split("backend-webapp:").nth(1).unwrap();
-    assert!(!backend.split("front-webapp:").next().unwrap().contains("default"), "{override_yaml}");
+    assert!(
+        !backend
+            .split("front-webapp:")
+            .next()
+            .unwrap()
+            .contains("default"),
+        "{override_yaml}"
+    );
 
     let effective = fs::read_to_string(instance.join("depap.yaml")).unwrap();
     assert!(!effective.contains("pa$$word"), "{effective}");
-    assert!(fs::read_to_string(instance.join("depap-env.yaml")).unwrap().contains("instance: postgres16"));
+    assert!(
+        fs::read_to_string(instance.join("depap-env.yaml"))
+            .unwrap()
+            .contains("instance: postgres16")
+    );
 
     // Database created before the app started, Caddy reloaded after.
     let log = server.take_docker_log();
-    let position = |needle: &str| log.find(needle).unwrap_or_else(|| panic!("{needle:?} not in\n{log}"));
-    let created = position("ALTER ROLE \"myapp_staging_system_data\" WITH LOGIN PASSWORD 'pa$$word'");
-    let built = position("--project-directory sources -f sources/docker-compose.yaml -f compose/depap.override.yaml build -q");
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    let created =
+        position("ALTER ROLE \"myapp_staging_system_data\" WITH LOGIN PASSWORD 'pa$$word'");
+    let built = position(
+        "--project-directory sources -f sources/docker-compose.yaml -f compose/depap.override.yaml build -q",
+    );
     let started = position("up -d --remove-orphans");
     let reloaded = position("exec -T caddy caddy reload");
-    assert!(created < built && built < started && started < reloaded, "{log}");
+    assert!(
+        created < built && built < started && started < reloaded,
+        "{log}"
+    );
 
     // Caddy site: longest path first, `/` as fallback.
     let site = fs::read_to_string(
-        server.server_home.join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy"),
+        server
+            .server_home
+            .join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy"),
     )
     .unwrap();
     assert!(site.contains("staging.example.com {"), "{site}");
     assert!(site.contains("@ui path /ui /ui/*\n\thandle @ui {\n\t\turi strip_prefix /ui\n\t\treverse_proxy myapp-staging-front-webapp:8080"), "{site}");
-    assert!(site.contains("\thandle {\n\t\treverse_proxy myapp-staging-backend-webapp:5000"), "{site}");
+    assert!(
+        site.contains("\thandle {\n\t\treverse_proxy myapp-staging-backend-webapp:5000"),
+        "{site}"
+    );
 
-    assert!(server.read_server_file("state.yaml").contains("prefix: staging\n  status: deployed"));
+    assert!(
+        server
+            .read_server_file("state.yaml")
+            .contains("prefix: staging\n  status: deployed")
+    );
 }
 
 #[test]
 fn app_deploy_rejects_domain_used_by_another_instance() {
     let server = server_with_shared_apps();
     server.write_work_file("app/depap.yaml", APP_CONFIG);
-    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
     server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
-    server.write_work_file("app/.depap-other.yaml", &APP_OVERLAY.replace("staging", "other").replace("other.example", "staging.example"));
+    server.write_work_file(
+        "app/.depap-other.yaml",
+        &APP_OVERLAY
+            .replace("staging", "other")
+            .replace("other.example", "staging.example"),
+    );
     let running = [("FAKE_DOCKER_RUNNING", "1")];
 
-    server.run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running).success();
     server
-        .run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-other.yaml"], &running)
+        .run(
+            &[
+                "app",
+                "deploy",
+                "-f",
+                "app/depap.yaml,app/.depap-staging.yaml",
+            ],
+            &running,
+        )
+        .success();
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "-f",
+                "app/depap.yaml,app/.depap-other.yaml",
+            ],
+            &running,
+        )
         .code(3)
-        .stderr(contains("domain `staging.example.com` is already used by myapp/staging (ui-front)"));
+        .stderr(contains(
+            "domain `staging.example.com` is already used by myapp/staging (ui-front)",
+        ));
 }
 
 /// A server with myapp-staging deployed; returns the server.
 fn server_with_app() -> LocalServer {
     let server = server_with_shared_apps();
     server.write_work_file("app/depap.yaml", APP_CONFIG);
-    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
     server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
     server
         .run(
-            &["app", "deploy", "--apply", "-f", "app/depap.yaml,app/.depap-staging.yaml"],
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/depap.yaml,app/.depap-staging.yaml",
+            ],
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
         .success();
@@ -533,13 +667,24 @@ fn app_state_by_name_or_files() {
     let server = server_with_app();
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     server
-        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .run(
+            &["app", "state", "--app", "myapp", "--prefix", "staging"],
+            &running,
+        )
         .success()
         .stdout(contains("myapp-staging: deployed"))
         .stdout(contains("app  running healthy"))
         .stdout(contains("database  system-data"));
     server
-        .run(&["app", "state", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running)
+        .run(
+            &[
+                "app",
+                "state",
+                "-f",
+                "app/depap.yaml,app/.depap-staging.yaml",
+            ],
+            &running,
+        )
         .success();
     // Without the overlay the prefix is `main`, which is not deployed.
     server
@@ -562,33 +707,62 @@ fn app_remove_keeps_database_unless_purged() {
 
     // Without a terminal and without --yes, nothing happens.
     server
-        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging"], &running)
+        .run(
+            &["app", "remove", "--app", "myapp", "--prefix", "staging"],
+            &running,
+        )
         .code(2)
         .stderr(contains("add --yes"));
 
     server
-        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "ingress", "--yes"], &running)
+        .run(
+            &[
+                "app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "ingress",
+                "--yes",
+            ],
+            &running,
+        )
         .code(2)
         .stderr(contains("ingress links have no data to purge"));
     server
-        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "queue", "--yes"], &running)
+        .run(
+            &[
+                "app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "queue",
+                "--yes",
+            ],
+            &running,
+        )
         .code(2)
         .stderr(contains("unknown kind"));
 
     server
-        .run(&["app", "remove", "--app", "myapp", "--prefix", "staging", "--yes"], &running)
+        .run(
+            &[
+                "app", "remove", "--app", "myapp", "--prefix", "staging", "--yes",
+            ],
+            &running,
+        )
         .success()
         .stdout(contains("Removed myapp-staging."));
     let log = server.take_docker_log();
-    let position = |needle: &str| log.find(needle).unwrap_or_else(|| panic!("{needle:?} not in\n{log}"));
-    assert!(position("caddy reload") < position("down --remove-orphans"), "{log}");
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    assert!(
+        position("caddy reload") < position("down --remove-orphans"),
+        "{log}"
+    );
     assert!(!log.contains("DROP"), "database is kept: {log}");
     assert!(!site.exists() && !db_record.exists());
     assert!(!server.server_home.join("apps/myapp").exists());
     assert!(!server.read_server_file("state.yaml").contains("myapp"));
 
     server
-        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .run(
+            &["app", "state", "--app", "myapp", "--prefix", "staging"],
+            &running,
+        )
         .code(3);
 }
 
@@ -597,14 +771,33 @@ fn app_remove_purge_database() {
     let server = server_with_app();
     server
         .run(
-            &["app", "remove", "--app", "myapp", "--prefix", "staging", "--purge", "database", "--yes", "--volumes"],
+            &[
+                "app",
+                "remove",
+                "--app",
+                "myapp",
+                "--prefix",
+                "staging",
+                "--purge",
+                "database",
+                "--yes",
+                "--volumes",
+            ],
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
         .success()
-        .stdout(contains("link database system-data to postgres16, and delete its data"));
+        .stdout(contains(
+            "link database system-data to postgres16, and delete its data",
+        ));
     let log = server.take_docker_log();
-    assert!(log.contains("DROP DATABASE IF EXISTS \"myapp_staging_system_data\" WITH (FORCE);"), "{log}");
-    assert!(log.contains("DROP ROLE IF EXISTS \"myapp_staging_system_data\";"), "{log}");
+    assert!(
+        log.contains("DROP DATABASE IF EXISTS \"myapp_staging_system_data\" WITH (FORCE);"),
+        "{log}"
+    );
+    assert!(
+        log.contains("DROP ROLE IF EXISTS \"myapp_staging_system_data\";"),
+        "{log}"
+    );
     assert!(log.contains("down --remove-orphans -v"), "{log}");
 }
 
@@ -619,15 +812,29 @@ fn app_state_reports_stopped_service_as_unhealthy() {
     server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     server
-        .run(&["app", "deploy", "--apply", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running)
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/depap.yaml,app/.depap-staging.yaml",
+            ],
+            &running,
+        )
         .success();
 
     // The fake reports one container `app`; make it the long-running service.
     let fake = server.env.work.path().join("bin/docker");
-    let script = fs::read_to_string(&fake).unwrap().replace("app running 0 healthy", "front-webapp exited 0");
+    let script = fs::read_to_string(&fake)
+        .unwrap()
+        .replace("app running 0 healthy", "front-webapp exited 0");
     fs::write(&fake, script).unwrap();
     server
-        .run(&["app", "state", "--app", "myapp", "--prefix", "staging"], &running)
+        .run(
+            &["app", "state", "--app", "myapp", "--prefix", "staging"],
+            &running,
+        )
         .code(4)
         .stdout(contains("front-webapp  exited 0 (stopped)  ← not healthy"));
 }
@@ -654,7 +861,10 @@ fn connector_list_shows_links_per_shared_app() {
         .stdout(contains("myapp-staging/ui-front  app not deployed (leftover record myapp-staging-ui-front.yaml)"));
 
     server
-        .run(&["app", "remove", "--app", "other", "--prefix", "x", "--yes"], &running)
+        .run(
+            &["app", "remove", "--app", "other", "--prefix", "x", "--yes"],
+            &running,
+        )
         .code(3);
 }
 
@@ -692,7 +902,10 @@ fn ctrl_c_stops_and_releases_the_lock() {
 
     // Wait until the first `docker compose up` is running.
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !fs::read_to_string(&log).unwrap_or_default().contains(" up -d") {
+    while !fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains(" up -d")
+    {
         assert!(Instant::now() < deadline, "deploy never reached `up`");
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -700,17 +913,30 @@ fn ctrl_c_stops_and_releases_the_lock() {
 
     // Ctrl-C in a terminal signals the whole group: depap, sh, docker.
     let group = format!("-{}", child.id());
-    std::process::Command::new("kill").args(["-INT", "--", &group]).status().unwrap();
+    std::process::Command::new("kill")
+        .args(["-INT", "--", &group])
+        .status()
+        .unwrap();
     let started = Instant::now();
     let output = child.wait_with_output().unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(130), "{stderr}");
-    assert!(stderr.contains("interrupted: stopping and cleaning up"), "{stderr}");
-    assert!(started.elapsed() < Duration::from_secs(5), "stopped without waiting for `up`");
+    assert!(
+        stderr.contains("interrupted: stopping and cleaning up"),
+        "{stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "stopped without waiting for `up`"
+    );
     assert!(!server.server_home.join("lock").exists(), "lock released");
     let log = fs::read_to_string(&log).unwrap();
-    assert_eq!(log.matches(" up -d").count(), 1, "nothing started after Ctrl-C:\n{log}");
+    assert_eq!(
+        log.matches(" up -d").count(),
+        1,
+        "nothing started after Ctrl-C:\n{log}"
+    );
 }
 
 #[test]
@@ -731,9 +957,13 @@ fn closed_stdout_does_not_panic() {
         .unwrap();
     drop(child.stdout.take()); // like `| head` exiting before reading
     let mut stderr = String::new();
-    child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
     let status = child.wait().unwrap();
     assert!(status.success(), "{stderr}");
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
-

@@ -19,7 +19,9 @@ static CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 pub fn install() -> Result<()> {
     ctrlc::set_handler(|| {
         if INTERRUPTED.swap(true, Ordering::SeqCst) {
-            eprintln!("\ninterrupted again: exiting now (if the server stays locked, use --force-unlock)");
+            eprintln!(
+                "\ninterrupted again: exiting now (if the server stays locked, use --force-unlock)"
+            );
             std::process::exit(130);
         }
         eprintln!("\ninterrupted: stopping and cleaning up (press Ctrl-C again to exit now)");

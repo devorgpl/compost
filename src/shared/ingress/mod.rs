@@ -6,7 +6,9 @@ mod caddy;
 use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
-use super::{AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link};
+use super::{
+    AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link,
+};
 use crate::config::app::AppConfig;
 use base::IngressLink;
 
@@ -30,7 +32,12 @@ pub trait IngressType: Sync {
         base::validate_config(config)
     }
 
-    fn prepare_application(&self, ctx: &AppCtx, link: &IngressLink, out: &mut Contribution) -> Result<()> {
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &IngressLink,
+        out: &mut Contribution,
+    ) -> Result<()> {
         base::prepare_application(ctx, link, out)
     }
 
@@ -94,13 +101,22 @@ impl Kind for IngressKind {
         base::validate_link(&parse_link(link)?, app)
     }
 
-    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
+    fn resolve<'s>(
+        &self,
+        link: &Value,
+        available: &'s [SharedAppConfig],
+    ) -> Result<Resolution<'s>> {
         base::resolve(&parse_link(link)?, available)
     }
 
     // An ingress link names no type: the type of the resolved ingress handles it.
 
-    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution) -> Result<()> {
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &Value,
+        out: &mut Contribution,
+    ) -> Result<()> {
         find_type(&ctx.shared.type_name)?.prepare_application(ctx, &parse_link(link)?, out)
     }
 
@@ -127,7 +143,10 @@ fn find_type(name: &str) -> Result<&'static dyn IngressType> {
         Some(found) => Ok(found),
         None => {
             let known: Vec<_> = TYPES.iter().map(|t| t.type_name()).collect();
-            bail!("unknown ingress type `{name}` (known: {})", known.join(", "))
+            bail!(
+                "unknown ingress type `{name}` (known: {})",
+                known.join(", ")
+            )
         }
     }
 }

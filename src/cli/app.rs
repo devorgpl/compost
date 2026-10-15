@@ -30,7 +30,12 @@ pub enum AppCommand {
 #[derive(Debug, Args)]
 pub struct InstanceArgs {
     /// Config files merged in order (repeatable or comma-separated)
-    #[arg(short = 'f', long = "file", value_delimiter = ',', conflicts_with = "app")]
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_delimiter = ',',
+        conflicts_with = "app"
+    )]
     pub files: Vec<PathBuf>,
     /// Application name
     #[arg(long, requires = "prefix")]
@@ -66,7 +71,12 @@ struct InstanceId {
     prefix: String,
 }
 
-pub fn run(home: &DepapHome, server: Option<&str>, command: AppCommand, verbose: bool) -> Result<()> {
+pub fn run(
+    home: &DepapHome,
+    server: Option<&str>,
+    command: AppCommand,
+    verbose: bool,
+) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     match command {
@@ -74,7 +84,13 @@ pub fn run(home: &DepapHome, server: Option<&str>, command: AppCommand, verbose:
         AppCommand::State(args) => {
             let (name, prefix) = instance_id(&args)?;
             let connector = connector::open(&server, home, verbose)?;
-            state::state(connector.as_ref(), server.server_home(), &manager.manager_key, &name, &prefix)
+            state::state(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &name,
+                &prefix,
+            )
         }
         AppCommand::Remove(args) => {
             let (name, prefix) = instance_id(&args.instance)?;

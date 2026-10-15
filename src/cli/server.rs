@@ -74,7 +74,11 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
         None => servers.servers.push(entry.clone()),
     }
     home.save_servers(&servers)?;
-    out!("Defined server {} ({})", entry.name, entry.connector.describe());
+    out!(
+        "Defined server {} ({})",
+        entry.name,
+        entry.connector.describe()
+    );
     Ok(())
 }
 
@@ -86,9 +90,18 @@ pub fn list(home: &DepapHome) -> Result<()> {
     }
 
     let current = home.current_context()?;
-    let width = servers.servers.iter().map(|s| s.name.len()).max().unwrap_or(0);
+    let width = servers
+        .servers
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(0);
     for server in &servers.servers {
-        let marker = if current.as_deref() == Some(server.name.as_str()) { "*" } else { " " };
+        let marker = if current.as_deref() == Some(server.name.as_str()) {
+            "*"
+        } else {
+            " "
+        };
         out!(
             "{marker} {:<width$}  {}  home: {}",
             server.name,
@@ -103,9 +116,18 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, verbose)?;
-    let report = state::check(connector.as_ref(), server.server_home(), &manager.manager_key)?;
+    let report = state::check(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+    )?;
 
-    let summary = format!("{} ({}): {}", server.name, connector.target(), report.status);
+    let summary = format!(
+        "{} ({}): {}",
+        server.name,
+        connector.target(),
+        report.status
+    );
     let detail = report.detail.as_deref().unwrap_or_default();
     match report.status {
         Status::Unreachable | Status::NoDocker | Status::Foreign => {
@@ -122,11 +144,19 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
         out!("  no shared applications");
     }
     for app in &report.shared {
-        let version = app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
-        let running = if app.running { "running" } else { "not running" };
+        let version = app
+            .version
+            .map_or_else(|| "-".to_string(), |v| v.to_string());
+        let running = if app.running {
+            "running"
+        } else {
+            "not running"
+        };
         out!(
             "  {:<9} {:<16} {} {version}  {running}",
-            app.kind, app.name, app.type_name
+            app.kind,
+            app.name,
+            app.type_name
         );
     }
 
@@ -140,10 +170,19 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
     Ok(())
 }
 
-pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose: bool) -> Result<()> {
+pub fn deploy(
+    home: &DepapHome,
+    server: Option<&str>,
+    args: DeployArgs,
+    verbose: bool,
+) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let files = if args.files.is_empty() { default_files()? } else { args.files };
+    let files = if args.files.is_empty() {
+        default_files()?
+    } else {
+        args.files
+    };
     let config = ServerConfig::load(&files)?;
 
     let connector = connector::open(&server, home, verbose)?;
@@ -173,7 +212,11 @@ pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> 
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, verbose)?;
-    links::list(connector.as_ref(), server.server_home(), &manager.manager_key)
+    links::list(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+    )
 }
 
 /// `depap-server.yaml` plus the secrets file when it exists (spec §7).

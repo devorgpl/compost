@@ -42,8 +42,14 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
         out!("{kind_name}");
         for (i, shared_app) in apps.iter().enumerate() {
             let last = i + 1 == apps.len();
-            let (branch, indent) = if last { ("└─", "   ") } else { ("├─", "│  ") };
-            let version = shared_app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
+            let (branch, indent) = if last {
+                ("└─", "   ")
+            } else {
+                ("├─", "│  ")
+            };
+            let version = shared_app
+                .version
+                .map_or_else(|| "-".to_string(), |v| v.to_string());
             out!(
                 "{branch} {}  {} {version}  {}",
                 shared_app.name,
@@ -56,7 +62,11 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
                 out!("{indent}└─ no links");
             }
             for (j, line) in lines.iter().enumerate() {
-                let branch = if j + 1 == lines.len() { "└─" } else { "├─" };
+                let branch = if j + 1 == lines.len() {
+                    "└─"
+                } else {
+                    "├─"
+                };
                 out!("{indent}{branch} {line}");
             }
         }
@@ -65,7 +75,11 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
 }
 
 fn running(report: &Report, kind: &str, name: &str) -> &'static str {
-    match report.shared.iter().find(|s| s.kind == kind && s.name == name) {
+    match report
+        .shared
+        .iter()
+        .find(|s| s.kind == kind && s.name == name)
+    {
         Some(state) if state.running => "running",
         _ => "not running",
     }
@@ -91,13 +105,17 @@ fn link_lines(
         let Some(text) = ctx.connector.read_file(&path)? else {
             continue;
         };
-        let record: LinkRecord =
-            serde_yaml_ng::from_str(&text).with_context(|| format!("invalid link record {path}"))?;
+        let record: LinkRecord = serde_yaml_ng::from_str(&text)
+            .with_context(|| format!("invalid link record {path}"))?;
         let name = format!("{}-{}/{}", record.app, record.prefix, record.entry);
 
         let line = match instance::load(ctx, &record.app, &record.prefix)? {
             Some(instance) => {
-                let link_ctx = AppCtx { server: ctx, app: &instance.app, shared: shared_app };
+                let link_ctx = AppCtx {
+                    server: ctx,
+                    app: &instance.app,
+                    shared: shared_app,
+                };
                 let summary = kind
                     .describe_link(&link_ctx, &record.entry)
                     .unwrap_or_else(|err| format!("cannot read link: {err:#}"));

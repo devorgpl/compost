@@ -59,7 +59,10 @@ mod tests {
 
         assert_eq!(LOCAL.read_file(path).unwrap(), None);
         LOCAL.write_file(path, b"PASSWORD=x\n", 0o600).unwrap();
-        assert_eq!(LOCAL.read_file(path).unwrap().as_deref(), Some("PASSWORD=x\n"));
+        assert_eq!(
+            LOCAL.read_file(path).unwrap().as_deref(),
+            Some("PASSWORD=x\n")
+        );
 
         let mode = LOCAL.exec(&format!("stat -c %a '{path}'")).unwrap();
         assert_eq!(mode.trim(), "600");
@@ -68,7 +71,10 @@ mod tests {
     #[test]
     fn resolve_path_expands_tilde() {
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(LOCAL.resolve_path("~/.depap-server").unwrap(), format!("{home}/.depap-server"));
+        assert_eq!(
+            LOCAL.resolve_path("~/.depap-server").unwrap(),
+            format!("{home}/.depap-server")
+        );
         assert_eq!(LOCAL.resolve_path("/srv/depap").unwrap(), "/srv/depap");
         assert_eq!(LOCAL.resolve_path("~other/x").unwrap(), "~other/x");
     }

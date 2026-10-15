@@ -38,13 +38,25 @@ pub fn remove(
     let project = instance.app.instance();
 
     out!("Removing {project}:");
-    out!("  containers and the folder {}", ctx.path(&instance::dir(name, prefix)));
+    out!(
+        "  containers and the folder {}",
+        ctx.path(&instance::dir(name, prefix))
+    );
     if options.volumes {
         out!("  volumes of the compose project");
     }
     for link in &instance.links {
-        let purged = if options.purge.contains(&link.kind) { ", and delete its data" } else { "" };
-        out!("  link {} {} to {}{purged}", link.kind, link.entry, link.instance);
+        let purged = if options.purge.contains(&link.kind) {
+            ", and delete its data"
+        } else {
+            ""
+        };
+        out!(
+            "  link {} {} to {}{purged}",
+            link.kind,
+            link.entry,
+            link.instance
+        );
     }
     if !options.yes && !confirm()? {
         out!("Cancelled.");
@@ -56,7 +68,10 @@ pub fn remove(
 
     let volumes = if options.volumes { " -v" } else { "" };
     connector
-        .exec(&format!("{} down --remove-orphans{volumes}", instance::compose_command(&ctx, &instance.app)))
+        .exec(&format!(
+            "{} down --remove-orphans{volumes}",
+            instance::compose_command(&ctx, &instance.app)
+        ))
         .context("docker compose down failed")?;
 
     let dir = ctx.path(&instance::dir(name, prefix));
@@ -80,7 +95,11 @@ fn check_purge(kinds: &[String]) -> Result<()> {
     for name in kinds {
         match shared::find_kind(name) {
             Some(kind) if kind.supports_purge() => {}
-            Some(_) => return Err(config_err(format!("--purge {name}: {name} links have no data to purge"))),
+            Some(_) => {
+                return Err(config_err(format!(
+                    "--purge {name}: {name} links have no data to purge"
+                )));
+            }
             None => {
                 return Err(config_err(format!(
                     "--purge {name}: unknown kind (known: {})",
@@ -111,7 +130,11 @@ fn remove_links(ctx: &ServerCtx, instance: &Instance, purge: &[String]) -> Resul
             );
             continue;
         };
-        let link_ctx = AppCtx { server: ctx, app: &instance.app, shared: &shared };
+        let link_ctx = AppCtx {
+            server: ctx,
+            app: &instance.app,
+            shared: &shared,
+        };
         kind.remove_application(&link_ctx, &link.entry, purge.contains(&link.kind))
             .with_context(|| format!("removing link {} {}", link.kind, link.entry))?;
     }
@@ -120,7 +143,9 @@ fn remove_links(ctx: &ServerCtx, instance: &Instance, purge: &[String]) -> Resul
 
 fn confirm() -> Result<bool> {
     if !std::io::stdin().is_terminal() {
-        return Err(config_err("not asking for confirmation without a terminal; add --yes"));
+        return Err(config_err(
+            "not asking for confirmation without a terminal; add --yes",
+        ));
     }
     print!("Continue? [y/N] ");
     std::io::stdout().flush()?;

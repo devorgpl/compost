@@ -30,7 +30,10 @@ impl DatabaseType for Postgres {
     }
 
     fn endpoint(&self) -> Endpoint {
-        Endpoint { url_scheme: "postgres", port: 5432 }
+        Endpoint {
+            url_scheme: "postgres",
+            port: 5432,
+        }
     }
 
     /// Extends the generic link validation: names must be plain Postgres identifiers.
@@ -50,7 +53,8 @@ impl DatabaseType for Postgres {
     fn before_apply_application(&self, ctx: &AppCtx, link: &DatabaseLink) -> Result<()> {
         let credentials = base::credentials(ctx, link)?;
         let sql = provisioning_sql(&credentials.name, &credentials.user, &credentials.password);
-        run_sql(ctx, &sql).map_err(|e| e.context(format!("creating database `{}` failed", credentials.name)))
+        run_sql(ctx, &sql)
+            .map_err(|e| e.context(format!("creating database `{}` failed", credentials.name)))
     }
 
     /// `WITH (FORCE)` disconnects the app, which is still running (postgres 13+).
@@ -63,7 +67,8 @@ impl DatabaseType for Postgres {
             "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\nDROP ROLE IF EXISTS \"{}\";\n",
             record.db_name, record.db_user
         );
-        run_sql(ctx, &sql).map_err(|e| e.context(format!("dropping database `{}` failed", record.db_name)))
+        run_sql(ctx, &sql)
+            .map_err(|e| e.context(format!("dropping database `{}` failed", record.db_name)))
     }
 
     /// Extends the generic database validation with Postgres' own settings.
@@ -100,7 +105,9 @@ impl DatabaseType for Postgres {
 
         // The root password only takes effect when the data folder is first
         // created, so it is generated once and then reused.
-        let existing = ctx.read(&secrets_path)?.and_then(|text| read_password(&text));
+        let existing = ctx
+            .read(&secrets_path)?
+            .and_then(|text| read_password(&text));
         let password = match (postgres.root_password, existing) {
             (Some(new), Some(old)) if new != old => bail!(
                 "root_password differs from the one already on the server; \
@@ -161,7 +168,9 @@ fn run_sql(ctx: &AppCtx, sql: &str) -> Result<()> {
 fn is_identifier(value: &str) -> bool {
     let mut chars = value.chars();
     value.len() <= 63
-        && chars.next().is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
@@ -208,8 +217,9 @@ mod tests {
 
     #[test]
     fn checks_own_configuration() {
-        let err = validate("{name: pg, type: postgres, version: 16, configuration: {root_password: ''}}")
-            .unwrap_err();
+        let err =
+            validate("{name: pg, type: postgres, version: 16, configuration: {root_password: ''}}")
+                .unwrap_err();
         assert_eq!(err.to_string(), "root_password must not be empty");
     }
 
@@ -241,7 +251,12 @@ mod tests {
         }
 
         fn secret(rendered: &Rendered) -> &str {
-            &rendered.files.iter().find(|f| f.path.ends_with("postgres.env")).unwrap().contents
+            &rendered
+                .files
+                .iter()
+                .find(|f| f.path.ends_with("postgres.env"))
+                .unwrap()
+                .contents
         }
 
         const PG: &str = "{name: postgres16, type: postgres, version: 16}";
@@ -254,7 +269,11 @@ mod tests {
             let compose = &rendered.files[0].contents;
             assert!(compose.contains("image: postgres:16"), "{compose}");
             assert!(compose.contains("depap-db-postgres16:\n        aliases: [postgres16]"));
-            let paths: Vec<_> = rendered.files.iter().map(|f| (f.path.as_str(), f.is_secret())).collect();
+            let paths: Vec<_> = rendered
+                .files
+                .iter()
+                .map(|f| (f.path.as_str(), f.is_secret()))
+                .collect();
             assert_eq!(
                 paths,
                 [
@@ -279,7 +298,9 @@ mod tests {
         fn configured_password_must_not_change() {
             let home = TempDir::new().unwrap();
             let with_password = |p: &str| {
-                format!("{{name: postgres16, type: postgres, version: 16, configuration: {{root_password: {p}}}}}")
+                format!(
+                    "{{name: postgres16, type: postgres, version: 16, configuration: {{root_password: {p}}}}}"
+                )
             };
             write(&home, &render(&home, &with_password("first")).unwrap());
             render(&home, &with_password("first")).unwrap();
@@ -292,22 +313,33 @@ mod tests {
     fn provisioning_sql_escapes_password() {
         let sql = provisioning_sql("appdb", "appuser", "it's");
         assert!(sql.contains("WHERE rolname = 'appuser')\\gexec\n"), "{sql}");
-        assert!(sql.contains("ALTER ROLE \"appuser\" WITH LOGIN PASSWORD 'it''s';"), "{sql}");
-        assert!(sql.contains("CREATE DATABASE \"appdb\" OWNER \"appuser\""), "{sql}");
+        assert!(
+            sql.contains("ALTER ROLE \"appuser\" WITH LOGIN PASSWORD 'it''s';"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("CREATE DATABASE \"appdb\" OWNER \"appuser\""),
+            "{sql}"
+        );
     }
 
     #[test]
     fn link_names_must_be_identifiers() {
-        let app: AppConfig = serde_yaml_ng::from_str(
-            "{name: a, app_services: [{name: backend, service: backend}]}",
-        )
-        .unwrap();
+        let app: AppConfig =
+            serde_yaml_ng::from_str("{name: a, app_services: [{name: backend, service: backend}]}")
+                .unwrap();
         let link = |text: &str| -> DatabaseLink { serde_yaml_ng::from_str(text).unwrap() };
         Postgres
-            .validate_link(&link("{name: data, type: postgres, targets: [backend]}"), &app)
+            .validate_link(
+                &link("{name: data, type: postgres, targets: [backend]}"),
+                &app,
+            )
             .unwrap();
         let err = Postgres
-            .validate_link(&link("{name: data, type: postgres, targets: [backend], db_name: My-DB}"), &app)
+            .validate_link(
+                &link("{name: data, type: postgres, targets: [backend], db_name: My-DB}"),
+                &app,
+            )
             .unwrap_err();
         assert!(err.to_string().contains("db_name `My-DB`"), "{err}");
     }

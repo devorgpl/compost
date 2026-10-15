@@ -147,7 +147,11 @@ pub fn shell_quote(value: &str) -> String {
 fn run_process(mut command: Command, stdin: Option<&[u8]>) -> Result<Output> {
     crate::interrupt::check()?;
     command
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let program = command.get_program().to_string_lossy().into_owned();

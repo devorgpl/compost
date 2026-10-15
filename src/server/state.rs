@@ -76,7 +76,10 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
         None,
     )?;
     if !versions.success() {
-        return Ok(Report::stopped(Status::NoDocker, versions.stderr.trim().to_string()));
+        return Ok(Report::stopped(
+            Status::NoDocker,
+            versions.stderr.trim().to_string(),
+        ));
     }
     let mut lines = versions.stdout.lines();
     let docker = format!(
@@ -134,6 +137,8 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
 
 fn is_project_running(connector: &dyn Connector, project: &str) -> Result<bool> {
     let label = shell_quote(&format!("label=com.docker.compose.project={project}"));
-    let ids = connector.exec(&format!("docker ps -q --filter {label} --filter status=running"))?;
+    let ids = connector.exec(&format!(
+        "docker ps -q --filter {label} --filter status=running"
+    ))?;
     Ok(!ids.trim().is_empty())
 }

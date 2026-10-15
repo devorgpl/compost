@@ -160,8 +160,8 @@ impl DepapHome {
         if !path.exists() {
             return Ok(None);
         }
-        let name = fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
+        let name =
+            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
         Ok(Some(name.trim().to_string()).filter(|n| !n.is_empty()))
     }
 

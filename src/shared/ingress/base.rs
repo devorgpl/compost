@@ -86,8 +86,16 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
     let mut paths = HashSet::new();
     for route in &link.routes {
         check_name("route name", &route.name)?;
-        ensure!(names.insert(&route.name), "route `{}` is defined twice", route.name);
-        ensure!(paths.insert(&route.path), "path `{}` is used by two routes", route.path);
+        ensure!(
+            names.insert(&route.name),
+            "route `{}` is defined twice",
+            route.name
+        );
+        ensure!(
+            paths.insert(&route.path),
+            "path `{}` is used by two routes",
+            route.path
+        );
         ensure!(
             app.app_service(&route.target).is_some(),
             "route `{}`: target `{}` is not in app_services",
@@ -97,7 +105,9 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
         let path = &route.path;
         let valid_path = path.starts_with('/')
             && (path == "/" || !path.ends_with('/'))
-            && path.chars().all(|c| c.is_ascii_alphanumeric() || "/-_.~".contains(c));
+            && path
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/-_.~".contains(c));
         ensure!(
             valid_path,
             "route `{}`: path `{path}` must start with `/`, not end with `/`, and use only letters, digits and `/-_.~`",
@@ -119,14 +129,18 @@ fn is_domain(domain: &str) -> bool {
         && name.split('.').all(|label| {
             !label.is_empty()
                 && !label.starts_with('-')
-                && label.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         })
 }
 
 /// The ingress of the server (there is at most one).
 pub fn resolve<'s>(link: &IngressLink, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
     if link.domains.is_empty() {
-        return Ok(Resolution::Skip("optional and no domains given".to_string()));
+        return Ok(Resolution::Skip(
+            "optional and no domains given".to_string(),
+        ));
     }
     match available.first() {
         Some(ingress) => Ok(Resolution::Use(ingress)),
@@ -175,14 +189,17 @@ pub fn prepare_application(ctx: &AppCtx, link: &IngressLink, out: &mut Contribut
 
 fn record_path(ctx: &AppCtx, entry: &str) -> String {
     let dir = connectors_dir(KIND, &ctx.shared.name);
-    ctx.server.path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
+    ctx.server
+        .path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
 }
 
 pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<IngressRecord>> {
     let path = record_path(ctx, entry);
     match ctx.server.connector.read_file(&path)? {
         None => Ok(None),
-        Some(text) => Ok(Some(serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?)),
+        Some(text) => Ok(Some(
+            serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?,
+        )),
     }
 }
 
@@ -196,7 +213,11 @@ pub fn describe_link(ctx: &AppCtx, entry: &str) -> Result<String> {
         .iter()
         .map(|r| format!("{} → {}", r.path, r.upstream))
         .collect();
-    Ok(format!("{}  {}", record.domains.join(", "), routes.join(", ")))
+    Ok(format!(
+        "{}  {}",
+        record.domains.join(", "),
+        routes.join(", ")
+    ))
 }
 
 /// Delete the link record.
@@ -261,11 +282,26 @@ mod tests {
     #[test]
     fn rejects_bad_routes_and_domains() {
         let bad = [
-            ("{name: ui, domains: [A.com], routes: [{name: r, target: web, port: 80}]}", "valid domain"),
-            ("{name: ui, domains: [a.com], routes: []}", "at least one route"),
-            ("{name: ui, domains: [a.com], routes: [{name: r, target: x, port: 80}]}", "not in app_services"),
-            ("{name: ui, domains: [a.com], routes: [{name: r, target: web, port: 80, path: ui}]}", "must start"),
-            ("{name: ui, domains: [a.com], routes: [{name: r, target: web, port: 80, path: /ui/}]}", "must start"),
+            (
+                "{name: ui, domains: [A.com], routes: [{name: r, target: web, port: 80}]}",
+                "valid domain",
+            ),
+            (
+                "{name: ui, domains: [a.com], routes: []}",
+                "at least one route",
+            ),
+            (
+                "{name: ui, domains: [a.com], routes: [{name: r, target: x, port: 80}]}",
+                "not in app_services",
+            ),
+            (
+                "{name: ui, domains: [a.com], routes: [{name: r, target: web, port: 80, path: ui}]}",
+                "must start",
+            ),
+            (
+                "{name: ui, domains: [a.com], routes: [{name: r, target: web, port: 80, path: /ui/}]}",
+                "must start",
+            ),
             (
                 "{name: ui, domains: [a.com], routes: [{name: r, target: web, port: 80}, {name: s, target: web, port: 81}]}",
                 "used by two routes",
@@ -281,14 +317,26 @@ mod tests {
     fn routes_are_ordered_longest_path_first() {
         let app = app();
         let connector = crate::connector::local::Local { verbose: false };
-        let server = crate::shared::ServerCtx { connector: &connector, home: "/x".into() };
-        let shared: SharedAppConfig = serde_yaml_ng::from_str("{name: caddy-main, type: caddy}").unwrap();
-        let ctx = AppCtx { server: &server, app: &app, shared: &shared };
+        let server = crate::shared::ServerCtx {
+            connector: &connector,
+            home: "/x".into(),
+        };
+        let shared: SharedAppConfig =
+            serde_yaml_ng::from_str("{name: caddy-main, type: caddy}").unwrap();
+        let ctx = AppCtx {
+            server: &server,
+            app: &app,
+            shared: &shared,
+        };
         let link: IngressLink = serde_yaml_ng::from_str(
             "{name: ui, domains: [a.com], routes: [{name: root, target: web, port: 80}, {name: api, target: web, port: 5000, path: /api/v1}, {name: ui, target: web, port: 80, path: /ui}]}",
         )
         .unwrap();
-        let paths: Vec<_> = routes(&ctx, &link).unwrap().into_iter().map(|r| r.path).collect();
+        let paths: Vec<_> = routes(&ctx, &link)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
         assert_eq!(paths, ["/api/v1", "/ui", "/"]);
     }
 }

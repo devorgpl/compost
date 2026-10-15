@@ -14,7 +14,14 @@ use crate::shared::{
 };
 
 /// Values a link can map to app variables (spec §6.1).
-const LINK_VALUES: [&str; 6] = ["db_host", "db_port", "db_name", "db_user", "db_password", "db_url"];
+const LINK_VALUES: [&str; 6] = [
+    "db_host",
+    "db_port",
+    "db_name",
+    "db_user",
+    "db_password",
+    "db_url",
+];
 
 /// Docker network of one database; apps linked to it join this network.
 pub fn network_name(database: &str) -> String {
@@ -77,7 +84,10 @@ pub struct Credentials {
 
 pub fn validate_config(config: &SharedAppConfig) -> Result<()> {
     // Apps pick a database by version, so every database must declare one.
-    ensure!(config.version.is_some(), "version is required for databases");
+    ensure!(
+        config.version.is_some(),
+        "version is required for databases"
+    );
     if let Some(image) = &config.image {
         ensure!(!image.trim().is_empty(), "image must not be empty");
     }
@@ -87,12 +97,21 @@ pub fn validate_config(config: &SharedAppConfig) -> Result<()> {
 pub fn validate_link(link: &DatabaseLink, app: &AppConfig) -> Result<()> {
     VersionReq::parse(&link.version)
         .with_context(|| format!("version `{}` is not a valid requirement", link.version))?;
-    ensure!(!link.targets.is_empty(), "targets: at least one app service is required");
+    ensure!(
+        !link.targets.is_empty(),
+        "targets: at least one app service is required"
+    );
     for target in &link.targets {
-        ensure!(app.app_service(target).is_some(), "target `{target}` is not in app_services");
+        ensure!(
+            app.app_service(target).is_some(),
+            "target `{target}` is not in app_services"
+        );
     }
     for (variable, value) in &link.environment {
-        ensure!(is_variable_name(variable), "`{variable}` is not a valid variable name");
+        ensure!(
+            is_variable_name(variable),
+            "`{variable}` is not a valid variable name"
+        );
         ensure!(
             LINK_VALUES.contains(&value.as_str()),
             "environment.{variable}: unknown value `{value}` (known: {})",
@@ -104,7 +123,9 @@ pub fn validate_link(link: &DatabaseLink, app: &AppConfig) -> Result<()> {
 
 fn is_variable_name(name: &str) -> bool {
     let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
@@ -118,18 +139,28 @@ pub fn names(app: &AppConfig, link: &DatabaseLink) -> (String, String) {
 }
 
 /// A database of the requested type whose major version matches.
-pub fn resolve<'s>(link: &DatabaseLink, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
+pub fn resolve<'s>(
+    link: &DatabaseLink,
+    available: &'s [SharedAppConfig],
+) -> Result<Resolution<'s>> {
     let requirement = VersionReq::parse(&link.version)?;
     let matching: Vec<&SharedAppConfig> = available
         .iter()
         .filter(|db| db.type_name == link.type_name)
-        .filter(|db| db.version.is_some_and(|v| requirement.matches(&Version::new(v.into(), 0, 0))))
+        .filter(|db| {
+            db.version
+                .is_some_and(|v| requirement.matches(&Version::new(v.into(), 0, 0)))
+        })
         .filter(|db| link.instance.as_ref().is_none_or(|pin| *pin == db.name))
         .collect();
     match matching.as_slice() {
         [database] => Ok(Resolution::Use(database)),
         [] => {
-            let pin = link.instance.as_ref().map(|p| format!(" named `{p}`")).unwrap_or_default();
+            let pin = link
+                .instance
+                .as_ref()
+                .map(|p| format!(" named `{p}`"))
+                .unwrap_or_default();
             bail!(
                 "no running {} database{pin} with version `{}` on the server",
                 link.type_name,
@@ -138,7 +169,10 @@ pub fn resolve<'s>(link: &DatabaseLink, available: &'s [SharedAppConfig]) -> Res
         }
         several => {
             let names: Vec<&str> = several.iter().map(|db| db.name.as_str()).collect();
-            bail!("several databases match ({}); choose one with `instance`", names.join(", "))
+            bail!(
+                "several databases match ({}); choose one with `instance`",
+                names.join(", ")
+            )
         }
     }
 }
@@ -154,12 +188,17 @@ pub fn credentials(ctx: &AppCtx, link: &DatabaseLink) -> Result<Credentials> {
             None => generate_password(),
         },
     };
-    Ok(Credentials { name, user, password })
+    Ok(Credentials {
+        name,
+        user,
+        password,
+    })
 }
 
 fn record_path(ctx: &AppCtx, entry: &str) -> String {
     let dir = connectors_dir(KIND, &ctx.shared.name);
-    ctx.server.path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
+    ctx.server
+        .path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
 }
 
 pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<DatabaseRecord>> {
@@ -241,7 +280,9 @@ fn percent_encode(value: &str) -> String {
     value
         .bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
             _ => format!("%{b:02X}"),
         })
         .collect()
@@ -279,9 +320,18 @@ mod tests {
         validate_link(&link(ok), &app()).unwrap();
         for (text, expected) in [
             ("{name: d, type: postgres}", "at least one"),
-            ("{name: d, type: postgres, targets: [x]}", "not in app_services"),
-            ("{name: d, type: postgres, targets: [backend], environment: {X: db_secret}}", "unknown value"),
-            ("{name: d, type: postgres, targets: [backend], version: 'abc'}", "not a valid requirement"),
+            (
+                "{name: d, type: postgres, targets: [x]}",
+                "not in app_services",
+            ),
+            (
+                "{name: d, type: postgres, targets: [backend], environment: {X: db_secret}}",
+                "unknown value",
+            ),
+            (
+                "{name: d, type: postgres, targets: [backend], version: 'abc'}",
+                "not a valid requirement",
+            ),
         ] {
             let err = validate_link(&link(text), &app()).unwrap_err().to_string();
             assert!(err.contains(expected), "{text}: {err}");
@@ -300,9 +350,18 @@ mod tests {
         };
         assert_eq!(pick("{name: d, type: postgres, version: '16'}"), "pg16");
         assert_eq!(pick("{name: d, type: postgres, version: '>16'}"), "pg17");
-        assert!(pick("{name: d, type: postgres, version: '>=16'}").contains("several databases match (pg16, pg17)"));
-        assert_eq!(pick("{name: d, type: postgres, version: '>=16', instance: pg17}"), "pg17");
-        assert!(pick("{name: d, type: postgres, version: '18'}").contains("no running postgres database"));
+        assert!(
+            pick("{name: d, type: postgres, version: '>=16'}")
+                .contains("several databases match (pg16, pg17)")
+        );
+        assert_eq!(
+            pick("{name: d, type: postgres, version: '>=16', instance: pg17}"),
+            "pg17"
+        );
+        assert!(
+            pick("{name: d, type: postgres, version: '18'}")
+                .contains("no running postgres database")
+        );
     }
 
     #[test]

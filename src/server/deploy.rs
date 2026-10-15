@@ -38,7 +38,10 @@ pub fn deploy(
 ) -> Result<()> {
     // 1. Preflight.
     let report = state::check(connector, server_home, manager_key)?;
-    if matches!(report.status, Status::Unreachable | Status::NoDocker | Status::Foreign) {
+    if matches!(
+        report.status,
+        Status::Unreachable | Status::NoDocker | Status::Foreign
+    ) {
         return Err(DepapError::ServerNotReady(format!(
             "server is {}: {}",
             report.status,
@@ -78,17 +81,25 @@ pub fn deploy(
     for plan in &plans {
         write_files(&ctx, &plan.rendered)?;
         if plan.changed {
-            state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Candidate, &plan.hash);
+            state_file.set_shared(
+                plan.kind,
+                &plan.app.name,
+                DeployStatus::Candidate,
+                &plan.hash,
+            );
         }
         let change = if plan.changed { "updated" } else { "unchanged" };
         out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
     }
     for record in &state_file.shared {
-        let configured = plans.iter().any(|p| p.kind == record.kind && p.app.name == record.name);
+        let configured = plans
+            .iter()
+            .any(|p| p.kind == record.kind && p.app.name == record.name);
         if !configured {
             out!(
                 "  {:<9} {:<16} orphaned: not in the configuration any more, left as it is",
-                record.kind, record.name
+                record.kind,
+                record.name
             );
         }
     }
@@ -111,7 +122,12 @@ pub fn deploy(
         match start(&ctx, plan, !deployed) {
             Ok(()) => {
                 out!("running");
-                state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
+                state_file.set_shared(
+                    plan.kind,
+                    &plan.app.name,
+                    DeployStatus::Deployed,
+                    &plan.hash,
+                );
             }
             Err(err) => {
                 out!("failed");
@@ -135,8 +151,8 @@ fn render_all<'a>(
 ) -> Result<Vec<Plan<'a>>> {
     let mut plans = Vec::new();
     for (kind_name, app) in config.shared_apps() {
-        let kind = shared::find_kind(kind_name)
-            .with_context(|| format!("unknown kind `{kind_name}`"))?;
+        let kind =
+            shared::find_kind(kind_name).with_context(|| format!("unknown kind `{kind_name}`"))?;
         let rendered = kind
             .render(ctx, app)
             .with_context(|| format!("shared.{kind_name}[{}]", app.name))?;
@@ -144,7 +160,13 @@ fn render_all<'a>(
         let changed = state_file
             .shared(kind.name(), &app.name)
             .is_none_or(|record| record.config_hash != hash);
-        plans.push(Plan { kind: kind.name(), app, rendered, hash, changed });
+        plans.push(Plan {
+            kind: kind.name(),
+            app,
+            rendered,
+            hash,
+            changed,
+        });
     }
     Ok(plans)
 }
@@ -153,7 +175,11 @@ fn render_all<'a>(
 fn hash_rendered(rendered: &Rendered) -> String {
     let mut hasher = Sha256::new();
     for file in &rendered.files {
-        for part in [file.path.as_str(), file.contents.as_str(), &format!("{:o}", file.mode)] {
+        for part in [
+            file.path.as_str(),
+            file.contents.as_str(),
+            &format!("{:o}", file.mode),
+        ] {
             hasher.update(part.as_bytes());
             hasher.update([0u8]);
         }
@@ -162,7 +188,11 @@ fn hash_rendered(rendered: &Rendered) -> String {
         hasher.update(part.as_bytes());
         hasher.update([0u8]);
     }
-    let hex: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     format!("sha256:{hex}")
 }
 
@@ -188,8 +218,13 @@ fn create_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<()> {
 
 fn write_files(ctx: &ServerCtx, rendered: &Rendered) -> Result<()> {
     if !rendered.dirs.is_empty() {
-        let dirs: Vec<String> = rendered.dirs.iter().map(|d| shell_quote(&ctx.path(d))).collect();
-        ctx.connector.exec(&format!("mkdir -p -- {}", dirs.join(" ")))?;
+        let dirs: Vec<String> = rendered
+            .dirs
+            .iter()
+            .map(|d| shell_quote(&ctx.path(d)))
+            .collect();
+        ctx.connector
+            .exec(&format!("mkdir -p -- {}", dirs.join(" ")))?;
     }
     for file in &rendered.files {
         ctx.connector
@@ -211,10 +246,17 @@ fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
 }
 
 fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
-    out!("Dry run: nothing is changed on the server ({status}, home {}).", ctx.home);
+    out!(
+        "Dry run: nothing is changed on the server ({status}, home {}).",
+        ctx.home
+    );
     out!("  networks: {}", all_networks(plans).join(", "));
     for plan in plans {
-        let change = if plan.changed { "would update" } else { "unchanged" };
+        let change = if plan.changed {
+            "would update"
+        } else {
+            "unchanged"
+        };
         out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
         for dir in &plan.rendered.dirs {
             out!("      {dir}/");

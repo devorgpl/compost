@@ -117,11 +117,19 @@ pub struct RenderedFile {
 
 impl RenderedFile {
     pub fn new(path: String, contents: String) -> Self {
-        Self { path, contents, mode: 0o644 }
+        Self {
+            path,
+            contents,
+            mode: 0o644,
+        }
     }
 
     pub fn secret(path: String, contents: String) -> Self {
-        Self { path, contents, mode: 0o600 }
+        Self {
+            path,
+            contents,
+            mode: 0o600,
+        }
     }
 
     pub fn is_secret(&self) -> bool {
@@ -166,10 +174,12 @@ pub trait Kind: Sync {
     fn validate_link(&self, link: &Value, app: &AppConfig) -> Result<()>;
 
     /// Pick the shared app for a link from the ones deployed and running.
-    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>>;
+    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig])
+    -> Result<Resolution<'s>>;
 
     /// Render phase: add networks and variables, write link records.
-    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution) -> Result<()>;
+    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution)
+    -> Result<()>;
 
     /// Before the application's containers start.
     fn before_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()>;

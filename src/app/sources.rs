@@ -12,7 +12,11 @@ const IGNORE_FILE: &str = ".depapignore";
 
 /// Paths relative to `base_dir`, sorted. Without `attach_sources`/`build`
 /// only the compose file is uploaded.
-pub fn collect(base_dir: &Path, deployment: &Deployment, config_files: &[PathBuf]) -> Result<Vec<PathBuf>> {
+pub fn collect(
+    base_dir: &Path,
+    deployment: &Deployment,
+    config_files: &[PathBuf],
+) -> Result<Vec<PathBuf>> {
     if !deployment.uploads_sources() {
         return Ok(vec![PathBuf::from(&deployment.compose_file)]);
     }
@@ -31,7 +35,9 @@ pub fn collect(base_dir: &Path, deployment: &Deployment, config_files: &[PathBuf
         .build();
     for entry in walker {
         let entry = entry?;
-        let is_file = entry.file_type().is_some_and(|t| t.is_file() || t.is_symlink());
+        let is_file = entry
+            .file_type()
+            .is_some_and(|t| t.is_file() || t.is_symlink());
         if !is_file {
             continue;
         }
@@ -90,13 +96,22 @@ mod tests {
         fs::write(base.join(".depapignore"), "node_modules/\n").unwrap();
         fs::write(base.join(".gitignore"), "dist/\n").unwrap();
 
-        let deployment = Deployment { build: true, ..Deployment::default() };
+        let deployment = Deployment {
+            build: true,
+            ..Deployment::default()
+        };
         let config_files = [base.join("depap.yaml"), base.join("secrets/prod.yaml")];
         let files = collect(base, &deployment, &config_files).unwrap();
         let files: Vec<_> = files.iter().map(|f| f.to_str().unwrap()).collect();
         assert_eq!(
             files,
-            [".depapignore", ".gitignore", "dist/app.js", "docker-compose.yaml", "src/main.rs"]
+            [
+                ".depapignore",
+                ".gitignore",
+                "dist/app.js",
+                "docker-compose.yaml",
+                "src/main.rs"
+            ]
         );
     }
 

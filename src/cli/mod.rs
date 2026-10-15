@@ -13,7 +13,11 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::local::DepapHome;
 
 #[derive(Debug, Parser)]
-#[command(name = "depap", version, about = "Manage docker-based server deployments")]
+#[command(
+    name = "depap",
+    version,
+    about = "Manage docker-based server deployments"
+)]
 pub struct Cli {
     /// Target server (default: DEPAP_SERVER, then the current context)
     #[arg(short, long, global = true, env = "DEPAP_SERVER")]
@@ -89,10 +93,14 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
         Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
-        Command::Server(ServerCommand::Deploy(args)) => server::deploy(&home, server, args, cli.verbose),
+        Command::Server(ServerCommand::Deploy(args)) => {
+            server::deploy(&home, server, args, cli.verbose)
+        }
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, cli.verbose),
-        Command::Connector(ConnectorCommand::List) => server::connector_list(&home, server, cli.verbose),
+        Command::Connector(ConnectorCommand::List) => {
+            server::connector_list(&home, server, cli.verbose)
+        }
     }
 }

@@ -26,7 +26,8 @@ impl<'a> Lock<'a> {
             connector.exec(&format!("rm -rf -- {quoted}"))?;
         }
 
-        let script = format!("mkdir -- {quoted} 2>/dev/null || exit {LOCKED_STATUS}; cat > {quoted}/holder");
+        let script =
+            format!("mkdir -- {quoted} 2>/dev/null || exit {LOCKED_STATUS}; cat > {quoted}/holder");
         let output = connector.run(&script, Some(holder().as_bytes()))?;
         match output.status {
             0 => Ok(Self { connector, path }),
@@ -41,7 +42,10 @@ impl<'a> Lock<'a> {
                 ))
                 .into())
             }
-            status => anyhow::bail!("cannot create lock {path} (exit status {status}): {}", output.stderr.trim()),
+            status => anyhow::bail!(
+                "cannot create lock {path} (exit status {status}): {}",
+                output.stderr.trim()
+            ),
         }
     }
 }
@@ -52,7 +56,10 @@ impl Drop for Lock<'_> {
         let _cleanup = crate::interrupt::cleanup();
         let script = format!("rm -rf -- {}", shell_quote(&self.path));
         if let Err(err) = self.connector.exec(&script) {
-            eprintln!("warning: could not remove the server lock {}: {err:#}", self.path);
+            eprintln!(
+                "warning: could not remove the server lock {}: {err:#}",
+                self.path
+            );
         }
     }
 }
@@ -62,7 +69,11 @@ fn holder() -> String {
     let host = std::fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "unknown".into());
     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
     let time = humantime::format_rfc3339_seconds(SystemTime::now());
-    format!("host={} user={user} pid={} time={time}\n", host.trim(), std::process::id())
+    format!(
+        "host={} user={user} pid={} time={time}\n",
+        host.trim(),
+        std::process::id()
+    )
 }
 
 #[cfg(test)]
@@ -80,7 +91,10 @@ mod tests {
 
         let lock = Lock::acquire(&LOCAL, home, false).unwrap();
         let err = Lock::acquire(&LOCAL, home, false).err().unwrap();
-        assert!(err.to_string().contains("locked by another depap command"), "{err}");
+        assert!(
+            err.to_string().contains("locked by another depap command"),
+            "{err}"
+        );
 
         drop(lock);
         assert!(!dir.path().join(LOCK_DIR).exists());
