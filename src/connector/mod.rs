@@ -12,7 +12,9 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::local::{ConnectorConfig, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, ServerEntry};
+use crate::config::local::{
+    ConnectorConfig, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DepapHome, ServerEntry,
+};
 
 /// Exit status used by `read_file` to signal "file does not exist".
 const MISSING_FILE_STATUS: i32 = 100;
@@ -117,8 +119,8 @@ pub trait Connector {
 }
 
 /// The connector configured for a server in servers.yaml.
-pub fn open(server: &ServerEntry, verbose: bool) -> Box<dyn Connector> {
-    match &server.connector {
+pub fn open(server: &ServerEntry, home: &DepapHome, verbose: bool) -> Result<Box<dyn Connector>> {
+    Ok(match &server.connector {
         ConnectorConfig::Local => Box::new(local::Local { verbose }),
         ConnectorConfig::Ssh {
             address,
@@ -130,9 +132,10 @@ pub fn open(server: &ServerEntry, verbose: bool) -> Box<dyn Connector> {
             port: port.unwrap_or(DEFAULT_SSH_PORT),
             user: user.clone().unwrap_or_else(|| DEFAULT_SSH_USER.to_string()),
             identity_file: identity_file.clone(),
+            control_path: ssh::control_path(&home.ssh_control_dir()?),
             verbose,
         }),
-    }
+    })
 }
 
 /// Quote a string so `sh` treats it as one literal word.
@@ -142,6 +145,7 @@ pub fn shell_quote(value: &str) -> String {
 
 /// Spawn a local process, feed it `stdin` and collect its output.
 fn run_process(mut command: Command, stdin: Option<&[u8]>) -> Result<Output> {
+    crate::interrupt::check()?;
     command
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
@@ -161,6 +165,8 @@ fn run_process(mut command: Command, stdin: Option<&[u8]>) -> Result<Output> {
         child.wait_with_output()
     })
     .with_context(|| format!("`{program}` failed"))?;
+    // Ctrl-C reached the process too; its result is not meaningful.
+    crate::interrupt::check()?;
 
     Ok(Output {
         status: output.status.code().unwrap_or(-1),

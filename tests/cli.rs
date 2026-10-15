@@ -88,6 +88,7 @@ case "$*" in
   "compose version"*) echo 2.40.0 ;;
   "compose "*" ps "*) echo "app running 0 healthy" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
+  "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*) ;;
   "network inspect "*) exit 1 ;;
   "network create "*) ;;
@@ -664,5 +665,51 @@ fn connector_list_on_fresh_server() {
         .run(&["connector", "list"], &[])
         .success()
         .stdout(contains("depap has not deployed anything"));
+}
+
+#[test]
+fn ctrl_c_stops_and_releases_the_lock() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    let log = server.env.work.path().join("docker.log");
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_depap"))
+        .env("DEPAP_HOME", server.env.home.path())
+        .env("PATH", &server.path)
+        .env("FAKE_DOCKER_LOG", &log)
+        .env("FAKE_DOCKER_SLOW_UP", "1")
+        .env_remove("DEPAP_SERVER")
+        .current_dir(server.env.work.path())
+        .args(["-s", "dev", "server", "deploy", "--apply"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0) // its own group, like a foreground job in a terminal
+        .spawn()
+        .unwrap();
+
+    // Wait until the first `docker compose up` is running.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fs::read_to_string(&log).unwrap_or_default().contains(" up -d") {
+        assert!(Instant::now() < deadline, "deploy never reached `up`");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(server.server_home.join("lock").exists());
+
+    // Ctrl-C in a terminal signals the whole group: depap, sh, docker.
+    let group = format!("-{}", child.id());
+    std::process::Command::new("kill").args(["-INT", "--", &group]).status().unwrap();
+    let started = Instant::now();
+    let output = child.wait_with_output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(130), "{stderr}");
+    assert!(stderr.contains("interrupted: stopping and cleaning up"), "{stderr}");
+    assert!(started.elapsed() < Duration::from_secs(5), "stopped without waiting for `up`");
+    assert!(!server.server_home.join("lock").exists(), "lock released");
+    let log = fs::read_to_string(&log).unwrap();
+    assert_eq!(log.matches(" up -d").count(), 1, "nothing started after Ctrl-C:\n{log}");
 }
 

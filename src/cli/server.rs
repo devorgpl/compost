@@ -102,7 +102,7 @@ pub fn list(home: &DepapHome) -> Result<()> {
 pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, verbose);
+    let connector = connector::open(&server, home, verbose)?;
     let report = state::check(connector.as_ref(), server.server_home(), &manager.manager_key)?;
 
     let summary = format!("{} ({}): {}", server.name, connector.target(), report.status);
@@ -146,7 +146,7 @@ pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose:
     let files = if args.files.is_empty() { default_files()? } else { args.files };
     let config = ServerConfig::load(&files)?;
 
-    let connector = connector::open(&server, verbose);
+    let connector = connector::open(&server, home, verbose)?;
     println!("Deploying to {} ({})", server.name, connector.target());
     let options = Options {
         apply: args.apply,
@@ -172,7 +172,7 @@ pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose:
 pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, verbose);
+    let connector = connector::open(&server, home, verbose)?;
     links::list(connector.as_ref(), server.server_home(), &manager.manager_key)
 }
 

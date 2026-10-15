@@ -13,6 +13,9 @@ pub enum DepapError {
     /// The command ran, but the final state check is not healthy.
     #[error("{0}")]
     Unhealthy(String),
+    /// Stopped by Ctrl-C.
+    #[error("interrupted")]
+    Interrupted,
 }
 
 impl DepapError {
@@ -21,6 +24,7 @@ impl DepapError {
             DepapError::Config(_) => 2,
             DepapError::ServerNotReady(_) => 3,
             DepapError::Unhealthy(_) => 4,
+            DepapError::Interrupted => 130,
         }
     }
 }

@@ -538,14 +538,16 @@ networks:
 
 Global flags: `-s, --server <name>`, `-v` (verbose: print every remote command), `--version`, `--help`.
 
-Exit codes: `0` OK · `1` unexpected error · `2` invalid local config or usage · `3` server not ready or a server-side check failed · `4` deployed, but the final state check is not healthy.
+Exit codes: `0` OK · `1` unexpected error · `2` invalid local config or usage · `3` server not ready or a server-side check failed · `4` deployed, but the final state check is not healthy · `130` interrupted with Ctrl-C.
 
 ### 10.1 Rules shared by mutating commands
 - **Preflight**: run the `server state` checks first and stop on `UNREACHABLE`, `NO_DOCKER` or `FOREIGN`.
 - **Lock**: create `$DEPAP_SERVER_HOME/lock/` atomically (`mkdir`) and write `holder` (host, user, pid, time) inside it. Remove it on exit, including on errors and Ctrl-C. If the lock exists, fail and print who holds it; `--force-unlock` removes a stale lock.
+- **Ctrl-C**: the first Ctrl-C stops the running remote command (the terminal signals the whole foreground job). depap then starts no new command except cleanup, releases the lock and exits with 130. A second Ctrl-C exits at once, possibly leaving the lock. A remote command whose ssh session was cut may keep running on the server.
 - **Idempotent**: running the same command again converges to the same result and does not recreate unchanged containers.
 - **`--dry-run`**: load, merge and validate the config, run the read-only server checks, and print the files and commands that would run. Nothing is changed on the server.
-- **Remote execution**: every remote action is `sh -c` over a single `ssh` invocation (or locally for `local`). Files are uploaded as a tar stream (`ssh … 'tar -x -C <dir>'`). Directories are replaced atomically: extract to `<dir>.new`, then swap.
+- **Remote execution**: every remote action is `sh -c` over a single `ssh` invocation (or locally for `local`). Files are uploaded as a tar stream (`ssh … 'tar -x -C <dir>'`). Directories are replaced atomically: extract to `<dir>.new`, then swap. Remote scripts use only POSIX `sh` and tools BusyBox also provides, so minimal servers (e.g. Alpine) work.
+- **SSH connection sharing**: depap passes `ControlMaster=auto`, `ControlPath=$DEPAP_HOME/ssh/%C` and `ControlPersist=60`. One connection serves all commands of a run, and stays open 60 s for the next run. If the socket path would be too long for a Unix socket, depap connects separately for each command instead. Measured: 53 remote commands took 7.2 s shared vs 15.7 s unshared, between two containers on one machine; real networks gain more.
 
 ### 10.2 `depap init`
 1. If `DEPAP_HOME/depap-manager.yaml` exists, print its manager key and exit 0.

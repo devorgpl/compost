@@ -70,15 +70,15 @@ pub fn run(home: &DepapHome, server: Option<&str>, command: AppCommand, verbose:
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     match command {
-        AppCommand::Deploy(args) => deploy(&manager.manager_key, &server, args, verbose),
+        AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, verbose),
         AppCommand::State(args) => {
             let (name, prefix) = instance_id(&args)?;
-            let connector = connector::open(&server, verbose);
+            let connector = connector::open(&server, home, verbose)?;
             state::state(connector.as_ref(), server.server_home(), &manager.manager_key, &name, &prefix)
         }
         AppCommand::Remove(args) => {
             let (name, prefix) = instance_id(&args.instance)?;
-            let connector = connector::open(&server, verbose);
+            let connector = connector::open(&server, home, verbose)?;
             let options = remove::Options {
                 volumes: args.volumes,
                 purge: args.purge,
@@ -123,11 +123,17 @@ fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(vec![default])
 }
 
-fn deploy(manager_key: &str, server: &ServerEntry, args: DeployArgs, verbose: bool) -> Result<()> {
+fn deploy(
+    home: &DepapHome,
+    manager_key: &str,
+    server: &ServerEntry,
+    args: DeployArgs,
+    verbose: bool,
+) -> Result<()> {
     let files = config_files(&args.files)?;
     let loaded = AppConfig::load(&files)?;
 
-    let connector = connector::open(server, verbose);
+    let connector = connector::open(server, home, verbose)?;
     println!(
         "Deploying {} to {} ({})",
         loaded.config.instance(),

@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod connector;
 mod error;
+mod interrupt;
 mod server;
 mod shared;
 
@@ -12,6 +13,9 @@ use clap::Parser;
 
 fn main() -> ExitCode {
     let args = cli::Cli::parse();
+    if let Err(err) = interrupt::install() {
+        eprintln!("warning: cannot handle Ctrl-C: {err:#}");
+    }
     match cli::run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

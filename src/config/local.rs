@@ -12,6 +12,7 @@ use crate::error::config_err;
 const MANAGER_FILE: &str = "depap-manager.yaml";
 const SERVERS_FILE: &str = "servers.yaml";
 const CONTEXT_FILE: &str = "current_context";
+const SSH_CONTROL_DIR: &str = "ssh";
 pub const DEFAULT_SSH_USER: &str = "depapuser";
 pub const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_SERVER_HOME: &str = "~/.depap-server";
@@ -139,6 +140,19 @@ impl DepapHome {
                     "unknown server `{name}`; see `depap server list` or add it with `depap server define`"
                 ))
             })
+    }
+
+    /// Directory for SSH connection sockets (created with mode 0700).
+    pub fn ssh_control_dir(&self) -> Result<PathBuf> {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let dir = self.root.join(SSH_CONTROL_DIR);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .with_context(|| format!("cannot create {}", dir.display()))?;
+        Ok(dir)
     }
 
     pub fn current_context(&self) -> Result<Option<String>> {

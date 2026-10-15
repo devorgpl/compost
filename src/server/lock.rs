@@ -48,6 +48,8 @@ impl<'a> Lock<'a> {
 
 impl Drop for Lock<'_> {
     fn drop(&mut self) {
+        // Runs after Ctrl-C too: releasing the lock is the point of cleanup.
+        let _cleanup = crate::interrupt::cleanup();
         let script = format!("rm -rf -- {}", shell_quote(&self.path));
         if let Err(err) = self.connector.exec(&script) {
             eprintln!("warning: could not remove the server lock {}: {err:#}", self.path);
