@@ -35,8 +35,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create the local depap home with a new manager key
-    Init,
+    /// Create the local depap home with a new (or the given) manager key
+    Init(init::InitArgs),
     /// Define, inspect and deploy servers
     #[command(subcommand)]
     Server(ServerCommand),
@@ -122,7 +122,7 @@ pub fn run(cli: Cli) -> Result<()> {
     let home = DepapHome::locate()?;
     let server = cli.server.as_deref();
     match cli.command {
-        Command::Init => init::run(&home),
+        Command::Init(args) => init::run(&home, args),
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
         Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),

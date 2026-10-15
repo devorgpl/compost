@@ -48,6 +48,33 @@ fn init_is_idempotent() {
 }
 
 #[test]
+fn init_with_existing_key() {
+    let key = "0B9A2E5C-7F1D-4C3B-9A8E-6D5F4C3B2A10";
+    let normalized = "0b9a2e5c-7f1d-4c3b-9a8e-6d5f4c3b2a10";
+    let env = Env::new();
+    env.depap(&["init", "--key", "not-a-key"])
+        .code(2)
+        .stderr(contains("is not a manager key"));
+    env.depap(&["init", "--key", key])
+        .success()
+        .stdout(contains(format!("manager key {normalized}")));
+    env.depap(&["init", "--key", normalized])
+        .success()
+        .stdout(contains("Already initialized"));
+
+    let other = "11111111-2222-4333-8444-555555555555";
+    env.depap(&["init", "--key", other])
+        .code(2)
+        .stderr(contains("add --force"));
+    env.depap(&["init", "--key", other, "--force"])
+        .success()
+        .stdout(contains(format!("manager key {other}")));
+    env.depap(&["init"]).success().stdout(contains(format!(
+        "Already initialized (manager key {other})"
+    )));
+}
+
+#[test]
 fn commands_require_init() {
     let env = Env::new();
     env.depap(&["server", "list"])

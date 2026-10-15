@@ -560,9 +560,11 @@ Exit codes: `0` OK · `1` unexpected error · `2` invalid local config or usage 
 - **Remote execution**: every remote action is `sh -c` over a single `ssh` invocation (or locally for `local`). Files are uploaded as a tar stream (`ssh … 'tar -x -C <dir>'`). Directories are replaced atomically: extract to `<dir>.new`, then swap. Remote scripts use only POSIX `sh` and tools BusyBox also provides, so minimal servers (e.g. Alpine) work.
 - **SSH connection sharing**: depap passes `ControlMaster=auto`, `ControlPath=$DEPAP_HOME/ssh/%C` and `ControlPersist=60`. One connection serves all commands of a run, and stays open 60 s for the next run. If the socket path would be too long for a Unix socket, depap connects separately for each command instead. Measured: 53 remote commands took 7.2 s shared vs 15.7 s unshared, between two containers on one machine; real networks gain more.
 
-### 10.2 `depap init`
-1. If `DEPAP_HOME/depap-manager.yaml` exists, print its manager key and exit 0.
-2. Otherwise create `DEPAP_HOME` with a new UUIDv4 `manager_key`, plus an empty `servers.yaml`.
+### 10.2 `depap init [--key <manager key> [--force]]`
+1. If `DEPAP_HOME/depap-manager.yaml` exists, print its manager key and exit 0. With `--key` and a different key, fail with exit 2 unless `--force`, which replaces the key (servers deployed with the old key then show as `FOREIGN`).
+2. Otherwise create `DEPAP_HOME` with the `--key` manager key or a new UUIDv4 one, plus an empty `servers.yaml`.
+
+`--key` takes an existing manager key (a UUID, stored in its canonical lowercase form), so another machine or a reinstalled one manages the same servers.
 
 All other commands require `init` (exit 2 with a hint otherwise).
 
