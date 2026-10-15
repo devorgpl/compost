@@ -49,6 +49,10 @@ impl IngressType for Caddy {
         "caddy"
     }
 
+    fn default_version(&self) -> Option<u32> {
+        Some(DEFAULT_VERSION)
+    }
+
     /// Extends the generic ingress validation with Caddy's own settings.
     fn validate_config(&self, config: &SharedAppConfig) -> Result<()> {
         base::validate_config(config)?;
@@ -71,7 +75,7 @@ impl IngressType for Caddy {
         Ok(())
     }
 
-    fn render(&self, _ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
+    fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
         let caddy: CaddyConfig = config.configuration()?;
         let version = config.version.unwrap_or(DEFAULT_VERSION);
         let image = config
@@ -89,10 +93,18 @@ impl IngressType for Caddy {
             Tls::Off => options.push("auto_https off".to_string()),
         }
 
+        // Run as the deploy user, so certificates and state Caddy writes to
+        // data/ and config/ belong to that user, not root. The image allows
+        // the caddy binary to bind ports 80 and 443 without root.
+        let ids = ctx.connector.exec("id -u && id -g")?;
+        let user = ids.split_whitespace().collect::<Vec<_>>().join(":");
+        ensure!(user.split(':').count() == 2, "unexpected output of `id`: {ids}");
+
         let compose = render_template(
             include_str!("templates/compose.yaml.j2"),
             context! {
                 image,
+                user,
                 http_port => caddy.http_port,
                 https_port => caddy.https_port,
                 publish_https => caddy.tls != Tls::Off,
@@ -240,6 +252,12 @@ mod tests {
         let rendered = render("{name: caddy-main, type: caddy}");
         let compose = file(&rendered, "compose.yaml");
         assert!(compose.contains("image: caddy:2-alpine"), "{compose}");
+        let id = |flag| {
+            let out = std::process::Command::new("id").arg(flag).output().unwrap().stdout;
+            String::from_utf8(out).unwrap().trim().to_string()
+        };
+        let user = format!("user: \"{}:{}\"", id("-u"), id("-g"));
+        assert!(compose.contains(&user), "runs as the deploy user: {compose}");
         assert!(compose.contains(r#""443:443/udp""#), "{compose}");
         assert!(compose.contains("networks: [depap-ingress]"), "{compose}");
         assert!(compose.ends_with("external: true\n"), "keeps the final newline: {compose:?}");

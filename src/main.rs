@@ -1,3 +1,22 @@
+/// Like `println!`, but a closed stdout (e.g. `depap connector list | head`)
+/// is ignored instead of panicking, so the command still finishes its work.
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
+/// Like `print!` followed by a flush, with the same handling as `out!`.
+macro_rules! out_part {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout();
+        let _ = write!(stdout, $($arg)*);
+        let _ = stdout.flush();
+    }};
+}
+
 mod app;
 mod cli;
 mod config;

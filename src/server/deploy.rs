@@ -1,7 +1,5 @@
 //! `depap server deploy` (spec §10.7).
 
-use std::io::Write;
-
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
@@ -72,7 +70,7 @@ pub fn deploy(
     if initialize {
         let key = format!("{manager_key}\n");
         connector.write_file(&ctx.path(MANAGER_KEY_FILE), key.as_bytes(), 0o644)?;
-        println!("Initialized {}", ctx.home);
+        out!("Initialized {}", ctx.home);
     }
 
     // 4. Write networks and files.
@@ -83,12 +81,12 @@ pub fn deploy(
             state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Candidate, &plan.hash);
         }
         let change = if plan.changed { "updated" } else { "unchanged" };
-        println!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
+        out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
     }
     for record in &state_file.shared {
         let configured = plans.iter().any(|p| p.kind == record.kind && p.app.name == record.name);
         if !configured {
-            println!(
+            out!(
                 "  {:<9} {:<16} orphaned: not in the configuration any more, left as it is",
                 record.kind, record.name
             );
@@ -98,7 +96,7 @@ pub fn deploy(
     state_file.save(&ctx)?;
 
     if !options.apply {
-        println!("Files are on the server. Run again with --apply to start the services.");
+        out!("Files are on the server. Run again with --apply to start the services.");
         return Ok(());
     }
 
@@ -108,16 +106,15 @@ pub fn deploy(
         let deployed = state_file
             .shared(plan.kind, &plan.app.name)
             .is_some_and(|r| r.status == DeployStatus::Deployed);
-        print!("  starting {} {} ... ", plan.kind, plan.app.name);
-        std::io::stdout().flush()?;
+        out_part!("  starting {} {} ... ", plan.kind, plan.app.name);
 
         match start(&ctx, plan, !deployed) {
             Ok(()) => {
-                println!("running");
+                out!("running");
                 state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
             }
             Err(err) => {
-                println!("failed");
+                out!("failed");
                 state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Failed, &plan.hash);
                 state_file.save(&ctx)?;
                 return Err(DepapError::ServerNotReady(format!(
@@ -214,20 +211,20 @@ fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
 }
 
 fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
-    println!("Dry run: nothing is changed on the server ({status}, home {}).", ctx.home);
-    println!("  networks: {}", all_networks(plans).join(", "));
+    out!("Dry run: nothing is changed on the server ({status}, home {}).", ctx.home);
+    out!("  networks: {}", all_networks(plans).join(", "));
     for plan in plans {
         let change = if plan.changed { "would update" } else { "unchanged" };
-        println!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
+        out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
         for dir in &plan.rendered.dirs {
-            println!("      {dir}/");
+            out!("      {dir}/");
         }
         for file in &plan.rendered.files {
             let secret = if file.is_secret() { "  (secret)" } else { "" };
-            println!("      {}  {:o}{secret}", file.path, file.mode);
+            out!("      {}  {:o}{secret}", file.path, file.mode);
         }
     }
     if apply {
-        println!("  then: docker compose up -d for each shared app, and wait until it runs");
+        out!("  then: docker compose up -d for each shared app, and wait until it runs");
     }
 }

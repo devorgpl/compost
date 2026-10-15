@@ -26,16 +26,28 @@ impl ServerConfig {
         let merged = merge::load_merged(files)?;
         let config: ServerConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("server configuration: {e}")))?;
-        config.validate()?;
-        Ok(config)
+        config.complete()
     }
 
     /// Parse and validate one document, e.g. the effective config stored on a server.
     pub fn parse(text: &str) -> Result<Self> {
         let config: ServerConfig = serde_yaml_ng::from_str(text)
             .map_err(|e| config_err(format!("server configuration: {e}")))?;
-        config.validate()?;
-        Ok(config)
+        config.complete()
+    }
+
+    /// Fill in defaults, then validate: the effective configuration (spec §7).
+    fn complete(mut self) -> Result<Self> {
+        for (kind_name, apps) in &mut self.shared {
+            // Unknown kinds are reported by `validate`.
+            if let Some(kind) = shared::find_kind(kind_name) {
+                for app in apps {
+                    kind.apply_defaults(app);
+                }
+            }
+        }
+        self.validate()?;
+        Ok(self)
     }
 
     /// A copy without secret values, safe to store on the server.
@@ -123,6 +135,12 @@ shared:
         )
         .unwrap();
         assert_eq!(config.shared_apps().count(), 2);
+    }
+
+    #[test]
+    fn fills_in_default_versions() {
+        let config = parse("shared: {ingress: [{name: caddy-main, type: caddy}]}").unwrap();
+        assert_eq!(config.shared["ingress"][0].version, Some(2));
     }
 
     #[test]

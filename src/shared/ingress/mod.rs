@@ -21,6 +21,11 @@ pub trait IngressType: Sync {
         &[]
     }
 
+    /// Version used when the config gives none.
+    fn default_version(&self) -> Option<u32> {
+        None
+    }
+
     fn validate_config(&self, config: &SharedAppConfig) -> Result<()> {
         base::validate_config(config)
     }
@@ -52,6 +57,12 @@ pub struct IngressKind;
 impl Kind for IngressKind {
     fn name(&self) -> &'static str {
         KIND
+    }
+
+    fn apply_defaults(&self, config: &mut SharedAppConfig) {
+        if let (None, Ok(found)) = (config.version, find_type(&config.type_name)) {
+            config.version = found.default_version();
+        }
     }
 
     fn validate_shared(&self, config: &SharedAppConfig) -> Result<()> {

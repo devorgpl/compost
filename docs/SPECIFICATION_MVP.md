@@ -251,7 +251,7 @@ Defaults when `-f` is not given:
 - `server deploy`: `depap-server.yaml` and `.depap-server.secrets.yaml` if present.
 - `app deploy`: `depap.yaml`. An overlay MUST be passed explicitly: `-f depap.yaml -f .depap-staging.yaml`.
 
-The **effective configuration** (merge result plus defaults) is what gets validated, stored on the server (with secrets removed) and shown by `--dry-run`.
+The **effective configuration** (merge result plus defaults, e.g. each type's default `version`) is what gets validated, stored on the server (with secrets removed) and shown by `--dry-run`.
 
 ## 8. Server layout
 
@@ -447,6 +447,7 @@ Inherits `validate_link` and `prepare_application` from `ingress::base`. Extends
 services:
   caddy:
     image: caddy:2-alpine
+    user: "1000:1000"   # the deploy user (`id -u`:`id -g` on the server)
     restart: unless-stopped
     ports: ["80:80", "443:443", "443:443/udp"]
     volumes:
@@ -468,6 +469,8 @@ networks:
 }
 import /etc/caddy/sites/*.caddy
 ```
+Caddy runs as the deploy user, so everything it writes to `data/` (certificates) and `config/` belongs to that user and can be backed up or removed without root. The official image allows its binary to bind ports 80 and 443 without root.
+
 `conf/sites/00-default.caddy` holds a catch-all `:80` site that answers 404 ("no application is deployed for this host"). The import therefore always matches a file, and an unknown host gets a clear answer.
 
 Site file for an ingress link. Routes are written longest path first, `/` last. Unmatched paths return 404.

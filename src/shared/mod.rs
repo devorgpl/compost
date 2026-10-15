@@ -134,6 +134,10 @@ pub trait Kind: Sync {
     /// Key under `shared:` / `services:`; also the value accepted by `--purge`.
     fn name(&self) -> &'static str;
 
+    /// Fill in defaults the type defines, e.g. a version. Unknown types are
+    /// left alone; validation reports them.
+    fn apply_defaults(&self, config: &mut SharedAppConfig);
+
     /// Validate one shared app of this kind.
     fn validate_shared(&self, config: &SharedAppConfig) -> Result<()>;
 

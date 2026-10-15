@@ -74,14 +74,14 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
         None => servers.servers.push(entry.clone()),
     }
     home.save_servers(&servers)?;
-    println!("Defined server {} ({})", entry.name, entry.connector.describe());
+    out!("Defined server {} ({})", entry.name, entry.connector.describe());
     Ok(())
 }
 
 pub fn list(home: &DepapHome) -> Result<()> {
     let servers = home.servers()?;
     if servers.servers.is_empty() {
-        println!("No servers defined. Add one with `depap server define`.");
+        out!("No servers defined. Add one with `depap server define`.");
         return Ok(());
     }
 
@@ -89,7 +89,7 @@ pub fn list(home: &DepapHome) -> Result<()> {
     let width = servers.servers.iter().map(|s| s.name.len()).max().unwrap_or(0);
     for server in &servers.servers {
         let marker = if current.as_deref() == Some(server.name.as_str()) { "*" } else { " " };
-        println!(
+        out!(
             "{marker} {:<width$}  {}  home: {}",
             server.name,
             server.connector.describe(),
@@ -114,17 +114,17 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
         Status::Uninitialized | Status::Degraded | Status::Ok => {}
     }
 
-    println!("{summary}");
+    out!("{summary}");
     if let (Some(docker), Some(server_home)) = (&report.docker, &report.home) {
-        println!("  {docker}, home {server_home}");
+        out!("  {docker}, home {server_home}");
     }
     if report.shared.is_empty() {
-        println!("  no shared applications");
+        out!("  no shared applications");
     }
     for app in &report.shared {
         let version = app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
         let running = if app.running { "running" } else { "not running" };
-        println!(
+        out!(
             "  {:<9} {:<16} {} {version}  {running}",
             app.kind, app.name, app.type_name
         );
@@ -147,7 +147,7 @@ pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose:
     let config = ServerConfig::load(&files)?;
 
     let connector = connector::open(&server, home, verbose)?;
-    println!("Deploying to {} ({})", server.name, connector.target());
+    out!("Deploying to {} ({})", server.name, connector.target());
     let options = Options {
         apply: args.apply,
         dry_run: args.dry_run,
@@ -162,7 +162,7 @@ pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose:
     )?;
 
     if args.apply && !args.dry_run {
-        println!();
+        out!();
         return state(home, Some(&server.name), verbose);
     }
     Ok(())

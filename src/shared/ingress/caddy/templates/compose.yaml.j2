@@ -2,6 +2,8 @@
 services:
   caddy:
     image: {{ image }}
+    # The deploy user, so files in data/ and config/ belong to it.
+    user: "{{ user }}"
     restart: unless-stopped
     ports:
       - "{{ http_port }}:80"

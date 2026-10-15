@@ -37,17 +37,17 @@ pub fn remove(
     };
     let project = instance.app.instance();
 
-    println!("Removing {project}:");
-    println!("  containers and the folder {}", ctx.path(&instance::dir(name, prefix)));
+    out!("Removing {project}:");
+    out!("  containers and the folder {}", ctx.path(&instance::dir(name, prefix)));
     if options.volumes {
-        println!("  volumes of the compose project");
+        out!("  volumes of the compose project");
     }
     for link in &instance.links {
         let purged = if options.purge.contains(&link.kind) { ", and delete its data" } else { "" };
-        println!("  link {} {} to {}{purged}", link.kind, link.entry, link.instance);
+        out!("  link {} {} to {}{purged}", link.kind, link.entry, link.instance);
     }
     if !options.yes && !confirm()? {
-        println!("Cancelled.");
+        out!("Cancelled.");
         return Ok(());
     }
 
@@ -71,7 +71,7 @@ pub fn remove(
     let mut state_file = StateFile::load(&ctx)?;
     state_file.remove_app(name, prefix);
     state_file.save(&ctx)?;
-    println!("Removed {project}.");
+    out!("Removed {project}.");
     Ok(())
 }
 

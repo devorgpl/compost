@@ -23,7 +23,7 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
     let home = match (report.status, &report.home) {
         (Status::Ok | Status::Degraded, Some(home)) => home.clone(),
         (Status::Uninitialized, _) => {
-            println!("No shared applications: depap has not deployed anything on this server.");
+            out!("No shared applications: depap has not deployed anything on this server.");
             return Ok(());
         }
         (status, _) => {
@@ -39,12 +39,12 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
     let state_file = StateFile::load(&ctx)?;
 
     for (kind_name, apps) in &server_config.shared {
-        println!("{kind_name}");
+        out!("{kind_name}");
         for (i, shared_app) in apps.iter().enumerate() {
             let last = i + 1 == apps.len();
             let (branch, indent) = if last { ("└─", "   ") } else { ("├─", "│  ") };
             let version = shared_app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
-            println!(
+            out!(
                 "{branch} {}  {} {version}  {}",
                 shared_app.name,
                 shared_app.type_name,
@@ -53,11 +53,11 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
 
             let lines = link_lines(&ctx, &state_file, kind_name, shared_app)?;
             if lines.is_empty() {
-                println!("{indent}└─ no links");
+                out!("{indent}└─ no links");
             }
             for (j, line) in lines.iter().enumerate() {
                 let branch = if j + 1 == lines.len() { "└─" } else { "├─" };
-                println!("{indent}{branch} {line}");
+                out!("{indent}{branch} {line}");
             }
         }
     }

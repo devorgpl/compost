@@ -74,10 +74,10 @@ pub fn deploy(
 
     let project = app.instance();
     if options.dry_run {
-        println!("Dry run: nothing is changed on the server.");
-        println!("  instance {project}: {} files to upload", files.len());
+        out!("Dry run: nothing is changed on the server.");
+        out!("  instance {project}: {} files to upload", files.len());
         for link in &links {
-            println!("  {}: uses {} {}", link.path(), link.shared.type_name, link.shared.name);
+            out!("  {}: uses {} {}", link.path(), link.shared.type_name, link.shared.name);
         }
         return Ok(());
     }
@@ -87,7 +87,7 @@ pub fn deploy(
     let dir = instance::dir(&app.name, &app.prefix);
     let archive = sources::pack(&loaded.base_dir, &files)?;
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;
-    println!("  uploaded {} files", files.len());
+    out!("  uploaded {} files", files.len());
 
     let mut contribution = Contribution::default();
     for service in &app.app_services {
@@ -125,7 +125,7 @@ pub fn deploy(
     state_file.set_app(&app.name, &app.prefix, DeployStatus::Candidate);
     state_file.save(&ctx)?;
     if !options.apply {
-        println!("Files are on the server. Run again with --apply to start {project}.");
+        out!("Files are on the server. Run again with --apply to start {project}.");
         return Ok(());
     }
 
@@ -134,7 +134,7 @@ pub fn deploy(
         Ok(()) => {
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
-            println!();
+            out!();
             super::state::print(&ctx, &Instance { app: stored_config, links: pinned.links })?;
             Ok(())
         }
@@ -187,7 +187,7 @@ fn resolve_links<'a>(
             .map_err(|e| not_ready(&format!("{path}: {e:#}")))?;
         match resolution {
             Resolution::Use(shared) => links.push(Link { kind, name, entry, shared: shared.clone() }),
-            Resolution::Skip(reason) => println!("  {path}: skipped ({reason})"),
+            Resolution::Skip(reason) => out!("  {path}: skipped ({reason})"),
         }
     }
     links.sort_by_key(|link| link.kind.apply_order());
@@ -207,12 +207,12 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
     let project = app.instance();
     let compose = instance::compose_command(ctx, app);
     if app.deployment.build {
-        println!("  building images ...");
+        out!("  building images ...");
         ctx.connector.exec(&format!("{compose} build -q"))?;
     } else {
         ctx.connector.exec(&format!("{compose} pull -q --ignore-buildable"))?;
     }
-    println!("  starting {project} ...");
+    out!("  starting {project} ...");
     ctx.connector.exec(&format!("{compose} up -d --remove-orphans"))?;
     wait_until_ready(ctx.connector, &project)?;
 

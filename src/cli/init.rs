@@ -7,7 +7,7 @@ use crate::config::local::{DepapHome, Manager, Servers};
 
 pub fn run(home: &DepapHome) -> Result<()> {
     if let Some(manager) = home.manager()? {
-        println!("Already initialized (manager key {})", manager.manager_key);
+        out!("Already initialized (manager key {})", manager.manager_key);
         return Ok(());
     }
 
@@ -18,7 +18,7 @@ pub fn run(home: &DepapHome) -> Result<()> {
     if !home.servers_file_exists() {
         home.save_servers(&Servers::default())?;
     }
-    println!(
+    out!(
         "Created {} (manager key {})",
         home.root().display(),
         manager.manager_key

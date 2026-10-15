@@ -36,12 +36,12 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     let status = state_file
         .app(&app.name, &app.prefix)
         .map_or_else(|| "unknown".to_string(), |r| format!("{} ({})", r.status, r.updated_at));
-    println!("{}: {status}", app.instance());
+    out!("{}: {status}", app.instance());
 
     let containers = compose::ps(ctx.connector, &app.instance())?;
-    println!("  services:");
+    out!("  services:");
     if containers.is_empty() {
-        println!("    none running");
+        out!("    none running");
     }
     let compose = stored_compose_file(ctx, instance)?;
     let width = containers.iter().map(|c| c.service.len()).max().unwrap_or(0);
@@ -54,11 +54,11 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         let ok = container.is_healthy(keeps_running);
         healthy &= ok;
         let mark = if ok { "" } else { "  ← not healthy" };
-        println!("    {:<width$}  {}{mark}", container.service, container.describe(keeps_running));
+        out!("    {:<width$}  {}{mark}", container.service, container.describe(keeps_running));
     }
 
     if !instance.links.is_empty() {
-        println!("  links:");
+        out!("  links:");
         let server_config = instance::server_config(ctx)?;
         for link in &instance.links {
             let summary = match (shared::find_kind(&link.kind), link.shared_app(&server_config)) {
@@ -69,7 +69,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
                 }
                 _ => "shared app is no longer configured".to_string(),
             };
-            println!("    {:<9} {:<16} {}: {summary}", link.kind, link.entry, link.instance);
+            out!("    {:<9} {:<16} {}: {summary}", link.kind, link.entry, link.instance);
         }
     }
     Ok(healthy)

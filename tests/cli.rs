@@ -643,7 +643,7 @@ fn connector_list_shows_links_per_shared_app() {
             "database\n└─ postgres16  postgres 16  running\n   └─ myapp-staging/system-data  database myapp_staging_system_data, user myapp_staging_system_data  app: deployed\n",
         ))
         .stdout(contains(
-            "ingress\n└─ caddy-main  caddy -  running\n   └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000  app: deployed\n",
+            "ingress\n└─ caddy-main  caddy 2  running\n   └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000  app: deployed\n",
         ));
 
     // A record left behind without its instance is shown, not hidden.
@@ -711,5 +711,29 @@ fn ctrl_c_stops_and_releases_the_lock() {
     assert!(!server.server_home.join("lock").exists(), "lock released");
     let log = fs::read_to_string(&log).unwrap();
     assert_eq!(log.matches(" up -d").count(), 1, "nothing started after Ctrl-C:\n{log}");
+}
+
+#[test]
+fn closed_stdout_does_not_panic() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let server = server_with_app();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_depap"))
+        .env("DEPAP_HOME", server.env.home.path())
+        .env("PATH", &server.path)
+        .env("FAKE_DOCKER_LOG", server.env.work.path().join("docker.log"))
+        .env("FAKE_DOCKER_RUNNING", "1")
+        .args(["-s", "dev", "connector", "list"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take()); // like `| head` exiting before reading
+    let mut stderr = String::new();
+    child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success(), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
 }
 

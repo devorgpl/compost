@@ -134,7 +134,7 @@ fn deploy(
     let loaded = AppConfig::load(&files)?;
 
     let connector = connector::open(server, home, verbose)?;
-    println!(
+    out!(
         "Deploying {} to {} ({})",
         loaded.config.instance(),
         server.name,
