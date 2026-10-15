@@ -1,0 +1,55 @@
+# Pushing a tag like v0.1.0 tests, builds portable binaries and publishes a
+# Gitea release with generated notes:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag must match the version in Cargo.toml. Tags with a `-` (v0.2.0-rc.1)
+# become pre-releases.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # all tags, for the release notes
+
+      - name: Set up Rust, zig and cargo-zigbuild
+        run: scripts/ci/setup.sh release
+
+      - name: Cache cargo downloads and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Formatting, clippy and tests
+        run: just ci
+
+      - name: Build portable binaries
+        run: scripts/build-release.sh "${{ github.ref_name }}"
+
+      - name: Write release notes
+        run: >
+          scripts/release-notes.sh "${{ github.ref_name }}"
+          "${{ github.server_url }}/${{ github.repository }}"
+          > dist/RELEASE_NOTES.md
+
+      - name: Publish release
+        env:
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_REPO: ${{ github.repository }}
+          # The job's own token can create releases. If your Gitea restricts
+          # it, add a token with repository write access as RELEASE_TOKEN.
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >
+          scripts/gitea-release.sh "${{ github.ref_name }}" dist/RELEASE_NOTES.md
+          dist/*.tar.gz dist/SHA256SUMS

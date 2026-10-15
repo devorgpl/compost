@@ -51,10 +51,14 @@ ci: lint test
 install:
     cargo install --path .
 
-# Static Linux binary for servers (needs the musl target installed)
-musl:
-    cargo build --release --target x86_64-unknown-linux-musl
-
 # Remove build output
 clean:
     cargo clean
+
+# Portable release archives in dist/ (needs: scripts/ci/setup.sh release)
+dist:
+    scripts/build-release.sh v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+
+# Release notes for a tag, e.g. `just release-notes v0.1.0`
+release-notes tag:
+    scripts/release-notes.sh {{tag}}
