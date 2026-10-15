@@ -1,6 +1,7 @@
 #!/bin/sh
 # Print release notes (Markdown) for a tag: the commits since the previous
-# `v*` tag, plus install instructions.
+# `v*` tag, plus install instructions. Version bumps (`Version <x>`, and the
+# older `Next version`) are left out.
 #
 #   scripts/release-notes.sh v0.2.0 [https://gitea.example.com/owner/depap]
 #
@@ -20,7 +21,8 @@ else
     echo "## Changes"
 fi
 echo
-git log --no-merges --reverse --pretty='- %s (%h)' "$range"
+git log --no-merges --reverse --pretty='- %s (%h)' \
+    --invert-grep --grep='^Version [0-9]' --grep='^Next version$' "$range"
 if [ -n "$previous" ] && [ -n "$repo_url" ]; then
     echo
     echo "Full diff: $repo_url/compare/$previous...$tag"

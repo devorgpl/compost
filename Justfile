@@ -59,6 +59,10 @@ clean:
 dist:
     scripts/build-release.sh v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 
+# Set the version and commit it, e.g. `just bump 0.2.0` or `just bump 0.2.1-dev`
+bump version:
+    scripts/bump-version.sh {{version}}
+
 # Release notes for a tag, e.g. `just release-notes v0.1.0`
 release-notes tag:
     scripts/release-notes.sh {{tag}}

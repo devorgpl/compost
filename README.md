@@ -93,11 +93,16 @@ Gitea Actions ([`.gitea/workflows`](.gitea/workflows)):
 - **Every branch push and pull request:** runs `just ci`.
 - **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag.
 
+Between releases, master carries the next version with a `-dev` suffix (e.g. `0.2.0-dev`), so builds from master never pass for a release. To release it:
+
 ```sh
-# 1. set `version` in Cargo.toml, commit
-git tag v0.1.0
-git push origin v0.1.0
+just bump 0.2.0          # sets Cargo.toml and Cargo.lock, commits "Version 0.2.0"
+git push && git tag v0.2.0 && git push origin v0.2.0
+just bump 0.2.1-dev      # start the next version
+git push
 ```
+
+The tag must match the version in Cargo.toml. Release notes leave out the `Version …` commits.
 
 The workflows need a Gitea Actions runner with the `ubuntu-latest` label. They install everything else themselves.
 
