@@ -13,7 +13,7 @@ use super::backup::{
 };
 use super::instance::{self, Instance};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
-use super::{deploy, volumes};
+use super::{deploy, secrets, volumes};
 use crate::backup::{self, Archive, InstanceRef, ItemReader, Manifest, Scope};
 use crate::config::app::{AppConfig, ComposeFile};
 use crate::config::server::{BackupTarget, ServerConfig};
@@ -199,6 +199,35 @@ fn restore_deployment(
     files.extend(options.files.iter().cloned());
     let loaded = AppConfig::load(&files, options.prefix.as_deref())?;
 
+    // Stored secrets: the target's own, else the archived ones, which are
+    // stored for the target once it is deployed.
+    let (name, prefix) = (&loaded.config.name, &loaded.config.prefix);
+    let mut restored_secrets = None;
+    let stored = match secrets::read_in(ctx, name, prefix)? {
+        Some((path, value)) => {
+            out!("  using stored secrets {path}");
+            Some(value)
+        }
+        None => {
+            let item = format!("{}/{}", plan.dir, secrets::ARCHIVE_ITEM);
+            if plan.archive.has(&item) {
+                let overlay = secrets::prepare(&plan.archive.read(&item)?, Some(prefix))?;
+                if overlay.name != *name {
+                    bail!("the archived secrets are not for app `{name}`");
+                }
+                let value = serde_yaml_ng::from_str(&overlay.text)?;
+                restored_secrets = Some(overlay);
+                Some(value)
+            } else {
+                None
+            }
+        }
+    };
+    let loaded = match stored {
+        Some(stored) => AppConfig::load_with(&files, Some(stored), options.prefix.as_deref())?,
+        None => loaded,
+    };
+
     let target = loaded.config.instance();
     if target == plan.old_instance {
         out!("Restoring {target}");
@@ -226,7 +255,14 @@ fn restore_deployment(
         &loaded,
         &files,
         &deploy_options,
-    )
+    )?;
+
+    if let Some(overlay) = restored_secrets {
+        let _lock = Lock::acquire(ctx.connector, &ctx.home, options.force_unlock)?;
+        let path = secrets::store(ctx, &overlay)?;
+        out!("Restored the stored secrets of {target} to {path}");
+    }
+    Ok(())
 }
 
 /// Load data into an instance that is deployed, with its services stopped.

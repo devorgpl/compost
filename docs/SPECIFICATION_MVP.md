@@ -737,6 +737,7 @@ manifest.yaml                                  # format: 1, scope: server|app|ap
                                                # server, instances, shared, items [{path, size}]
 apps/<app>/<prefix>/depap.yaml                 # stored effective config (no secrets)
 apps/<app>/<prefix>/depap-env.yaml
+apps/<app>/<prefix>/secrets.yaml               # overlay stored with `secret deploy`, if any (secrets)
 apps/<app>/<prefix>/sources.tar                # the uploaded sources (only the compose file without attach_sources)
 apps/<app>/<prefix>/volumes/<volume>.tar
 apps/<app>/<prefix>/images.tar                 # docker save
@@ -754,13 +755,13 @@ Kinds take part through `Kind` hooks with no-op defaults: `backup_link`, `restor
 ### 10.14 `depap app backup [<instance> | -f … | --app … --prefix … | --all] [--include …] [--link …]… [--format …] [-o …] [--target …] [--stop]`
 Parts (`--include`, comma-separated): `links`, `sources`, `volumes`, `images`. Default: `links,sources,volumes`. With `--link <entry>` or `--link <kind>:<entry>` (repeatable) only links are saved unless `--include` says otherwise, e.g. `--link main-db --format raw` writes a plain SQL dump. A `--link` that matches no link is a usage error.
 1. Preflight, lock (a backup during a deploy would be inconsistent).
-2. Per instance: the stored `depap.yaml` and `depap-env.yaml`; `sources/` as tar; each link's `backup_link`; each `backup.volumes` volume through a `busybox` helper container (`tar -cf - -C /v .`; a volume that does not exist yet is skipped with a warning); with `images`, `docker save` of the images of `C config --images` that exist.
+2. Per instance: the stored `depap.yaml` and `depap-env.yaml`, and the overlay stored with `secret deploy` if there is one (depap format only; depap says so, as the archive then holds secrets); `sources/` as tar; each link's `backup_link`; each `backup.volumes` volume through a `busybox` helper container (`tar -cf - -C /v .`; a volume that does not exist yet is skipped with a warning); with `images`, `docker save` of the images of `C config --images` that exist.
 3. `--stop` stops the running services while volumes are copied and starts the same services again afterwards (also on errors and Ctrl-C).
 
 ### 10.15 `depap app restore <archive> [--instance <instance> | --all] [--prefix <prefix>] [-f …] [--include …] [--link …]… [--source …] [--replace] [--yes]`
 The archive must be an app archive (exit 2 otherwise). With several instances, `--instance` or `--all` is required. Parts default to everything in the archive (only links with `--link`).
 
-**Deployment restore** (sources are restored): the archived `depap.yaml` is the base config, `-f` overlays are merged over it and `--prefix` replaces its prefix. This makes a copy, e.g. `--prefix review -f review-domains.yaml` (domains must differ, see §6.3; database names follow the new prefix unless the config sets `db_name`). The instance is deployed as with `app deploy --apply` (§10.8), and after the `before_apply_application` hooks:
+**Deployment restore** (sources are restored): the archived `depap.yaml` is the base config, `-f` overlays are merged over it and `--prefix` replaces its prefix. Stored secrets are merged after the base config as in `app deploy` (§7): the target instance's own stored overlay if the server has one, else the archived one, which is stored for the target (with its prefix) once the deploy succeeded. This makes a copy, e.g. `--prefix review -f review-domains.yaml` (domains must differ, see §6.3; database names follow the new prefix unless the config sets `db_name`). The instance is deployed as with `app deploy --apply` (§10.8), and after the `before_apply_application` hooks:
 1. `restore_link` for each selected link (the database was just created by the link);
 2. `docker load` of the images; images built for the archived instance are tagged for the new one, and the build/pull step is skipped;
 3. `C create`, then each volume's contents are replaced;
@@ -803,7 +804,7 @@ Compose services whose names are not valid names (§3.1) are listed in a comment
 ### 10.21 `depap secret deploy <file> [--prefix <prefix>]` / `secret list` / `secret remove --app <name> [--prefix <prefix>]`
 `deploy` stores a deployment overlay (§6.2) that names its app (`name:`) at `secrets/apps/<app>/<prefix>.yaml` on the server, mode 0600. The prefix is `--prefix`, else the file's `prefix`, else `main`. The stored copy always has the `prefix`. The server must be initialized. Takes the lock.
 
-`app deploy` then needs only `depap.yaml` (§7). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
+`app deploy` then needs only `depap.yaml` (§7). `app backup` saves the overlay and `app restore` puts it back (§10.14, §10.15). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
 
 ### 10.22 `depap config set <key> <value> [--for-server <name>]` / `config unset <key> [--for-server <name>]` / `config show`
 Edits `config.yaml` (§4.3), or with `--for-server` the server's entry in `servers.yaml`. The only key is `deploy.apply` (`true`/`false`). `server define --force` keeps a server's settings.

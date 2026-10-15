@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 
 use super::instance::{self, Instance, Selector};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
-use super::volumes;
+use super::{secrets, volumes};
 use crate::backup::{self, Backup, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope};
 use crate::config::server::{BackupTarget, ServerConfig};
 use crate::connector::{Connector, shell_quote};
@@ -204,6 +204,20 @@ fn backup_instance(
         if let Some(text) = ctx.read(&format!("{server_dir}/{file}"))? {
             backup.file(&format!("{dir}/{file}"), Role::Meta, text.as_bytes())?;
         }
+    }
+    // The overlay from `secret deploy`, which the effective config lacks.
+    // Configuration, so not part of raw output.
+    let stored = match options.format {
+        Format::Depap => ctx.read(&secrets::path(&app.name, &app.prefix))?,
+        Format::Raw => None,
+    };
+    if let Some(text) = stored {
+        backup.file(
+            &format!("{dir}/{}", secrets::ARCHIVE_ITEM),
+            Role::Meta,
+            text.as_bytes(),
+        )?;
+        out!("  stored secrets (the archive holds them)");
     }
 
     if components.contains(&Component::Sources) {

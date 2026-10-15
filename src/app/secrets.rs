@@ -10,9 +10,13 @@ use crate::config::check_name;
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::server::lock::Lock;
+use crate::shared::ServerCtx;
 
 /// Relative to DEPAP_SERVER_HOME. Outside `apps/`, so `app remove` keeps them.
 const DIR: &str = "secrets/apps";
+
+/// The stored overlay in an app archive, next to the instance's `depap.yaml`.
+pub const ARCHIVE_ITEM: &str = "secrets.yaml";
 
 /// `secrets/apps/<app>/<prefix>.yaml`
 pub fn path(name: &str, prefix: &str) -> String {
@@ -70,14 +74,22 @@ pub fn deploy(
 ) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let _lock = Lock::acquire(connector, &ctx.home, force_unlock)?;
-    let path = ctx.path(&path(&overlay.name, &overlay.prefix));
-    connector.write_file(&path, overlay.text.as_bytes(), 0o600)?;
+    let path = store(&ctx, overlay)?;
     out!(
         "Stored secrets of {}-{} in {path}",
         overlay.name,
         overlay.prefix
     );
     Ok(())
+}
+
+/// Write the overlay of its instance; returns the absolute path. The caller
+/// holds the lock.
+pub fn store(ctx: &ServerCtx, overlay: &Overlay) -> Result<String> {
+    let path = ctx.path(&path(&overlay.name, &overlay.prefix));
+    ctx.connector
+        .write_file(&path, overlay.text.as_bytes(), 0o600)?;
+    Ok(path)
 }
 
 /// The stored overlay of an instance, if any. Reads without checking the
@@ -88,9 +100,17 @@ pub fn read(
     name: &str,
     prefix: &str,
 ) -> Result<Option<(String, Value)>> {
-    let home = connector.resolve_path(server_home)?;
-    let path = format!("{home}/{}", path(name, prefix));
-    let Some(text) = connector.read_file(&path)? else {
+    let ctx = ServerCtx {
+        connector,
+        home: connector.resolve_path(server_home)?,
+    };
+    read_in(&ctx, name, prefix)
+}
+
+/// The stored overlay of an instance with its absolute path, if any.
+pub fn read_in(ctx: &ServerCtx, name: &str, prefix: &str) -> Result<Option<(String, Value)>> {
+    let path = ctx.path(&path(name, prefix));
+    let Some(text) = ctx.connector.read_file(&path)? else {
         return Ok(None);
     };
     let value: Value =

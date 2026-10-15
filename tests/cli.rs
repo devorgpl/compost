@@ -1596,3 +1596,88 @@ fn stored_secrets_are_used_by_app_deploy() {
         .code(2)
         .stderr(contains("no stored secrets"));
 }
+
+#[test]
+fn app_backup_and_restore_keep_stored_secrets() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file(
+        "app/.depap.secrets.yaml",
+        &format!("name: myapp\n{APP_OVERLAY}"),
+    );
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["secret", "deploy", "app/.depap.secrets.yaml"], &[])
+        .success();
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/depap.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &running,
+        )
+        .success();
+
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "-o", "b.tar.gz"],
+            &running,
+        )
+        .success()
+        .stdout(contains("  stored secrets (the archive holds them)"));
+
+    // A new server, as far as this instance is concerned.
+    server
+        .run(&["app", "remove", "myapp-staging", "--yes"], &running)
+        .success();
+    server
+        .run(
+            &["secret", "remove", "--app", "myapp", "--prefix", "staging"],
+            &[],
+        )
+        .success();
+    let stored = server.server_home.join("secrets/apps/myapp/staging.yaml");
+    assert!(!stored.exists());
+
+    server
+        .run(
+            &["app", "restore", "b.tar.gz", "--replace", "--yes"],
+            &running,
+        )
+        .success()
+        .stdout(contains("Restored the stored secrets of myapp-staging"));
+    assert!(fs::read_to_string(&stored).unwrap().contains("pa$$word"));
+    // The link record was removed, so the password comes from the secrets.
+    let override_yaml = server.read_server_file("apps/myapp/staging/compose/depap.override.yaml");
+    assert!(
+        override_yaml.contains("DATABASE_PASSWORD: pa$$$$word"),
+        "{override_yaml}"
+    );
+
+    // Raw output holds data only.
+    server
+        .run(
+            &[
+                "app",
+                "backup",
+                "myapp-staging",
+                "--format",
+                "raw",
+                "-o",
+                "raw.tar.gz",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("stored secrets").not());
+}
