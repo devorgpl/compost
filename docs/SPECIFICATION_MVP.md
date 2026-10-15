@@ -73,15 +73,25 @@ servers:
       user: depapuser        # optional, default "depapuser"
       identity_file: ~/.ssh/id_ed25519  # optional; default: ssh config / agent / ~/.ssh/id_*
     server_home: ~/.depap-server       # optional, default ~/.depap-server (on the server)
+    deploy:                            # optional; overrides config.yaml for this server
+      apply: false
   - name: dev
     connector:
       type: local
 ```
 
-### 4.3 `current_context`
+### 4.3 `config.yaml`
+Preferences of the operator, written by `depap config` (§10.22).
+```yaml
+deploy:
+  apply: true     # `server deploy` and `app deploy` start services without --apply
+```
+Per server, `servers.yaml` `deploy.apply` wins over this file. `--apply`/`--no-apply` win over both. The default is `false`.
+
+### 4.4 `current_context`
 Plain text file containing a server name. Written by `connect`, removed by `disconnect`.
 
-### 4.4 Choosing the target server
+### 4.5 Choosing the target server
 Every command that talks to a server uses, in order: `--server/-s <name>` → `DEPAP_SERVER` environment variable → `current_context`. If none is set, the command fails with exit code 2.
 
 ## 5. Server configuration
@@ -114,6 +124,11 @@ backup:                              # optional (§10.13)
   target: local                      # local | server | s3 ; default local (s3: not implemented yet)
   server_path: backups               # archive folder of the server target; absolute or relative to DEPAP_SERVER_HOME
 ```
+`depap server generate` (§10.19) writes this file as the setup for the operator's own machine (Caddy on port 18080 without TLS), plus `depap-server.prod.yaml`, an overlay with what a real server changes (ports 80/443, `tls: auto`, `acme_email`):
+```sh
+depap server deploy --apply -f depap-server.yaml,depap-server.prod.yaml,.depap-server.secrets.yaml
+```
+
 `backup` is kept in the stored effective config, so `backup`/`restore` commands read the default target from the server.
 
 ### 5.2 `.depap-server.secrets.yaml`
@@ -256,7 +271,9 @@ Errors raised against the server during deploy (exit code 3). These are also kin
 
 Defaults when `-f` is not given:
 - `server deploy`: `depap-server.yaml` and `.depap-server.secrets.yaml` if present.
-- `app deploy`: `depap.yaml`. An overlay MUST be passed explicitly: `-f depap.yaml -f .depap-staging.yaml`.
+- `app deploy`: `depap.yaml`. An overlay MUST be passed explicitly: `-f depap.yaml -f .depap-staging.yaml`, or stored on the server with `depap secret deploy` (§10.21).
+
+`app deploy` merges the instance's stored overlay, if there is one, right after the first file: `depap.yaml` → stored secrets → the other `-f` files. Local overlays can still override stored values.
 
 The **effective configuration** (merge result plus defaults, e.g. each type's default `version`) is what gets validated, stored on the server (with secrets removed) and shown by `--dry-run`.
 
@@ -271,6 +288,7 @@ $DEPAP_SERVER_HOME/
 ├── state.yaml                        # depap-owned state (§8.2)
 ├── lock/                             # exists while a mutating command runs (§10.1)
 ├── backups/                          # archives of the `server` backup target (§10.13, `backup.server_path`)
+├── secrets/apps/<app>/<prefix>.yaml  # overlay stored by `secret deploy` (0600, §10.21); kept by `app remove`
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml
@@ -397,6 +415,7 @@ pub trait IngressType: Send + Sync {
     }
 
     // Type-specific, no default.
+    fn generate(&self) -> Generated;                           // `server generate`: snippets and notes
     fn render(&self, ctx: &ServerCtx, cfg: &SharedAppConfig) -> Result<FileSet>;
     fn status(&self, ctx: &ServerCtx, cfg: &SharedAppConfig) -> Result<Status>;
     fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()>;
@@ -420,6 +439,8 @@ impl IngressType for Caddy {
 ```rust
 pub trait Kind: Send + Sync {
     fn name(&self) -> &'static str;                 // key under `shared:` / `services:`; also the --purge value
+    fn type_names(&self) -> Vec<&'static str>;     // for `server generate`
+    fn generate(&self, type_name: &str) -> Result<Generated>;
     fn apply_order(&self) -> i32;                   // database (10) before ingress (20); remove runs in reverse
     fn supports_purge(&self) -> bool;               // database: true, ingress: false (0.1)
     fn validate_shared(&self, cfg: &SharedAppConfig) -> Result<()>;
@@ -591,7 +612,10 @@ Checks, in order:
 
 Output: overall status, then one row per shared app: kind, name, type, version, state.yaml status, container status. Exit code 0 for `OK`/`UNINITIALIZED`, 3 for `UNREACHABLE`/`NO_DOCKER`/`FOREIGN`, 4 for `DEGRADED`.
 
-### 10.7 `depap server deploy [--apply] [-f …] [--dry-run]`
+### 10.7 `depap server deploy [--apply | --no-apply] [-f …] [--dry-run]`
+
+Without `--apply` or `--no-apply`, `deploy.apply` from `servers.yaml` or `config.yaml` decides (§4.3). The same holds for `app deploy`.
+
 1. Load, merge and validate the server config (§5, §7).
 2. Preflight and lock (§10.1).
 3. If `UNINITIALIZED`: create `DEPAP_SERVER_HOME` and write `manager_key`.
@@ -603,12 +627,12 @@ Output: overall status, then one row per shared app: kind, name, type, version, 
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
 
-### 10.8 `depap app deploy [--apply] [-f …] [--prefix <prefix>] [--dry-run]`
-1. Load, merge and validate the app config (§6, §7). `--prefix` replaces the `prefix` from the files. Parse the compose file to check service names.
+### 10.8 `depap app deploy [--apply | --no-apply] [-f …] [--prefix <prefix>] [--dry-run]`
+1. Load, merge and validate the app config (§6, §7), including the instance's overlay stored on the server (§10.21). `--prefix` replaces the `prefix` from the files and selects the stored overlay. Parse the compose file to check service names.
 2. Preflight and lock. The server MUST be `OK` or `DEGRADED`, and every shared app this instance needs MUST be `deployed` and running.
 3. Pick the shared apps for each link (§6.3). Write the pinned names and versions to `depap-env.yaml`.
 4. Upload sources to `apps/<app>/<prefix>/sources/`:
-   - `attach_sources: true`: the directory containing `depap.yaml`, excluding `.git/`, every file passed with `-f`, files matching `.depap-*.yaml`, and the patterns in `.depapignore` (gitignore syntax).
+   - `attach_sources: true`: the directory containing `depap.yaml`, excluding `.git/`, every file passed with `-f`, files matching `.depap-*.yaml` or `.depap.*.yaml`, and the patterns in `.depapignore` (gitignore syntax).
    - otherwise: only the compose file.
 5. **Render phase**: call `prepare_application` for each link and write `compose/depap.override.yaml` (0600), connector records and the effective `depap.yaml` (secrets removed). Mark the instance `candidate`. Without `--apply`, stop here.
 6. **Apply phase** (`--apply`):
@@ -761,11 +785,35 @@ Applications are restored afterwards with `app restore`. Their link records are 
 ### 10.18 `depap backup list [--source server]`
 Lists the files in the server's backup folder with their sizes. With the `local` target it is a usage error: local backups are files on this machine.
 
+### 10.19 `depap server generate [--list | --with <type>,… [--force]]`
+Writes starter files to the current directory and needs neither `init` nor a server:
+- `depap-server.yaml`: the chosen shared apps, set up to run on this machine;
+- `depap-server.prod.yaml`: the overrides for a real server (`shared: {}` if none);
+- `.depap-server.secrets.example.yaml`: the secret keys of the chosen apps, with placeholder values.
+
+`--list` prints the types as `<kind>/<type>`. `--with` takes types (`caddy`) or `<kind>/<type>`. Without `--with`, depap shows a numbered list and asks; without a terminal it fails with exit 2. Existing files are only overwritten with `--force`. Afterwards it prints the deploy commands and each type's notes (e.g. postgres: set `root_password`). The snippets and notes come from each type (`generate` in the type interface, §9.1).
+
+### 10.20 `depap app generate [--compose-file <path>] [--name <name>] [--force]`
+Reads the compose file (default `docker-compose.yaml`) and writes:
+- `depap.yaml`: `name` (default: the current directory's name, made valid), the compose file if it is not the default, `build: true` if a service has a `build` section, one `app_services` entry per compose service, and commented-out ingress and database links;
+- `.depap.secrets.example.yaml`: `name`, `prefix: staging` and commented-out domains and database credentials with placeholders.
+
+Compose services whose names are not valid names (§3.1) are listed in a comment instead. Existing files are only overwritten with `--force`. Needs neither `init` nor a server.
+
+### 10.21 `depap secret deploy <file> [--prefix <prefix>]` / `secret list` / `secret remove --app <name> [--prefix <prefix>]`
+`deploy` stores a deployment overlay (§6.2) that names its app (`name:`) at `secrets/apps/<app>/<prefix>.yaml` on the server, mode 0600. The prefix is `--prefix`, else the file's `prefix`, else `main`. The stored copy always has the `prefix`. The server must be initialized. Takes the lock.
+
+`app deploy` then needs only `depap.yaml` (§7). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
+
+### 10.22 `depap config set <key> <value> [--for-server <name>]` / `config unset <key> [--for-server <name>]` / `config show`
+Edits `config.yaml` (§4.3), or with `--for-server` the server's entry in `servers.yaml`. The only key is `deploy.apply` (`true`/`false`). `server define --force` keeps a server's settings.
+
 ## 11. Security
 
 - Secret files on the server (`secrets/`, `connectors/database/**`, `compose/depap.override.yaml`) are created with mode `0600`. Their directories use `0700`.
 - Secrets never appear in `depap-server.yaml`, the effective `depap.yaml`, `state.yaml`, terminal output, `--dry-run` output (shown as `***`), or remote command lines.
 - Overlay files are never uploaded as sources.
+- Overlays stored with `secret deploy` are written with mode `0600` and never printed.
 - Backup archives are written with mode `0600`. App archives hold no secrets from config, but database dumps hold the app's data. Server archives hold the shared apps' secrets and link credentials.
 - Every instance linked to the same shared app shares that app's docker network. Network isolation between instances is a later feature.
 - depap only uses the SSH server's existing host key checking. It never disables it.

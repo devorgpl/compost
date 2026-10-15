@@ -8,8 +8,8 @@ use super::base::{self, IngressLink};
 use super::{IngressType, KIND};
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx, SharedAppConfig,
-    project_name, render_template, shared_dir,
+    AppCtx, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx,
+    SharedAppConfig, project_name, render_template, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -51,6 +51,18 @@ impl IngressType for Caddy {
 
     fn default_version(&self) -> Option<u32> {
         Some(DEFAULT_VERSION)
+    }
+
+    fn generate(&self) -> Generated {
+        Generated {
+            local: include_str!("templates/generate/local.yaml"),
+            prod: Some(include_str!("templates/generate/prod.yaml")),
+            secrets: None,
+            notes: &[
+                "caddy: point the domains of your apps to the server and set `acme_email` in depap-server.prod.yaml.",
+                "caddy: locally, apps answer on http://<domain>:18080/; `*.localhost` domains need no DNS.",
+            ],
+        }
     }
 
     /// Extends the generic ingress validation with Caddy's own settings.

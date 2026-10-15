@@ -93,6 +93,7 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
         name: args.name,
         connector,
         server_home: args.server_home,
+        deploy: Default::default(),
     };
 
     match servers.servers.iter_mut().find(|s| s.name == entry.name) {
@@ -102,7 +103,14 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
                 entry.name
             )));
         }
-        Some(existing) => *existing = entry.clone(),
+        Some(existing) => {
+            // Settings made with `depap config` survive a redefinition.
+            let deploy = std::mem::take(&mut existing.deploy);
+            *existing = ServerEntry {
+                deploy,
+                ..entry.clone()
+            };
+        }
         None => servers.servers.push(entry.clone()),
     }
     home.save_servers(&servers)?;
@@ -210,6 +218,7 @@ pub fn deploy(
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
+    let apply = args.apply(home, &server)?;
     let files = if args.files.is_empty() {
         default_files()?
     } else {
@@ -220,7 +229,7 @@ pub fn deploy(
     let connector = connector::open(&server, home, verbose)?;
     out!("Deploying to {} ({})", server.name, connector.target());
     let options = Options {
-        apply: args.apply,
+        apply,
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
     };
@@ -232,7 +241,7 @@ pub fn deploy(
         &options,
     )?;
 
-    if args.apply && !args.dry_run {
+    if apply && !args.dry_run {
         out!();
         return state(home, Some(&server.name), verbose);
     }

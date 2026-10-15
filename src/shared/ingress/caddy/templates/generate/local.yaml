@@ -1,0 +1,10 @@
+    # Reverse proxy that routes the domains of apps to their services.
+    # Plain HTTP on port 18080, so it runs next to anything using 80/443.
+    - name: caddy-main
+      type: caddy
+      version: 2
+      configuration:
+        http_port: 18080
+        https_port: 18443
+        # auto: Let's Encrypt | internal: self-signed | off: plain HTTP
+        tls: "off"

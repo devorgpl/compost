@@ -3,6 +3,7 @@
 use std::fs;
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -1279,4 +1280,319 @@ fn restore_rejects_files_that_are_not_archives() {
         .run(&["app", "backup", "--all", "myapp-staging"], &[])
         .code(2)
         .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn server_generate_writes_deployable_files() {
+    let server = LocalServer::new();
+    server
+        .run(&["server", "generate", "--list"], &[])
+        .success()
+        .stdout(contains("ingress/caddy"))
+        .stdout(contains("database/postgres"));
+    // No terminal to ask on.
+    server
+        .run(&["server", "generate"], &[])
+        .code(2)
+        .stderr(contains("pass --with"));
+    server
+        .run(&["server", "generate", "--with", "mysql"], &[])
+        .code(2)
+        .stderr(contains("unknown shared app type `mysql`"));
+
+    server
+        .run(&["server", "generate", "--with", "caddy,postgres"], &[])
+        .success()
+        .stdout(contains("Wrote depap-server.yaml"))
+        .stdout(contains("Wrote depap-server.prod.yaml"))
+        .stdout(contains("Wrote .depap-server.secrets.example.yaml"))
+        .stdout(contains("postgres: set `root_password`"));
+    server
+        .run(&["server", "generate", "--with", "caddy"], &[])
+        .code(2)
+        .stderr(contains("add --force"));
+
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .success()
+        .stdout(contains("Dry run"));
+    server.write_work_file(
+        ".depap-server.secrets.yaml",
+        &fs::read_to_string(
+            server
+                .env
+                .work
+                .path()
+                .join(".depap-server.secrets.example.yaml"),
+        )
+        .unwrap(),
+    );
+    server
+        .run(
+            &[
+                "server",
+                "deploy",
+                "--dry-run",
+                "-f",
+                "depap-server.yaml,depap-server.prod.yaml,.depap-server.secrets.yaml",
+            ],
+            &[],
+        )
+        .success();
+
+    server
+        .run(
+            &["server", "generate", "--with", "postgres", "--force"],
+            &[],
+        )
+        .success();
+    let prod = fs::read_to_string(server.env.work.path().join("depap-server.prod.yaml")).unwrap();
+    assert!(prod.contains("shared: {}"), "{prod}");
+}
+
+#[test]
+fn app_generate_reads_the_compose_file() {
+    let env = Env::new();
+    fs::write(
+        env.work.path().join("compose.yml"),
+        "services: {web: {build: .}, worker: {image: x}}\n",
+    )
+    .unwrap();
+    // Works without `depap init`.
+    env.depap(&["app", "generate"])
+        .code(2)
+        .stderr(contains("cannot read compose file docker-compose.yaml"));
+    env.depap(&[
+        "app",
+        "generate",
+        "--compose-file",
+        "compose.yml",
+        "--name",
+        "shop",
+    ])
+    .success()
+    .stdout(contains("Wrote depap.yaml"))
+    .stdout(contains("Wrote .depap.secrets.example.yaml"));
+    let config = fs::read_to_string(env.work.path().join("depap.yaml")).unwrap();
+    for expected in [
+        "name: shop",
+        "compose_file: compose.yml",
+        "build: true",
+        "- name: worker\n    service: worker",
+    ] {
+        assert!(
+            config.contains(expected),
+            "missing {expected:?} in\n{config}"
+        );
+    }
+    let secrets = fs::read_to_string(env.work.path().join(".depap.secrets.example.yaml")).unwrap();
+    assert!(secrets.contains("name: shop\nprefix: staging"), "{secrets}");
+
+    env.depap(&["app", "generate", "--compose-file", "compose.yml"])
+        .code(2)
+        .stderr(contains("add --force"));
+}
+
+#[test]
+fn config_set_show_unset() {
+    let env = Env::initialized_with_server();
+    env.depap(&["config", "show"])
+        .success()
+        .stdout(contains("deploy.apply = false (default)"));
+    env.depap(&["config", "set", "deploy.apply", "maybe"])
+        .code(2)
+        .stderr(contains("not a boolean"));
+    env.depap(&["config", "set", "deploy.nothing", "true"])
+        .code(2)
+        .stderr(contains("unknown setting"));
+    env.depap(&["config", "set", "deploy.apply", "true"])
+        .success();
+    env.depap(&[
+        "config",
+        "set",
+        "deploy.apply",
+        "false",
+        "--for-server",
+        "prod1",
+    ])
+    .success()
+    .stdout(contains("deploy.apply = false for prod1"));
+    env.depap(&["config", "show"])
+        .success()
+        .stdout(contains("deploy.apply = true\n"))
+        .stdout(contains("deploy.apply = false  (server prod1)"));
+
+    // Redefining the server keeps its settings.
+    env.depap(&[
+        "server",
+        "define",
+        "prod1",
+        "--address",
+        "10.0.0.2",
+        "--force",
+    ])
+    .success();
+    env.depap(&["config", "show"])
+        .success()
+        .stdout(contains("(server prod1)"));
+
+    env.depap(&["config", "unset", "deploy.apply", "--for-server", "prod1"])
+        .success();
+    env.depap(&["config", "show"])
+        .success()
+        .stdout(contains("prod1").not());
+    env.depap(&["server", "deploy", "--apply", "--no-apply"])
+        .code(2)
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn deploy_applies_by_default_when_configured() {
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["config", "set", "deploy.apply", "true"], &[])
+        .success();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "deploy", "--no-apply"], &running)
+        .success()
+        .stdout(contains("Run again with --apply"));
+    server
+        .run(&["server", "deploy"], &running)
+        .success()
+        .stdout(contains("starting database postgres16 ... running"));
+
+    // The server's own setting wins.
+    server
+        .run(
+            &[
+                "config",
+                "set",
+                "deploy.apply",
+                "false",
+                "--for-server",
+                "dev",
+            ],
+            &[],
+        )
+        .success();
+    server
+        .run(&["server", "deploy"], &running)
+        .success()
+        .stdout(contains("Run again with --apply"));
+}
+
+#[test]
+fn stored_secrets_are_used_by_app_deploy() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/Dockerfile", "FROM scratch\n");
+    server.write_work_file(
+        "app/.depap.secrets.yaml",
+        &format!(
+            "name: myapp\n{}",
+            APP_OVERLAY.replace("prefix: staging\n", "")
+        ),
+    );
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+
+    server
+        .run(&["secret", "list"], &[])
+        .success()
+        .stdout(contains("No stored secrets"));
+    server
+        .run(
+            &[
+                "secret",
+                "deploy",
+                "app/.depap.secrets.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("Stored secrets of myapp-staging"));
+    let stored = server.server_home.join("secrets/apps/myapp/staging.yaml");
+    assert_eq!(
+        fs::metadata(&stored).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        fs::read_to_string(&stored)
+            .unwrap()
+            .contains("prefix: staging")
+    );
+    server
+        .run(&["secret", "list"], &[])
+        .success()
+        .stdout(contains("myapp  staging"));
+
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/depap.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("using stored secrets"))
+        .stdout(contains("caddy-main: staging.example.com"))
+        .stdout(contains("uploaded 2 files"));
+    let override_yaml = server.read_server_file("apps/myapp/staging/compose/depap.override.yaml");
+    assert!(
+        override_yaml.contains("APP_MODE: staging"),
+        "{override_yaml}"
+    );
+    assert!(override_yaml.contains("pa$$$$word"), "{override_yaml}");
+
+    // Another prefix has no stored secrets, so its ingress has no domains.
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--dry-run",
+                "-f",
+                "app/depap.yaml",
+                "--prefix",
+                "review",
+            ],
+            &running,
+        )
+        .code(2)
+        .stdout(contains("using stored secrets").not());
+
+    // Removing the app keeps its secrets for a reinstall.
+    server
+        .run(&["app", "remove", "myapp-staging", "--yes"], &running)
+        .success();
+    assert!(stored.exists());
+    server
+        .run(
+            &["secret", "remove", "--app", "myapp", "--prefix", "staging"],
+            &[],
+        )
+        .success();
+    assert!(!stored.exists());
+    server
+        .run(
+            &["secret", "remove", "--app", "myapp", "--prefix", "staging"],
+            &[],
+        )
+        .code(2)
+        .stderr(contains("no stored secrets"));
 }

@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, ItemReader, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
+    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
     SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
@@ -64,6 +64,9 @@ pub trait DatabaseType: Sync {
     }
 
     // Type-specific, no default.
+
+    /// Starter configuration for `server generate`.
+    fn generate(&self) -> Generated;
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
 
@@ -125,6 +128,14 @@ pub struct DatabaseKind;
 impl Kind for DatabaseKind {
     fn name(&self) -> &'static str {
         KIND
+    }
+
+    fn type_names(&self) -> Vec<&'static str> {
+        TYPES.iter().map(|t| t.type_name()).collect()
+    }
+
+    fn generate(&self, type_name: &str) -> Result<Generated> {
+        Ok(find_type(type_name)?.generate())
     }
 
     fn apply_defaults(&self, config: &mut SharedAppConfig) {

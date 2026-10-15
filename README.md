@@ -49,6 +49,22 @@ depap server state
 
 Then follow [samples/README.md](samples/README.md).
 
+## Starting a new setup
+
+```sh
+# Infrastructure folder: shared apps of the server
+depap server generate --with caddy,postgres   # or without --with to choose interactively
+depap server deploy --apply                   # this machine; see the printed notes for prod
+
+# Application folder: reads docker-compose.yaml
+depap app generate
+cp .depap.secrets.example.yaml .depap.secrets.yaml      # domains, passwords
+depap secret deploy .depap.secrets.yaml --prefix staging  # kept on the server
+depap app deploy --apply --prefix staging
+
+depap config set deploy.apply true            # optional: deploy without --apply
+```
+
 ## Backup and restore
 
 ```sh

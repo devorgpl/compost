@@ -1,8 +1,11 @@
 //! Command-line interface: argument definitions and dispatch to command modules.
 
 mod app;
+mod config;
 mod context;
+mod generate;
 mod init;
+mod secret;
 mod server;
 
 use std::path::PathBuf;
@@ -11,7 +14,7 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 use crate::backup::Format;
-use crate::config::local::DepapHome;
+use crate::config::local::{DepapHome, ServerEntry};
 use crate::config::server::BackupTarget;
 
 #[derive(Debug, Parser)]
@@ -53,10 +56,18 @@ pub enum Command {
     /// Inspect backups
     #[command(subcommand)]
     Backup(BackupCommand),
+    /// Store application secrets on the server for `app deploy`
+    #[command(subcommand)]
+    Secret(secret::SecretCommand),
+    /// Set and show preferences, e.g. `deploy.apply`
+    #[command(subcommand)]
+    Config(config::ConfigCommand),
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
+    /// Write starter depap-server.yaml, depap-server.prod.yaml and a secrets example
+    Generate(generate::ServerGenerateArgs),
     /// Add or replace a server in the local configuration
     Define(server::DefineArgs),
     /// List defined servers
@@ -90,9 +101,12 @@ pub enum ConnectorCommand {
 /// Arguments shared by `server deploy` and `app deploy`.
 #[derive(Debug, Args)]
 pub struct DeployArgs {
-    /// Also start or restart services
-    #[arg(long)]
+    /// Also start or restart services (default: `deploy.apply`, see `depap config`)
+    #[arg(long, conflicts_with = "no_apply")]
     pub apply: bool,
+    /// Only upload files, even when `deploy.apply` is set
+    #[arg(long)]
+    pub no_apply: bool,
     /// Config files merged in order (repeatable or comma-separated)
     #[arg(short = 'f', long = "file", value_delimiter = ',')]
     pub files: Vec<PathBuf>,
@@ -102,6 +116,16 @@ pub struct DeployArgs {
     /// Remove a lock left behind by an interrupted depap command
     #[arg(long)]
     pub force_unlock: bool,
+}
+
+impl DeployArgs {
+    /// `--apply`/`--no-apply`, else the configured default.
+    pub fn apply(&self, home: &DepapHome, server: &ServerEntry) -> Result<bool> {
+        if self.apply || self.no_apply {
+            return Ok(self.apply);
+        }
+        home.apply_default(server)
+    }
 }
 
 /// Where and how a backup is written.
@@ -123,12 +147,15 @@ pub fn run(cli: Cli) -> Result<()> {
     let server = cli.server.as_deref();
     match cli.command {
         Command::Init(args) => init::run(&home, args),
+        Command::Server(ServerCommand::Generate(args)) => generate::server(args),
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
         Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
         Command::Server(ServerCommand::Deploy(args)) => {
             server::deploy(&home, server, args, cli.verbose)
         }
+        Command::Secret(command) => secret::run(&home, server, command, cli.verbose),
+        Command::Config(command) => config::run(&home, command),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, cli.verbose),

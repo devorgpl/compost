@@ -11,15 +11,21 @@ use crate::error::config_err;
 /// Read the files in order and merge each one into the result of the previous ones.
 pub fn load_merged(files: &[impl AsRef<Path>]) -> Result<Value> {
     let mut merged = Value::Null;
+    merge_files(&mut merged, files)?;
+    Ok(merged)
+}
+
+/// Read the files in order and merge each one into `merged`.
+pub fn merge_files(merged: &mut Value, files: &[impl AsRef<Path>]) -> Result<()> {
     for file in files {
         let path = file.as_ref();
         let text =
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         let value: Value = serde_yaml_ng::from_str(&text)
             .map_err(|e| config_err(format!("{}: {e}", path.display())))?;
-        merge(&mut merged, value);
+        merge(merged, value);
     }
-    Ok(merged)
+    Ok(())
 }
 
 /// Merge `overlay` into `base`:

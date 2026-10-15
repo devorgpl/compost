@@ -138,10 +138,30 @@ impl RenderedFile {
     }
 }
 
+/// Starter configuration of a shared app type, for `server generate`.
+/// Snippets are YAML list items, indented for `shared.<kind>`.
+#[derive(Debug, Default)]
+pub struct Generated {
+    /// For depap-server.yaml: a setup that works on this machine.
+    pub local: &'static str,
+    /// For depap-server.prod.yaml: what a real server changes.
+    pub prod: Option<&'static str>,
+    /// For .depap-server.secrets.example.yaml.
+    pub secrets: Option<&'static str>,
+    /// Shown after the files are written.
+    pub notes: &'static [&'static str],
+}
+
 /// What core needs from a kind. Methods grow with the spec (hooks, …).
 pub trait Kind: Sync {
     /// Key under `shared:` / `services:`; also the value accepted by `--purge`.
     fn name(&self) -> &'static str;
+
+    /// Types of this kind, e.g. `caddy`.
+    fn type_names(&self) -> Vec<&'static str>;
+
+    /// Starter configuration of one type.
+    fn generate(&self, type_name: &str) -> Result<Generated>;
 
     /// Fill in defaults the type defines, e.g. a version. Unknown types are
     /// left alone; validation reports them.

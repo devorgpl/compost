@@ -12,6 +12,7 @@ use crate::error::config_err;
 const MANAGER_FILE: &str = "depap-manager.yaml";
 const SERVERS_FILE: &str = "servers.yaml";
 const CONTEXT_FILE: &str = "current_context";
+const SETTINGS_FILE: &str = "config.yaml";
 const SSH_CONTROL_DIR: &str = "ssh";
 pub const DEFAULT_SSH_USER: &str = "depapuser";
 pub const DEFAULT_SSH_PORT: u16 = 22;
@@ -37,6 +38,31 @@ pub struct ServerEntry {
     pub connector: ConnectorConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_home: Option<String>,
+    /// Overrides the global `deploy` settings for this server.
+    #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
+    pub deploy: DeploySettings,
+}
+
+/// Preferences of the operator, `config.yaml` in DEPAP_HOME.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
+    pub deploy: DeploySettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeploySettings {
+    /// `deploy` also starts services, as if `--apply` was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply: Option<bool>,
+}
+
+impl DeploySettings {
+    pub fn is_empty(&self) -> bool {
+        self.apply.is_none()
+    }
 }
 
 impl ServerEntry {
@@ -155,6 +181,23 @@ impl DepapHome {
         Ok(dir)
     }
 
+    pub fn settings(&self) -> Result<Settings> {
+        Ok(read_yaml_if_exists(&self.root.join(SETTINGS_FILE))?.unwrap_or_default())
+    }
+
+    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
+        write_yaml(&self.root.join(SETTINGS_FILE), settings)
+    }
+
+    /// Whether `deploy` applies without `--apply`/`--no-apply`: the server's
+    /// setting, then the global one, else no.
+    pub fn apply_default(&self, server: &ServerEntry) -> Result<bool> {
+        Ok(match server.deploy.apply {
+            Some(apply) => apply,
+            None => self.settings()?.deploy.apply.unwrap_or(false),
+        })
+    }
+
     pub fn current_context(&self) -> Result<Option<String>> {
         let path = self.root.join(CONTEXT_FILE);
         if !path.exists() {
@@ -175,7 +218,7 @@ impl DepapHome {
         .with_context(|| format!("cannot update {}", path.display()))
     }
 
-    /// Target server: `--server`/`DEPAP_SERVER` (handled by clap), then current context (spec §4.4).
+    /// Target server: `--server`/`DEPAP_SERVER` (handled by clap), then current context (spec §4.5).
     pub fn resolve_server(&self, flag: Option<&str>) -> Result<ServerEntry> {
         let name = match flag {
             Some(name) => name.to_string(),

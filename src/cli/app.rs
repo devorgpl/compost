@@ -9,7 +9,7 @@ use serde::Deserialize;
 use super::{BackupOutputArgs, DeployArgs};
 use crate::app::backup::{self, Component, Which};
 use crate::app::instance::Selector;
-use crate::app::{deploy, list, remove, restore, state};
+use crate::app::{deploy, list, remove, restore, secrets, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{DepapHome, ServerEntry};
 use crate::config::server::BackupTarget;
@@ -21,6 +21,8 @@ const APP_FILE: &str = "depap.yaml";
 
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
+    /// Write a starter depap.yaml and .depap.secrets.example.yaml from the compose file
+    Generate(super::generate::AppGenerateArgs),
     /// List the application instances deployed on the server
     List,
     /// Deploy the application instance described by the given files
@@ -158,9 +160,14 @@ pub fn run(
     command: AppCommand,
     verbose: bool,
 ) -> Result<()> {
+    // Works without `depap init` or a server.
+    if let AppCommand::Generate(args) = command {
+        return super::generate::app(args);
+    }
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     match command {
+        AppCommand::Generate(_) => unreachable!("handled above"),
         AppCommand::List => {
             let connector = connector::open(&server, home, verbose)?;
             list::list(
@@ -257,18 +264,25 @@ fn selector(args: &InstanceArgs) -> Result<Selector> {
         return Ok(Selector::Instance(instance.clone()));
     }
     let (name, prefix) = match (&args.app, &args.prefix) {
-        (Some(app), Some(prefix)) => (app.clone(), prefix.clone()),
-        _ => {
-            let files = config_files(&args.files)?;
-            let merged = merge::load_merged(&files)?;
-            let id: InstanceId = serde_yaml_ng::from_value(merged)
-                .map_err(|e| config_err(format!("app configuration: {e}")))?;
-            (id.name, args.prefix.clone().unwrap_or(id.prefix))
+        (Some(app), Some(prefix)) => {
+            check_name("app name", app)?;
+            check_name("prefix", prefix)?;
+            (app.clone(), prefix.clone())
         }
+        _ => instance_id(&config_files(&args.files)?, args.prefix.as_deref())?,
     };
-    check_name("app name", &name)?;
-    check_name("prefix", &prefix)?;
     Ok(Selector::Name { name, prefix })
+}
+
+/// App name and prefix from the config files; `prefix` replaces theirs.
+fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, String)> {
+    let merged = merge::load_merged(files)?;
+    let id: InstanceId = serde_yaml_ng::from_value(merged)
+        .map_err(|e| config_err(format!("app configuration: {e}")))?;
+    let prefix = prefix.map_or(id.prefix, str::to_string);
+    check_name("app name", &id.name)?;
+    check_name("prefix", &prefix)?;
+    Ok((id.name, prefix))
 }
 
 /// The given files, or `depap.yaml` in the current directory.
@@ -297,17 +311,28 @@ fn deploy(
         prefix,
     } = args;
     let files = config_files(&args.files)?;
-    let loaded = AppConfig::load(&files, prefix.as_deref())?;
-
+    let (name, instance_prefix) = instance_id(&files, prefix.as_deref())?;
     let connector = connector::open(server, home, verbose)?;
+    let stored = secrets::read(
+        connector.as_ref(),
+        server.server_home(),
+        &name,
+        &instance_prefix,
+    )?;
+    let (stored_path, stored) = stored.unzip();
+    let loaded = AppConfig::load_with(&files, stored, prefix.as_deref())?;
+
     out!(
         "Deploying {} to {} ({})",
         loaded.config.instance(),
         server.name,
         connector.target()
     );
+    if let Some(path) = stored_path {
+        out!("  using stored secrets {path}");
+    }
     let options = deploy::Options {
-        apply: args.apply,
+        apply: args.apply(home, server)?,
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
         restore: None,

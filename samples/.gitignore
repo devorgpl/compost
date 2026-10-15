@@ -2,3 +2,4 @@
 .depap-server.secrets.yaml
 .depap-*.yaml
 !.depap-*.example.yaml
+.depap.secrets.yaml

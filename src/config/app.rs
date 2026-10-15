@@ -108,6 +108,8 @@ pub struct ComposeService {
     pub has_networks: bool,
     pub network_mode: Option<String>,
     pub restart: Option<String>,
+    /// The service has a `build` section.
+    pub builds: bool,
 }
 
 impl ComposeService {
@@ -130,7 +132,22 @@ impl AppConfig {
     /// Merge and validate the given files, then read and check the compose file.
     /// `prefix` replaces the one from the files.
     pub fn load(files: &[PathBuf], prefix: Option<&str>) -> Result<LoadedApp> {
-        let merged = merge::load_merged(files)?;
+        Self::load_with(files, None, prefix)
+    }
+
+    /// Like [`AppConfig::load`], with `stored` (secrets kept on the server)
+    /// merged after the first file, so later files still override it.
+    pub fn load_with(
+        files: &[PathBuf],
+        stored: Option<Value>,
+        prefix: Option<&str>,
+    ) -> Result<LoadedApp> {
+        let split = files.len().min(1);
+        let mut merged = merge::load_merged(&files[..split])?;
+        if let Some(stored) = stored {
+            merge::merge(&mut merged, stored);
+        }
+        merge::merge_files(&mut merged, &files[split..])?;
         let mut config: AppConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("app configuration: {e}")))?;
         if let Some(prefix) = prefix {
@@ -308,6 +325,7 @@ impl ComposeFile {
                         .get("restart")
                         .and_then(Value::as_str)
                         .map(str::to_string),
+                    builds: service.get("build").is_some(),
                 },
             );
         }
@@ -371,6 +389,40 @@ services:
         assert_eq!(loaded.config.instance(), "sampleapp-review");
         let error = AppConfig::load(&files, Some("Bad")).err().unwrap();
         assert!(format!("{error:#}").contains("prefix"), "{error:#}");
+    }
+
+    #[test]
+    fn stored_secrets_merge_between_files() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/sampleapp");
+        let stored: Value = serde_yaml_ng::from_str(
+            "{name: sampleapp, prefix: staging, services: {ingress: [{name: site, domains: [stored.example.com]}]},
+              app_services: [{name: backend, environment: {APP_MODE: stored}}]}",
+        )
+        .unwrap();
+        let domains = |loaded: &LoadedApp| {
+            let (_, site) = loaded
+                .config
+                .links()
+                .find(|(k, _)| *k == "ingress")
+                .unwrap();
+            site["domains"][0].as_str().unwrap().to_string()
+        };
+
+        let loaded =
+            AppConfig::load_with(&[dir.join("depap.yaml")], Some(stored.clone()), None).unwrap();
+        assert_eq!(loaded.config.instance(), "sampleapp-staging");
+        assert_eq!(domains(&loaded), "stored.example.com");
+
+        // A local overlay wins over the stored values.
+        let files = [
+            dir.join("depap.yaml"),
+            dir.join(".depap-local.example.yaml"),
+        ];
+        let loaded = AppConfig::load_with(&files, Some(stored), None).unwrap();
+        assert_eq!(loaded.config.instance(), "sampleapp-local");
+        assert_eq!(domains(&loaded), "sampleapp.localhost");
+        let backend = loaded.config.app_service("backend").unwrap();
+        assert_eq!(backend.environment["APP_MODE"], Value::from("local"));
     }
 
     #[test]

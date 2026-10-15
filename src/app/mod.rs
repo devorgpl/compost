@@ -7,6 +7,7 @@ pub mod instance;
 pub mod list;
 pub mod remove;
 pub mod restore;
+pub mod secrets;
 mod sources;
 pub mod state;
 mod volumes;

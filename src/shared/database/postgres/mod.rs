@@ -10,8 +10,8 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::DepapError;
 use crate::shared::{
-    AppCtx, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx, SharedAppConfig,
-    connectors_dir, generate_password, project_name, render_template, shared_dir,
+    AppCtx, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx,
+    SharedAppConfig, connectors_dir, generate_password, project_name, render_template, shared_dir,
 };
 
 pub struct Postgres;
@@ -28,6 +28,17 @@ struct PostgresConfig {
 impl DatabaseType for Postgres {
     fn type_name(&self) -> &'static str {
         "postgres"
+    }
+
+    fn generate(&self) -> Generated {
+        Generated {
+            local: include_str!("templates/generate/local.yaml"),
+            prod: None,
+            secrets: Some(include_str!("templates/generate/secrets.yaml")),
+            notes: &[
+                "postgres: set `root_password` in .depap-server.secrets.yaml (copy the example). Optional: without it depap generates one on the first deploy; it cannot be changed later.",
+            ],
+        }
     }
 
     fn endpoint(&self) -> Endpoint {

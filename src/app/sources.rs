@@ -43,7 +43,9 @@ pub fn collect(
         }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy();
-        let is_overlay = name.starts_with(".depap-") && name.ends_with(".yaml");
+        // `.depap-staging.yaml`, `.depap.secrets.yaml`, …
+        let is_overlay =
+            (name.starts_with(".depap-") || name.starts_with(".depap.")) && name.ends_with(".yaml");
         if is_overlay || path.canonicalize().is_ok_and(|p| excluded.contains(&p)) {
             continue;
         }
@@ -88,6 +90,7 @@ mod tests {
             "dist/app.js",
             ".git/config",
             ".depap-staging.yaml",
+            ".depap.secrets.yaml",
             "secrets/prod.yaml",
             "node_modules/x.js",
         ] {

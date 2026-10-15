@@ -1,0 +1,5 @@
+    # Postgres server; each linked app gets its own database and user.
+    - name: postgres16
+      type: postgres
+      version: 16
+      image: postgres:16-alpine
