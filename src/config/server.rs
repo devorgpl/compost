@@ -29,6 +29,14 @@ impl ServerConfig {
         Ok(config)
     }
 
+    /// Parse and validate one document, e.g. the effective config stored on a server.
+    pub fn parse(text: &str) -> Result<Self> {
+        let config: ServerConfig = serde_yaml_ng::from_str(text)
+            .map_err(|e| config_err(format!("server configuration: {e}")))?;
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Every shared app with the name of its kind.
     pub fn shared_apps(&self) -> impl Iterator<Item = (&str, &SharedAppConfig)> {
         self.shared
@@ -68,9 +76,7 @@ mod tests {
     use super::*;
 
     fn parse(text: &str) -> Result<ServerConfig> {
-        let config: ServerConfig = serde_yaml_ng::from_str(text)?;
-        config.validate()?;
-        Ok(config)
+        ServerConfig::parse(text)
     }
 
     fn error(text: &str) -> String {

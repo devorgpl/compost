@@ -20,6 +20,10 @@ pub struct Cli {
     #[arg(short, long, global = true, env = "DEPAP_SERVER")]
     pub server: Option<String>,
 
+    /// Print every command run on the server
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -82,7 +86,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Init => init::run(&home),
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
-        Command::Server(ServerCommand::State) => server::state(&home, server),
+        Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
         Command::Server(ServerCommand::Deploy(args)) => server::deploy(&home, server, args),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),

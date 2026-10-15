@@ -6,9 +6,11 @@ use anyhow::Result;
 use clap::Args;
 
 use super::DeployArgs;
-use crate::config::local::{Connector, DepapHome, ServerEntry};
+use crate::config::local::{ConnectorConfig, DepapHome, ServerEntry};
 use crate::config::{check_name, server::ServerConfig};
+use crate::connector;
 use crate::error::{DepapError, config_err};
+use crate::server::state::{self, Status};
 
 const SERVER_FILE: &str = "depap-server.yaml";
 const SERVER_SECRETS_FILE: &str = ".depap-server.secrets.yaml";
@@ -45,13 +47,13 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
     let mut servers = home.servers()?;
 
     let connector = match args.address {
-        Some(address) => Connector::Ssh {
+        Some(address) => ConnectorConfig::Ssh {
             address,
             port: args.port,
             user: Some(args.user),
             identity_file: args.identity_file,
         },
-        None => Connector::Local,
+        None => ConnectorConfig::Local,
     };
     let entry = ServerEntry {
         name: args.name,
@@ -95,9 +97,45 @@ pub fn list(home: &DepapHome) -> Result<()> {
     Ok(())
 }
 
-pub fn state(home: &DepapHome, server: Option<&str>) -> Result<()> {
-    home.resolve_server(server)?;
-    Err(DepapError::NotImplemented("server state").into())
+pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, verbose);
+    let report = state::check(connector.as_ref(), server.server_home(), &manager.manager_key)?;
+
+    let summary = format!("{} ({}): {}", server.name, connector.target(), report.status);
+    let detail = report.detail.as_deref().unwrap_or_default();
+    match report.status {
+        Status::Unreachable | Status::NoDocker | Status::Foreign => {
+            return Err(DepapError::ServerNotReady(format!("{summary}\n{detail}")).into());
+        }
+        Status::Uninitialized | Status::Degraded | Status::Ok => {}
+    }
+
+    println!("{summary}");
+    if let (Some(docker), Some(server_home)) = (&report.docker, &report.home) {
+        println!("  {docker}, home {server_home}");
+    }
+    if report.shared.is_empty() {
+        println!("  no shared applications");
+    }
+    for app in &report.shared {
+        let version = app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
+        let running = if app.running { "running" } else { "not running" };
+        println!(
+            "  {:<9} {:<16} {} {version}  {running}",
+            app.kind, app.name, app.type_name
+        );
+    }
+
+    if report.status == Status::Degraded {
+        return Err(DepapError::Unhealthy(format!(
+            "{}: some shared applications are not running",
+            server.name
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs) -> Result<()> {

@@ -1,6 +1,8 @@
 mod cli;
 mod config;
+mod connector;
 mod error;
+mod server;
 mod shared;
 
 use std::process::ExitCode;

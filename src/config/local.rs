@@ -12,8 +12,8 @@ use crate::error::config_err;
 const MANAGER_FILE: &str = "depap-manager.yaml";
 const SERVERS_FILE: &str = "servers.yaml";
 const CONTEXT_FILE: &str = "current_context";
-const DEFAULT_SSH_USER: &str = "depapuser";
-const DEFAULT_SSH_PORT: u16 = 22;
+pub const DEFAULT_SSH_USER: &str = "depapuser";
+pub const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_SERVER_HOME: &str = "~/.depap-server";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ pub struct Servers {
 #[serde(deny_unknown_fields)]
 pub struct ServerEntry {
     pub name: String,
-    pub connector: Connector,
+    pub connector: ConnectorConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_home: Option<String>,
 }
@@ -47,7 +47,7 @@ impl ServerEntry {
 /// How depap reaches a server. `type: ssh` or `type: local` in servers.yaml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
-pub enum Connector {
+pub enum ConnectorConfig {
     Ssh {
         address: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,11 +60,11 @@ pub enum Connector {
     Local,
 }
 
-impl Connector {
+impl ConnectorConfig {
     /// Short human-readable form, e.g. `ssh depapuser@10.0.0.1:22`.
     pub fn describe(&self) -> String {
         match self {
-            Connector::Ssh {
+            ConnectorConfig::Ssh {
                 address,
                 port,
                 user,
@@ -77,7 +77,7 @@ impl Connector {
                     None => format!("ssh {user}@{address}:{port}"),
                 }
             }
-            Connector::Local => "local".to_string(),
+            ConnectorConfig::Local => "local".to_string(),
         }
     }
 }
