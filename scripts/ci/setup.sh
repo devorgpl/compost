@@ -48,8 +48,8 @@ if [ "${1:-}" = release ]; then
     if ! command -v zig >/dev/null; then
         arch="$(uname -m)"
         index="$(curl -sSf https://ziglang.org/download/index.json)"
-        url="$(echo "$index" | jq -r --arg v "$ZIG_VERSION" --arg a "$arch-linux" '.[$v][$a].tarball')"
-        sum="$(echo "$index" | jq -r --arg v "$ZIG_VERSION" --arg a "$arch-linux" '.[$v][$a].shasum')"
+        url="$(printf '%s\n' "$index" | jq -r --arg v "$ZIG_VERSION" --arg a "$arch-linux" '.[$v][$a].tarball')"
+        sum="$(printf '%s\n' "$index" | jq -r --arg v "$ZIG_VERSION" --arg a "$arch-linux" '.[$v][$a].shasum')"
         curl -sSfL -o /tmp/zig.tar.xz "$url"
         echo "$sum  /tmp/zig.tar.xz" | sha256sum -c -
         mkdir -p "$HOME/.local/zig"

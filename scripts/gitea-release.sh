@@ -6,7 +6,8 @@
 #
 # Running it again for the same tag updates the notes and replaces files with
 # the same name, so a failed release job can simply be re-run.
-# Needs curl and jq.
+# Needs curl and jq. JSON goes to jq with printf, never echo: dash's echo
+# turns the `\n` escapes in JSON strings into real newlines.
 set -eu
 
 tag="${1:?usage: gitea-release.sh <tag> <notes file> <files...>}"
@@ -42,18 +43,18 @@ payload="$(jq -n --arg tag "$tag" --rawfile body "$notes" --argjson pre "$prerel
     '{tag_name: $tag, name: $tag, body: $body, draft: false, prerelease: $pre}')"
 
 if release="$(call GET "$api/releases/tags/$tag")"; then
-    id="$(echo "$release" | jq -r .id)"
+    id="$(printf '%s\n' "$release" | jq -r .id)"
     release="$(call PATCH "$api/releases/$id" -H 'Content-Type: application/json' -d "$payload")"
     echo "Updated release $tag"
 else
     release="$(call POST "$api/releases" -H 'Content-Type: application/json' -d "$payload")"
-    id="$(echo "$release" | jq -r .id)"
+    id="$(printf '%s\n' "$release" | jq -r .id)"
     echo "Created release $tag"
 fi
 
 for file in "$@"; do
     name="$(basename "$file")"
-    old="$(echo "$release" | jq -r --arg n "$name" '.assets[]? | select(.name == $n) | .id')"
+    old="$(printf '%s\n' "$release" | jq -r --arg n "$name" '.assets[]? | select(.name == $n) | .id')"
     if [ -n "$old" ]; then
         call DELETE "$api/releases/$id/assets/$old" >/dev/null
     fi
@@ -61,4 +62,4 @@ for file in "$@"; do
     echo "  uploaded $name"
 done
 
-echo "$release" | jq -r .html_url
+printf '%s\n' "$release" | jq -r .html_url
