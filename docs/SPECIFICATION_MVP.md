@@ -407,7 +407,7 @@ impl IngressType for Caddy {
     …
 }
 ```
-`DatabaseType` follows the same pattern. Its `base` handles version matching, credential resolution, env mapping and network attachment. Postgres extends `validate_link` (identifier rules) and implements `before_apply_application` (psql) and `remove_application` (DROP on purge).
+`DatabaseType` follows the same pattern. Its `base` handles version matching, credential resolution, env mapping and network attachment. Postgres extends `validate_config` and `validate_link` (identifier rules) and implements `before_apply_application` (psql) and `remove_application` (DROP on purge).
 
 **Core-facing interface.** Each kind module also implements one object-safe trait. Core only knows this trait and the kind registry:
 ```rust
@@ -495,7 +495,7 @@ With `strip_prefix: true` the route uses `uri strip_prefix /ui` before `reverse_
 
 ### 9.3 postgres (database type)
 
-Inherits `validate_config`, `prepare_application` and `remove_application` without purge from `database::base`. Extends `validate_link` (identifier rules) and `remove_application` (purge). Implements `render`, `status` and `before_apply_application`.
+Inherits `prepare_application` from `database::base`. Extends `validate_config` (its `configuration` block), `validate_link` (identifier rules) and `remove_application` (purge). Implements `render`, `status` and `before_apply_application`.
 
 
 `compose.yaml`:
