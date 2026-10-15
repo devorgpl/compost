@@ -6,7 +6,7 @@ use std::process::Command;
 
 use anyhow::{Result, bail};
 
-use super::{Connector, Output, log_script, run_process, shell_quote};
+use super::{Connector, Output, shell_quote};
 
 /// `ssh` exits with this status when it cannot connect or authenticate.
 const SSH_ERROR_STATUS: i32 = 255;
@@ -71,11 +71,17 @@ impl Connector for Ssh {
         format!("ssh {}@{}:{}", self.user, self.address, self.port)
     }
 
-    fn run(&self, script: &str, stdin: Option<&[u8]>) -> Result<Output> {
-        log_script(self.verbose, &self.target(), script);
+    fn command(&self, script: &str) -> Command {
         let mut command = Command::new("ssh");
         command.args(self.args(script));
-        let output = run_process(command, stdin)?;
+        command
+    }
+
+    fn verbose(&self) -> bool {
+        self.verbose
+    }
+
+    fn check_connection(&self, output: &Output) -> Result<()> {
         if output.status == SSH_ERROR_STATUS {
             bail!(
                 "cannot connect to {}: {}\n\
@@ -87,7 +93,7 @@ impl Connector for Ssh {
                 self.address
             );
         }
-        Ok(output)
+        Ok(())
     }
 }
 

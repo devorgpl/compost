@@ -8,6 +8,8 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    volumes:
+      - visits:/data
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -16,3 +18,8 @@ services:
   migrate:
     build: ./backend
     command: ["python", "migrate.py"]
+
+# Named volumes listed under `backup.volumes` in depap.yaml are saved by
+# `depap app backup`.
+volumes:
+  visits:

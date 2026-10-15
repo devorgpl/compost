@@ -9,7 +9,9 @@ use super::KIND;
 use crate::config::app::AppConfig;
 use crate::config::check_name;
 use crate::connector::shell_quote;
-use crate::shared::{AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir};
+use crate::shared::{
+    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir,
+};
 
 /// Docker network shared by the ingress and every app service it routes to.
 pub const NETWORK: &str = "depap-ingress";
@@ -218,6 +220,16 @@ pub fn describe_link(ctx: &AppCtx, entry: &str) -> Result<String> {
         record.domains.join(", "),
         routes.join(", ")
     ))
+}
+
+/// `<entry>.yaml`: the link record (domains and routes).
+pub fn backup_link(ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+    let record = ctx
+        .server
+        .connector
+        .read_file(&record_path(ctx, entry))?
+        .with_context(|| format!("no link record for `{entry}`; deploy the app again"))?;
+    out.file(&format!("{entry}.yaml"), Role::Meta, record.as_bytes())
 }
 
 /// Delete the link record.

@@ -1085,3 +1085,171 @@ fn app_deploy_from_inside_the_project_folder() {
         .success()
         .stdout(contains("uploaded 2 files"));
 }
+
+#[test]
+fn app_backup_of_one_link_as_raw_dump() {
+    let server = server_with_app();
+    server
+        .run(
+            &[
+                "app",
+                "backup",
+                "myapp-staging",
+                "--link",
+                "system-data",
+                "--format",
+                "raw",
+                "-o",
+                "dump.sql",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("links/database/system-data.sql"))
+        .stdout(contains("Backup written to dump.sql"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(
+            "exec -T postgres pg_dump -U postgres --no-owner --no-acl -d myapp_staging_system_data"
+        ),
+        "{log}"
+    );
+    assert!(!log.contains("docker save"), "only the link: {log}");
+    assert!(server.env.work.path().join("dump.sql").exists());
+
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "--link", "nope"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .code(2)
+        .stderr(contains("--link nope: no such link"));
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "--target", "s3"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .code(2)
+        .stderr(contains("s3 backup target is not implemented"));
+}
+
+#[test]
+fn app_backup_on_server_then_list_and_restore_data() {
+    let server = server_with_app();
+    server
+        .run(
+            &[
+                "app",
+                "backup",
+                "myapp-staging",
+                "--target",
+                "server",
+                "-o",
+                "b.tar.gz",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("apps/myapp/staging/sources.tar"))
+        .stdout(contains("apps/myapp/staging/links/ingress/ui-front.caddy"));
+    assert!(server.server_home.join("backups/b.tar.gz").exists());
+    server
+        .run(
+            &["backup", "list", "--source", "server"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("b.tar.gz"));
+    server
+        .run(&["backup", "list"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .code(2)
+        .stderr(contains("--source server"));
+    server.take_docker_log();
+
+    // The fake database is never empty, so loading needs --replace.
+    let restore = [
+        "app",
+        "restore",
+        "b.tar.gz",
+        "--source",
+        "server",
+        "--include",
+        "links",
+        "--yes",
+    ];
+    server
+        .run(&restore, &[("FAKE_DOCKER_RUNNING", "1")])
+        .code(3)
+        .stderr(contains("is not empty; add --replace"));
+    server
+        .run(
+            &[&restore[..], &["--replace"]].concat(),
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("loading database myapp_staging_system_data"))
+        .stdout(contains("Restored myapp-staging."));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("SET ROLE \"myapp_staging_system_data\";"),
+        "{log}"
+    );
+    assert!(log.contains("DROP DATABASE IF EXISTS"), "{log}");
+    assert!(log.contains(" stop"), "the app is stopped meanwhile: {log}");
+    assert!(log.contains(" start "), "and started again: {log}");
+    // Unpacked files are removed again.
+    let left: Vec<_> = fs::read_dir(server.server_home.join("backups"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["b.tar.gz"]);
+}
+
+#[test]
+fn server_backup_holds_dump_secrets_and_records() {
+    let server = server_with_app();
+    server
+        .run(
+            &["server", "backup", "-o", "server.tar.gz"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success()
+        .stdout(contains("server/shared/database/postgres16/dumpall.sql"))
+        .stdout(contains("server/shared/ingress/caddy-main/caddy.tar"))
+        .stdout(contains("holds secrets"));
+    assert!(server.take_docker_log().contains("pg_dumpall -U postgres"));
+
+    // An app restore refuses a server backup, and the server refuses to
+    // restore shared apps that are deployed.
+    server
+        .run(
+            &["app", "restore", "server.tar.gz"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .code(2)
+        .stderr(contains("restore it with `depap server restore`"));
+    server
+        .run(
+            &["server", "restore", "server.tar.gz", "--yes"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .code(3)
+        .stderr(contains("postgres16 is already deployed"));
+}
+
+#[test]
+fn restore_rejects_files_that_are_not_archives() {
+    let server = server_with_app();
+    server.write_work_file("plain.sql", "SELECT 1;");
+    server
+        .run(
+            &["app", "restore", "plain.sql"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .code(2)
+        .stderr(contains("is not a depap archive"));
+    server
+        .run(&["app", "backup", "--all", "myapp-staging"], &[])
+        .code(2)
+        .stderr(contains("cannot be used with"));
+}

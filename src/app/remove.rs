@@ -1,7 +1,5 @@
 //! `depap app remove` (spec §10.10).
 
-use std::io::{BufRead, IsTerminal, Write};
-
 use anyhow::{Context, Result};
 
 use super::instance::{self, Instance, Selector};
@@ -59,7 +57,7 @@ pub fn remove(
             link.instance
         );
     }
-    if !options.yes && !confirm()? {
+    if !options.yes && !super::confirm()? {
         out!("Cancelled.");
         return Ok(());
     }
@@ -140,17 +138,4 @@ fn remove_links(ctx: &ServerCtx, instance: &Instance, purge: &[String]) -> Resul
             .with_context(|| format!("removing link {} {}", link.kind, link.entry))?;
     }
     Ok(())
-}
-
-fn confirm() -> Result<bool> {
-    if !std::io::stdin().is_terminal() {
-        return Err(config_err(
-            "not asking for confirmation without a terminal; add --yes",
-        ));
-    }
-    print!("Continue? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }

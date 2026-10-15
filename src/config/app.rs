@@ -28,6 +28,23 @@ pub struct AppConfig {
     pub services: BTreeMap<String, Vec<Value>>,
     #[serde(default)]
     pub app_services: Vec<AppService>,
+    #[serde(default, skip_serializing_if = "BackupConfig::is_empty")]
+    pub backup: BackupConfig,
+}
+
+/// What `app backup` saves besides link data and sources.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupConfig {
+    /// Named volumes (keys of the compose file's top-level `volumes`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<String>,
+}
+
+impl BackupConfig {
+    fn is_empty(&self) -> bool {
+        self.volumes.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,6 +98,8 @@ pub struct AppService {
 #[derive(Debug, Default)]
 pub struct ComposeFile {
     pub services: BTreeMap<String, ComposeService>,
+    /// Top-level named volumes → their `name:` when the file sets one.
+    pub volumes: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Debug, Default)]
@@ -167,6 +186,15 @@ impl AppConfig {
         Ok(copy)
     }
 
+    /// Docker volume behind a named volume of the compose file, e.g.
+    /// `myapp-staging_uploads`. Volumes in `backup.volumes` are checked on load.
+    pub fn docker_volume(&self, compose: &ComposeFile, volume: &str) -> String {
+        match compose.volumes.get(volume) {
+            Some(Some(name)) => name.clone(),
+            _ => format!("{}_{volume}", self.instance()),
+        }
+    }
+
     /// Core checks, then delegation to each kind (spec §6.3).
     fn validate(&self, compose: &ComposeFile) -> Result<()> {
         check_name("app name", &self.name)?;
@@ -191,6 +219,21 @@ impl AppConfig {
                         "{path}.environment.{key}: must be a string, number or boolean"
                     )));
                 }
+            }
+        }
+
+        let mut volumes = HashSet::new();
+        for volume in &self.backup.volumes {
+            if !volumes.insert(volume) {
+                return Err(config_err(format!(
+                    "backup.volumes: `{volume}` is listed more than once"
+                )));
+            }
+            if !compose.volumes.contains_key(volume) {
+                return Err(config_err(format!(
+                    "backup.volumes: `{volume}` is not a named volume in {}",
+                    self.deployment.compose_file
+                )));
             }
         }
 
@@ -267,6 +310,15 @@ impl ComposeFile {
                         .map(str::to_string),
                 },
             );
+        }
+        if let Some(Value::Mapping(volumes)) = value.get("volumes") {
+            for (name, volume) in volumes {
+                let name = name.as_str().context("volume names must be strings")?;
+                let docker_name = volume.get("name").and_then(Value::as_str);
+                compose
+                    .volumes
+                    .insert(name.to_string(), docker_name.map(str::to_string));
+            }
         }
         Ok(compose)
     }
@@ -361,6 +413,23 @@ services:
         assert!(
             error("{name: a, services: {database: [{type: postgres}]}}").contains("needs a `name`")
         );
+    }
+
+    #[test]
+    fn backup_volumes_must_be_named_volumes() {
+        let compose = ComposeFile::parse(
+            "{services: {web: {image: x}}, volumes: {uploads: {}, media: {name: shared-media}}}",
+        )
+        .unwrap();
+        let config: AppConfig =
+            serde_yaml_ng::from_str("{name: a, prefix: p, backup: {volumes: [uploads, media]}}")
+                .unwrap();
+        config.validate(&compose).unwrap();
+        assert_eq!(config.docker_volume(&compose, "uploads"), "a-p_uploads");
+        assert_eq!(config.docker_volume(&compose, "media"), "shared-media");
+
+        let err = error("{name: a, backup: {volumes: [data]}}");
+        assert!(err.contains("`data` is not a named volume"), "{err}");
     }
 
     #[test]

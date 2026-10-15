@@ -18,6 +18,35 @@ pub struct ServerConfig {
     /// looked up in the kind registry during validation.
     #[serde(default)]
     pub shared: BTreeMap<String, Vec<SharedAppConfig>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<BackupSettings>,
+}
+
+/// Where `backup` writes archives and `restore` reads them by default.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupSettings {
+    #[serde(default)]
+    pub target: BackupTarget,
+    /// Archive folder of the `server` target: absolute, or relative to
+    /// DEPAP_SERVER_HOME. Default `backups`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_path: Option<String>,
+    /// Settings of the `s3` target (not implemented yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum BackupTarget {
+    /// This machine; data is streamed through the connector.
+    #[default]
+    Local,
+    /// A folder on the server.
+    Server,
+    /// An S3 bucket (not implemented yet).
+    S3,
 }
 
 impl ServerConfig {
@@ -101,6 +130,11 @@ impl ServerConfig {
             kind.validate_instances(apps)
                 .map_err(|e| config_err(format!("shared.{kind_name}: {e:#}")))?;
         }
+        if let Some(path) = self.backup.as_ref().and_then(|b| b.server_path.as_ref()) {
+            if path.trim().is_empty() {
+                return Err(config_err("backup.server_path must not be empty"));
+            }
+        }
         Ok(())
     }
 }
@@ -168,6 +202,15 @@ shared:
         assert!(!text.contains("root_password"), "{text}");
         assert!(!text.contains("configuration"), "{text}");
         assert!(text.contains("name: pg"), "{text}");
+    }
+
+    #[test]
+    fn backup_settings() {
+        let config = parse("backup: {target: server, server_path: /srv/backups}").unwrap();
+        let backup = config.backup.unwrap();
+        assert_eq!(backup.target, BackupTarget::Server);
+        assert!(error("backup: {target: ftp}").contains("unknown variant `ftp`"));
+        assert!(error("backup: {server_path: ''}").contains("must not be empty"));
     }
 
     #[test]

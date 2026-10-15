@@ -3,11 +3,12 @@
 mod base;
 mod postgres;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link,
+    AppCtx, Contribution, ItemReader, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
+    SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::{DatabaseLink, DatabaseRecord, Endpoint};
@@ -71,6 +72,50 @@ pub trait DatabaseType: Sync {
 
     /// Delete the database and user of a link (`app remove --purge database`).
     fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord) -> Result<()>;
+
+    /// Save the link's database as the item `name`.
+    fn dump_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        name: &str,
+        out: &mut ItemWriter,
+    ) -> Result<()>;
+
+    /// Load the item `name` into the link's database; a database that is not
+    /// empty is only dropped and recreated with `replace`.
+    fn load_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        name: &str,
+        from: &ItemReader,
+        replace: bool,
+    ) -> Result<()>;
+
+    /// Save the whole database server: all databases, roles and the root password.
+    fn backup_shared(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        out: &mut ItemWriter,
+    ) -> Result<()>;
+
+    fn restore_shared_files(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _from: &ItemReader,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn restore_shared_data(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        from: &ItemReader,
+    ) -> Result<()>;
 }
 
 static TYPES: &[&dyn DatabaseType] = &[&postgres::Postgres];
@@ -151,6 +196,60 @@ impl Kind for DatabaseKind {
     fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
         find_type(&ctx.shared.type_name)?.remove_application(ctx, entry, purge)
     }
+
+    fn backup_shared(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        out: &mut ItemWriter,
+    ) -> Result<()> {
+        find_type(&config.type_name)?.backup_shared(ctx, config, out)
+    }
+
+    fn restore_shared_files(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        from: &ItemReader,
+    ) -> Result<()> {
+        find_type(&config.type_name)?.restore_shared_files(ctx, config, from)
+    }
+
+    fn restore_shared_data(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        from: &ItemReader,
+    ) -> Result<()> {
+        find_type(&config.type_name)?.restore_shared_data(ctx, config, from)
+    }
+
+    /// `<entry>.sql`: a dump of the link's database.
+    fn backup_link(&self, ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+        let record = base::read_record(ctx, entry)?
+            .with_context(|| format!("no link record for `{entry}`; deploy the app again"))?;
+        find_type(&ctx.shared.type_name)?.dump_database(ctx, &record, &dump_name(entry), out)
+    }
+
+    fn restore_link(
+        &self,
+        ctx: &AppCtx,
+        entry: &str,
+        from: &ItemReader,
+        replace: bool,
+    ) -> Result<()> {
+        let name = dump_name(entry);
+        if !from.has(&name) {
+            return Ok(());
+        }
+        let record = base::read_record(ctx, entry)?
+            .with_context(|| format!("no link record for `{entry}`; deploy the app first"))?;
+        find_type(&ctx.shared.type_name)?.load_database(ctx, &record, &name, from, replace)
+    }
+}
+
+fn dump_name(entry: &str) -> String {
+    format!("{entry}.sql")
 }
 
 fn find_type(name: &str) -> Result<&'static dyn DatabaseType> {

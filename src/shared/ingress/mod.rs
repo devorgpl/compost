@@ -7,7 +7,8 @@ use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link,
+    AppCtx, Contribution, ItemReader, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
+    SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::IngressLink;
@@ -47,6 +48,30 @@ pub trait IngressType: Sync {
 
     fn remove_application(&self, ctx: &AppCtx, entry: &str) -> Result<()> {
         base::remove_application(ctx, entry)
+    }
+
+    /// The link record, for review. Routing is rebuilt by deploy, so there is
+    /// nothing to restore.
+    fn backup_link(&self, ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+        base::backup_link(ctx, entry, out)
+    }
+
+    fn backup_shared(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _out: &mut ItemWriter,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn restore_shared_files(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _from: &ItemReader,
+    ) -> Result<()> {
+        Ok(())
     }
 
     // Type-specific, no default.
@@ -135,6 +160,28 @@ impl Kind for IngressKind {
     /// Routing has no data to purge; `--purge ingress` is rejected before this runs.
     fn remove_application(&self, ctx: &AppCtx, entry: &str, _purge: bool) -> Result<()> {
         find_type(&ctx.shared.type_name)?.remove_application(ctx, entry)
+    }
+
+    fn backup_shared(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        out: &mut ItemWriter,
+    ) -> Result<()> {
+        find_type(&config.type_name)?.backup_shared(ctx, config, out)
+    }
+
+    fn restore_shared_files(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        from: &ItemReader,
+    ) -> Result<()> {
+        find_type(&config.type_name)?.restore_shared_files(ctx, config, from)
+    }
+
+    fn backup_link(&self, ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.backup_link(ctx, entry, out)
     }
 }
 

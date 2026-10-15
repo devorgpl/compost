@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 pub use crate::app::contribution::Contribution;
+pub use crate::backup::{ItemReader, ItemWriter, Role};
 use crate::config::app::AppConfig;
 use crate::connector::Connector;
 
@@ -198,6 +199,57 @@ pub trait Kind: Sync {
     /// Undo a link on `app remove`; with `purge`, also delete the app's data.
     /// Gets the link's name only: the app's config files may not be at hand.
     fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()>;
+
+    // --- Backup and restore. Defaults: the kind has nothing to save.
+
+    /// Save a shared app's data and the secrets needed to restore it.
+    fn backup_shared(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _out: &mut ItemWriter,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Before the shared app is deployed: put back files its render and start
+    /// depend on (e.g. a generated password).
+    fn restore_shared_files(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _from: &ItemReader,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// After the shared app started: load its data.
+    fn restore_shared_data(
+        &self,
+        _ctx: &ServerCtx,
+        _config: &SharedAppConfig,
+        _from: &ItemReader,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Save what a link holds for the app (data, or configuration for review).
+    /// Item names start with the entry name.
+    fn backup_link(&self, _ctx: &AppCtx, _entry: &str, _out: &mut ItemWriter) -> Result<()> {
+        Ok(())
+    }
+
+    /// Load a link's saved data while the app is stopped. Existing data is
+    /// only replaced with `replace`.
+    fn restore_link(
+        &self,
+        _ctx: &AppCtx,
+        _entry: &str,
+        _from: &ItemReader,
+        _replace: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Parse a link entry into a kind's own struct.

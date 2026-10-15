@@ -101,7 +101,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
 }
 
 /// The compose file uploaded by deploy (empty if it cannot be read).
-fn stored_compose_file(ctx: &ServerCtx, instance: &Instance) -> Result<ComposeFile> {
+pub fn stored_compose_file(ctx: &ServerCtx, instance: &Instance) -> Result<ComposeFile> {
     let app = &instance.app;
     let path = format!(
         "{}/sources/{}",

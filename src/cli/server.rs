@@ -5,11 +5,13 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 
-use super::DeployArgs;
+use super::{BackupOutputArgs, DeployArgs};
 use crate::config::local::{ConnectorConfig, DepapHome, ServerEntry};
+use crate::config::server::BackupTarget;
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector;
 use crate::error::{DepapError, config_err};
+use crate::server::backup::{self, BackupOptions, RestoreOptions};
 use crate::server::deploy::{self, Options};
 use crate::server::links;
 use crate::server::state::{self, Status};
@@ -42,6 +44,36 @@ pub struct DefineArgs {
     /// Replace an existing server with the same name
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ServerBackupArgs {
+    /// Only this shared app (repeatable or comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub shared: Vec<String>,
+    #[command(flatten)]
+    pub output: BackupOutputArgs,
+    /// Remove a lock left behind by an interrupted depap command
+    #[arg(long)]
+    pub force_unlock: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ServerRestoreArgs {
+    /// Archive written by `depap server backup` (with `--source server`: a file in the server's backup folder)
+    pub archive: String,
+    /// Only this shared app (repeatable or comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub shared: Vec<String>,
+    /// Where the archive is (default: `backup.target` of depap-server.yaml, else local)
+    #[arg(long, value_enum)]
+    pub source: Option<BackupTarget>,
+    /// Do not ask for confirmation
+    #[arg(long)]
+    pub yes: bool,
+    /// Remove a lock left behind by an interrupted depap command
+    #[arg(long)]
+    pub force_unlock: bool,
 }
 
 pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
@@ -216,6 +248,75 @@ pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> 
         connector.as_ref(),
         server.server_home(),
         &manager.manager_key,
+    )
+}
+
+pub fn backup(
+    home: &DepapHome,
+    server: Option<&str>,
+    args: ServerBackupArgs,
+    verbose: bool,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, verbose)?;
+    let options = BackupOptions {
+        shared: args.shared,
+        format: args.output.format,
+        target: args.output.target,
+        output: args.output.output,
+        force_unlock: args.force_unlock,
+    };
+    backup::backup(
+        connector.as_ref(),
+        &server.name,
+        server.server_home(),
+        &manager.manager_key,
+        &options,
+    )
+}
+
+pub fn restore(
+    home: &DepapHome,
+    server: Option<&str>,
+    args: ServerRestoreArgs,
+    verbose: bool,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, verbose)?;
+    let options = RestoreOptions {
+        archive: args.archive,
+        source: args.source,
+        shared: args.shared,
+        yes: args.yes,
+        force_unlock: args.force_unlock,
+    };
+    backup::restore(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &options,
+    )?;
+    out!();
+    state(home, Some(&server.name), verbose)
+}
+
+/// `depap backup list`
+pub fn backup_list(
+    home: &DepapHome,
+    server: Option<&str>,
+    source: Option<BackupTarget>,
+    verbose: bool,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, verbose)?;
+    backup::list(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        source,
     )
 }
 

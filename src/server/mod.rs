@@ -1,5 +1,6 @@
 //! Operations on a managed server.
 
+pub mod backup;
 pub mod compose;
 pub mod deploy;
 pub mod links;

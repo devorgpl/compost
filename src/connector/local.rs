@@ -2,9 +2,7 @@
 
 use std::process::Command;
 
-use anyhow::Result;
-
-use super::{Connector, Output, log_script, run_process};
+use super::Connector;
 
 pub struct Local {
     pub verbose: bool,
@@ -15,11 +13,14 @@ impl Connector for Local {
         "local".to_string()
     }
 
-    fn run(&self, script: &str, stdin: Option<&[u8]>) -> Result<Output> {
-        log_script(self.verbose, &self.target(), script);
+    fn command(&self, script: &str) -> Command {
         let mut command = Command::new("sh");
         command.arg("-c").arg(script);
-        run_process(command, stdin)
+        command
+    }
+
+    fn verbose(&self) -> bool {
+        self.verbose
     }
 }
 

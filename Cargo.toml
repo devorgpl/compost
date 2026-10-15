@@ -10,6 +10,7 @@ anyhow = "1"
 clap = { version = "4.6", features = ["derive", "env"] }
 ctrlc = "3"
 dirs = "7"
+flate2 = "1"
 humantime = "2"
 ignore = "0.4"
 minijinja = { version = "3", features = ["serde"] }
@@ -18,13 +19,13 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
 tar = "0.4"
+tempfile = "3"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
-tempfile = "3"
 
 # Small, self-contained release binaries.
 [profile.release]

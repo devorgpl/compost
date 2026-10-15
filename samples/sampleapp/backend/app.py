@@ -22,6 +22,9 @@ class Handler(BaseHTTPRequestHandler):
             with psycopg.connect(DATABASE_URL) as conn:
                 conn.execute("INSERT INTO hits DEFAULT VALUES")
                 (hits,) = conn.execute("SELECT count(*) FROM hits").fetchone()
+            # A file in a named volume, so backups have more than the database.
+            with open("/data/visits.log", "a") as log:
+                log.write(f"{hits}\n")
             self.reply(200, {"hits": hits, "mode": APP_MODE})
         else:
             self.reply(404, {"error": "not found"})

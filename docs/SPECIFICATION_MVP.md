@@ -110,7 +110,11 @@ shared:
       type: postgres
       version: 16                    # major version, required; used for matching
       image: postgres:16-alpine      # optional, default postgres:<version>
+backup:                              # optional (§10.13)
+  target: local                      # local | server | s3 ; default local (s3: not implemented yet)
+  server_path: backups               # archive folder of the server target; absolute or relative to DEPAP_SERVER_HOME
 ```
+`backup` is kept in the stored effective config, so `backup`/`restore` commands read the default target from the server.
 
 ### 5.2 `.depap-server.secrets.yaml`
 ```yaml
@@ -182,6 +186,8 @@ app_services:
     service: backend-webapp
     environment:                       # static variables, added to the container
       APP_MODE: production
+backup:
+  volumes: [uploads]                   # named volumes (top-level `volumes:` keys of the compose file) saved by `app backup`
 ```
 
 Database link values available in `environment` mappings:
@@ -224,6 +230,7 @@ Errors (exit code 2), grouped by the layer that raises them:
   - unknown top-level keys, wrong types, invalid names
   - unknown kind under `services`
   - `app_services[].service` not present in the compose file
+  - `backup.volumes[]` not a named volume of the compose file, or listed twice
 - **ingress** (generic, used by every ingress type)
   - `routes[].target` not in `app_services`
   - entry with no `domains` that is not `optional`
@@ -263,6 +270,7 @@ $DEPAP_SERVER_HOME/
 ├── depap-server.yaml                 # effective server config, secrets removed
 ├── state.yaml                        # depap-owned state (§8.2)
 ├── lock/                             # exists while a mutating command runs (§10.1)
+├── backups/                          # archives of the `server` backup target (§10.13, `backup.server_path`)
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml
@@ -684,11 +692,79 @@ myapp-staging  candidate  not running  2026-10-15T07:40:51Z
 ```
 Instances are listed from `state.yaml` only, so the app's repository is not needed. On a server depap has not deployed to, it prints a notice and exits 0.
 
+### 10.13 Backups: targets, formats, archive layout
+Backups are taken by `app backup` and `server backup` and restored by `app restore` and `server restore`.
+
+**Target** (`--target` for backups, `--source` for restores; default `backup.target` of the stored `depap-server.yaml`, else `local`):
+- `local`: items are streamed through the connector into a temporary folder on this machine, then packed there. Nothing is left on the server.
+- `server`: items are written next to the archive folder (`backup.server_path`, default `$DEPAP_SERVER_HOME/backups`) and packed with `tar -cz` on the server; no data crosses the network. `-o` is then a file name in that folder, and restores take a file name in it (or an absolute path).
+- `s3`: accepted in config and flags, fails with exit 2 ("not implemented yet").
+
+**Format** (`--format`):
+- `depap` (default): `<name>.depap.tar.gz` with `manifest.yaml` and the configuration needed to restore. Only this format can be restored.
+- `raw`: the data alone, without manifest, configuration or secrets. One item is written as the plain file (e.g. a `.sql` dump or a `.caddy` site file); several are packed as `<name>.tar.gz`.
+
+Archives are created with mode `0600` and never overwrite an existing file. Default names: `<app>-<prefix>-<UTC yyyymmdd-hhmmss>`, `apps-<time>` (`--all`), `<server>-<time>` or `<server>-<shared app>-<time>`.
+
+```
+manifest.yaml                                  # format: 1, scope: server|app|apps, depap_version, created_at,
+                                               # server, instances, shared, items [{path, size}]
+apps/<app>/<prefix>/depap.yaml                 # stored effective config (no secrets)
+apps/<app>/<prefix>/depap-env.yaml
+apps/<app>/<prefix>/sources.tar                # the uploaded sources (only the compose file without attach_sources)
+apps/<app>/<prefix>/volumes/<volume>.tar
+apps/<app>/<prefix>/images.tar                 # docker save
+apps/<app>/<prefix>/links/<kind>/<entry>.*     # database: <entry>.sql; ingress: <entry>.yaml (record), <entry>.caddy
+server/depap-server.yaml                       # stored effective config
+server/connectors.tar                          # link records of the saved shared apps (secrets)
+server/shared/<kind>/<name>/…                  # postgres: dumpall.sql, postgres.env (secret); caddy: caddy.tar
+```
+
+Kinds take part through `Kind` hooks with no-op defaults: `backup_link`, `restore_link` (app level) and `backup_shared`, `restore_shared_files` (before the shared app is deployed), `restore_shared_data` (after it started). Each hook describes items as scripts run on the server; core streams their output into the archive, or the archived item into their stdin.
+- postgres link: `pg_dump --no-owner --no-acl` (plain SQL). Loaded as `SET ROLE "<link user>"` + dump with `ON_ERROR_STOP`, so restored objects belong to the link user, also under another prefix or database name. A database that holds objects is only dropped and recreated with `--replace` (exit 3 otherwise).
+- postgres server: `pg_dumpall` plus `secrets/postgres.env`. The password file is put back before the first start, so the data folder gets the same root password as the dump. When loading, the error for the always existing `postgres` role is ignored; any other error fails the restore.
+- caddy link: the link record and site file (for review; deploy rebuilds routing). caddy server: `data/`, `config/` and `conf/`; restore puts back `data/` (certificates, which avoids ACME rate limits on a move) and `config/`.
+
+### 10.14 `depap app backup [<instance> | -f … | --app … --prefix … | --all] [--include …] [--link …]… [--format …] [-o …] [--target …] [--stop]`
+Parts (`--include`, comma-separated): `links`, `sources`, `volumes`, `images`. Default: `links,sources,volumes`. With `--link <entry>` or `--link <kind>:<entry>` (repeatable) only links are saved unless `--include` says otherwise, e.g. `--link main-db --format raw` writes a plain SQL dump. A `--link` that matches no link is a usage error.
+1. Preflight, lock (a backup during a deploy would be inconsistent).
+2. Per instance: the stored `depap.yaml` and `depap-env.yaml`; `sources/` as tar; each link's `backup_link`; each `backup.volumes` volume through a `busybox` helper container (`tar -cf - -C /v .`; a volume that does not exist yet is skipped with a warning); with `images`, `docker save` of the images of `C config --images` that exist.
+3. `--stop` stops the running services while volumes are copied and starts the same services again afterwards (also on errors and Ctrl-C).
+
+### 10.15 `depap app restore <archive> [--instance <instance> | --all] [--prefix <prefix>] [-f …] [--include …] [--link …]… [--source …] [--replace] [--yes]`
+The archive must be an app archive (exit 2 otherwise). With several instances, `--instance` or `--all` is required. Parts default to everything in the archive (only links with `--link`).
+
+**Deployment restore** (sources are restored): the archived `depap.yaml` is the base config, `-f` overlays are merged over it and `--prefix` replaces its prefix. This makes a copy, e.g. `--prefix review -f review-domains.yaml` (domains must differ, see §6.3; database names follow the new prefix unless the config sets `db_name`). The instance is deployed as with `app deploy --apply` (§10.8), and after the `before_apply_application` hooks:
+1. `restore_link` for each selected link (the database was just created by the link);
+2. `docker load` of the images; images built for the archived instance are tagged for the new one, and the build/pull step is skipped;
+3. `C create`, then each volume's contents are replaced;
+4. `C up -d` as usual.
+
+**Data restore** (no sources in the parts or in the archive): data is loaded into the deployed instance `<name>-<prefix>` (`--prefix` selects another one). It lists what is replaced and asks for confirmation unless `--yes`. Its running services are stopped, links and volumes are loaded, and the services are started again (`up -d` when images were loaded).
+
+In both modes, volumes and databases that already hold data are replaced only with `--replace` (exit 3 otherwise).
+
+### 10.16 `depap server backup [--shared <name>]… [--format …] [-o …] [--target …]`
+Saves the stored `depap-server.yaml`, the `connectors/` records and each shared app's `backup_shared` items (all shared apps, or those named). The archive holds secrets (root passwords, link credentials); depap says so after writing it.
+
+### 10.17 `depap server restore <archive> [--shared <name>]… [--source …] [--yes]`
+Restores shared apps onto a server that does not have them yet (a new server, or one without these shared apps; exit 3 if one is deployed).
+1. Preflight (an uninitialized server is fine). Merge the selected shared apps from the archived config into the server's config (the archived `backup` settings are used when the server has none). Confirm unless `--yes`.
+2. Lock; put back the link records of the selected shared apps and their `restore_shared_files`.
+3. `server deploy --apply` with the merged config.
+4. Lock; `restore_shared_data` of each selected shared app.
+
+Applications are restored afterwards with `app restore`. Their link records are back, so they keep their database credentials; when the server dump already holds their data, restore them without links: `--include sources,volumes,images`.
+
+### 10.18 `depap backup list [--source server]`
+Lists the files in the server's backup folder with their sizes. With the `local` target it is a usage error: local backups are files on this machine.
+
 ## 11. Security
 
 - Secret files on the server (`secrets/`, `connectors/database/**`, `compose/depap.override.yaml`) are created with mode `0600`. Their directories use `0700`.
 - Secrets never appear in `depap-server.yaml`, the effective `depap.yaml`, `state.yaml`, terminal output, `--dry-run` output (shown as `***`), or remote command lines.
 - Overlay files are never uploaded as sources.
+- Backup archives are written with mode `0600`. App archives hold no secrets from config, but database dumps hold the app's data. Server archives hold the shared apps' secrets and link credentials.
 - Every instance linked to the same shared app shares that app's docker network. Network isolation between instances is a later feature.
 - depap only uses the SSH server's existing host key checking. It never disables it.
 
@@ -915,7 +991,7 @@ src/
 | Release | Adds | Plugs into |
 |---|---|---|
 | 0.2 | `app logs`, `app restart`, `server deploy --prune`, `-o json` output, Postgres tags and host port publishing | `state.yaml`, `DatabaseType` |
-| 0.3 | Backup/restore (`data/` tags per shared app), S3 link | New `s3` kind (`Kind` + `S3Type`), folder tags |
+| 0.3 | Backup/restore (§10.13–§10.18, done), `s3` backup target, S3 link | `Kind` backup hooks, new `s3` kind (`Kind` + `S3Type`) |
 | 0.4 | OIDC (Keycloak) link: realms, clients, users | New `oidc` kind (`Kind` + `OidcType`) |
 | 0.5 | Logs (OpenObserve) and metrics | Hooks that add to the compose override |
 | 0.6 | Rollback (keep N previous `apps/…` revisions), per-instance networks | Atomic directory swap |

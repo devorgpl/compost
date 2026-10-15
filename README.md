@@ -49,6 +49,18 @@ depap server state
 
 Then follow [samples/README.md](samples/README.md).
 
+## Backup and restore
+
+```sh
+depap app backup myapp-prod                       # links, sources and volumes → myapp-prod-<time>.depap.tar.gz
+depap app backup myapp-prod --link main-db --format raw   # just the SQL dump
+depap app restore myapp-prod-….depap.tar.gz --prefix review -f review.yaml   # a copy of the app
+depap server backup --target server               # shared apps, kept in the server's backups/ folder
+depap server restore prod-….depap.tar.gz          # on a new server, then `depap app restore`
+```
+
+See §10.13–§10.18 of [docs/SPECIFICATION_MVP.md](docs/SPECIFICATION_MVP.md).
+
 ## Development
 
 Needs Rust, plus [just](https://just.systems), `rustfmt` and `clippy`.

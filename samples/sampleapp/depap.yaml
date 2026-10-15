@@ -38,3 +38,7 @@ app_services:
       APP_MODE: production
   - name: migrate
     service: migrate
+
+# Saved by `depap app backup` besides database dumps and sources.
+backup:
+  volumes: [visits]

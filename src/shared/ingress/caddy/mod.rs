@@ -8,8 +8,8 @@ use super::base::{self, IngressLink};
 use super::{IngressType, KIND};
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Rendered, RenderedFile, ServerCtx, SharedAppConfig, project_name, render_template,
-    shared_dir,
+    AppCtx, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx, SharedAppConfig,
+    project_name, render_template, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -185,6 +185,56 @@ impl IngressType for Caddy {
         Ok(())
     }
 
+    /// Extends the generic backup with the site file Caddy serves.
+    fn backup_link(&self, ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+        base::backup_link(ctx, entry, out)?;
+        let site = shell_quote(&site_path(ctx, entry));
+        out.stream(
+            &format!("{entry}.caddy"),
+            Role::Data,
+            &format!("cat -- {site}"),
+        )
+    }
+
+    /// Certificates, Caddy state and configuration. Keeping the certificates
+    /// avoids hitting ACME rate limits when moving to another server.
+    fn backup_shared(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        out: &mut ItemWriter,
+    ) -> Result<()> {
+        let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
+        out.stream(
+            BACKUP_ITEM,
+            Role::Data,
+            &format!("cd {dir} && tar -cf - {}", BACKUP_DIRS.join(" ")),
+        )
+    }
+
+    /// Unpack next to the folders first, then swap them in.
+    fn restore_shared_files(
+        &self,
+        ctx: &ServerCtx,
+        config: &SharedAppConfig,
+        from: &ItemReader,
+    ) -> Result<()> {
+        if !from.has(BACKUP_ITEM) {
+            return Ok(());
+        }
+        let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
+        let mut script = format!(
+            "mkdir -p -- {dir} && cd {dir} && rm -rf .restore && mkdir .restore && tar -xf - -C .restore"
+        );
+        for name in RESTORE_DIRS {
+            script.push_str(&format!(
+                " && if [ -d .restore/{name} ]; then rm -rf {name} && mv .restore/{name} {name}; fi"
+            ));
+        }
+        script.push_str(" && rm -rf .restore");
+        from.feed(BACKUP_ITEM, b"", &script)
+    }
+
     /// Extends the generic removal: also delete the site file and reload.
     fn remove_application(&self, ctx: &AppCtx, entry: &str) -> Result<()> {
         base::remove_application(ctx, entry)?;
@@ -196,6 +246,13 @@ impl IngressType for Caddy {
         Ok(())
     }
 }
+
+/// Folders of the Caddy folder in `caddy.tar`. `conf/` is saved for review
+/// only: deploys write it again.
+const BACKUP_DIRS: [&str; 3] = ["data", "config", "conf"];
+/// Folders put back on restore: certificates and Caddy's own state.
+const RESTORE_DIRS: [&str; 2] = ["data", "config"];
+const BACKUP_ITEM: &str = "caddy.tar";
 
 /// `conf/sites/<instance>-<entry>.caddy` in the Caddy folder.
 fn site_path(ctx: &AppCtx, entry: &str) -> String {

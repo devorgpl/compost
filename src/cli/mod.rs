@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
+use crate::backup::Format;
 use crate::config::local::DepapHome;
+use crate::config::server::BackupTarget;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -48,6 +50,9 @@ pub enum Command {
     /// Inspect links between applications and shared apps
     #[command(subcommand)]
     Connector(ConnectorCommand),
+    /// Inspect backups
+    #[command(subcommand)]
+    Backup(BackupCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -60,6 +65,20 @@ pub enum ServerCommand {
     State,
     /// Deploy shared applications from depap-server.yaml
     Deploy(DeployArgs),
+    /// Back up shared applications (data, configuration and secrets)
+    Backup(server::ServerBackupArgs),
+    /// Restore shared applications from a server backup
+    Restore(server::ServerRestoreArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BackupCommand {
+    /// List the archives in the server's backup folder
+    List {
+        /// Where backups are (default: `backup.target` of depap-server.yaml)
+        #[arg(long, value_enum)]
+        source: Option<BackupTarget>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -85,6 +104,20 @@ pub struct DeployArgs {
     pub force_unlock: bool,
 }
 
+/// Where and how a backup is written.
+#[derive(Debug, Args)]
+pub struct BackupOutputArgs {
+    /// `depap` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
+    #[arg(long, value_enum, default_value_t = Format::Depap)]
+    pub format: Format,
+    /// Output file or folder (with `--target server`: a file name in the server's backup folder)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+    /// Where to write (default: `backup.target` of depap-server.yaml, else local)
+    #[arg(long, value_enum)]
+    pub target: Option<BackupTarget>,
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     let home = DepapHome::locate()?;
     let server = cli.server.as_deref();
@@ -101,6 +134,15 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::App(command) => app::run(&home, server, command, cli.verbose),
         Command::Connector(ConnectorCommand::List) => {
             server::connector_list(&home, server, cli.verbose)
+        }
+        Command::Server(ServerCommand::Backup(args)) => {
+            server::backup(&home, server, args, cli.verbose)
+        }
+        Command::Server(ServerCommand::Restore(args)) => {
+            server::restore(&home, server, args, cli.verbose)
+        }
+        Command::Backup(BackupCommand::List { source }) => {
+            server::backup_list(&home, server, source, cli.verbose)
         }
     }
 }

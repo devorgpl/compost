@@ -1,13 +1,14 @@
 //! How depap runs commands on a server: locally or over SSH (spec §10.1, §14.2).
 //!
-//! A connector only has to implement [`Connector::run`]. Everything else
-//! (checked execution, reading and writing files) is built on top of it as
-//! default methods, so every connector behaves the same way.
+//! A connector only has to say which local process runs a script
+//! ([`Connector::command`]). Everything else (checked execution, streaming,
+//! reading and writing files) is built on top of it as default methods, so
+//! every connector behaves the same way.
 
 pub mod local;
 mod ssh;
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -37,11 +38,60 @@ pub trait Connector {
     /// Where commands run, for messages, e.g. `ssh depapuser@10.0.0.1:22`.
     fn target(&self) -> String;
 
+    /// The local process that runs a POSIX `sh` script on the server.
+    fn command(&self, script: &str) -> Command;
+
+    /// Print every script before it runs.
+    fn verbose(&self) -> bool;
+
+    /// An error when the script did not run because the connection failed.
+    fn check_connection(&self, _output: &Output) -> Result<()> {
+        Ok(())
+    }
+
     /// Run a POSIX `sh` script on the server and capture its output.
     ///
     /// Returns an error only when the script could not run at all (e.g. the
     /// server is unreachable). A non-zero exit status is reported in [`Output`].
-    fn run(&self, script: &str, stdin: Option<&[u8]>) -> Result<Output>;
+    fn run(&self, script: &str, stdin: Option<&[u8]>) -> Result<Output> {
+        log_script(self.verbose(), &self.target(), script);
+        let output = run_process(self.command(script), stdin)?;
+        self.check_connection(&output)?;
+        Ok(output)
+    }
+
+    /// Like [`Connector::run`], but stdin and stdout are streams, so binary
+    /// data of any size (dumps, archives) passes through without being held in
+    /// memory. `Output::stdout` stays empty.
+    fn run_stream(
+        &self,
+        script: &str,
+        stdin: Option<&mut (dyn Read + Send)>,
+        stdout: &mut dyn Write,
+    ) -> Result<Output> {
+        log_script(self.verbose(), &self.target(), script);
+        let output = run_process_stream(self.command(script), stdin, stdout)?;
+        self.check_connection(&output)?;
+        Ok(output)
+    }
+
+    /// Write the script's stdout to `stdout`; a non-zero exit status is an error.
+    fn stream_out(&self, script: &str, stdout: &mut dyn Write) -> Result<()> {
+        let output = self.run_stream(script, None, stdout)?;
+        if !output.success() {
+            return Err(command_failed(script, &output));
+        }
+        Ok(())
+    }
+
+    /// Feed `stdin` to the script; a non-zero exit status is an error.
+    fn stream_in(&self, script: &str, stdin: &mut (dyn Read + Send)) -> Result<()> {
+        let output = self.run_stream(script, Some(stdin), &mut std::io::sink())?;
+        if !output.success() {
+            return Err(command_failed(script, &output));
+        }
+        Ok(())
+    }
 
     /// Run a script and return its stdout; a non-zero exit status is an error.
     fn exec(&self, script: &str) -> Result<String> {
@@ -179,6 +229,60 @@ fn run_process(mut command: Command, stdin: Option<&[u8]>) -> Result<Output> {
     })
 }
 
+/// Like [`run_process`], with streams. Stdin is written and stderr collected
+/// on helper threads while this one copies stdout, so no pipe can fill up.
+fn run_process_stream(
+    mut command: Command,
+    stdin: Option<&mut (dyn Read + Send)>,
+    stdout: &mut dyn Write,
+) -> Result<Output> {
+    crate::interrupt::check()?;
+    command
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("cannot start `{program}`"))?;
+    let mut child_out = child.stdout.take().context("no stdout pipe")?;
+    let mut child_err = child.stderr.take().context("no stderr pipe")?;
+
+    let (copied, stderr) = std::thread::scope(|scope| {
+        if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            // A write error means the process exited early; its status tells why.
+            scope.spawn(move || std::io::copy(data, &mut pipe));
+        }
+        let stderr = scope.spawn(move || {
+            let mut text = Vec::new();
+            let _ = child_err.read_to_end(&mut text);
+            text
+        });
+        let copied = std::io::copy(&mut child_out, stdout);
+        if copied.is_err() {
+            // Nobody reads the output any more; stop the process.
+            let _ = child.kill();
+        }
+        (copied, stderr.join().unwrap_or_default())
+    });
+    let status = child
+        .wait()
+        .with_context(|| format!("`{program}` failed"))?;
+    crate::interrupt::check()?;
+    copied.with_context(|| format!("cannot write the output of `{program}`"))?;
+    stdout.flush()?;
+
+    Ok(Output {
+        status: status.code().unwrap_or(-1),
+        stdout: String::new(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    })
+}
+
 fn log_script(verbose: bool, target: &str, script: &str) {
     if verbose {
         eprintln!("[{target}] $ {script}");
@@ -206,5 +310,27 @@ mod tests {
             .exec(&format!("printf '%s' {}", shell_quote(tricky)))
             .unwrap();
         assert_eq!(out, tricky);
+    }
+
+    #[test]
+    fn streams_binary_data_both_ways() {
+        let connector = local::Local { verbose: false };
+        let data: Vec<u8> = (0..3_000_000u32).map(|i| (i * 7 % 256) as u8).collect();
+        let mut echoed = Vec::new();
+        let output = connector
+            .run_stream(
+                "cat; echo done >&2",
+                Some(&mut data.as_slice()),
+                &mut echoed,
+            )
+            .unwrap();
+        assert!(output.success());
+        assert_eq!(output.stderr, "done\n");
+        assert!(echoed == data, "binary data changed on the way");
+
+        let err = connector
+            .stream_out("echo partial; exit 4", &mut Vec::new())
+            .unwrap_err();
+        assert!(err.to_string().contains("exit status 4"), "{err}");
     }
 }

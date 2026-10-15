@@ -7,6 +7,7 @@ use serde_yaml_ng::Value;
 
 use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
+use super::restore::RestorePlan;
 use super::sources;
 use crate::config::app::{LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
@@ -19,10 +20,12 @@ use crate::server::state::{self, Report, Status};
 use crate::server::state_file::{DeployStatus, StateFile};
 use crate::shared::{self, AppCtx, Kind, Resolution, ServerCtx, SharedAppConfig};
 
-pub struct Options {
+pub struct Options<'a> {
     pub apply: bool,
     pub dry_run: bool,
     pub force_unlock: bool,
+    /// Load data from a backup before the services start (`app restore`).
+    pub restore: Option<&'a RestorePlan<'a, 'a>>,
 }
 
 /// A link of the app, resolved to a shared app on the server.
@@ -152,7 +155,7 @@ pub fn deploy(
     }
 
     // 3. Apply. On failure the instance is marked `failed`.
-    match apply(&ctx, loaded, &links) {
+    match apply(&ctx, loaded, &links, options.restore) {
         Ok(()) => {
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
@@ -227,8 +230,14 @@ fn resolve_links<'a>(
     Ok(links)
 }
 
-/// Run hooks and docker compose.
-fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
+/// Run hooks and docker compose. A restore loads its data after the links
+/// are ready and before the services start.
+fn apply(
+    ctx: &ServerCtx,
+    loaded: &LoadedApp,
+    links: &[Link],
+    restore: Option<&RestorePlan>,
+) -> Result<()> {
     let app = &loaded.config;
     for link in links {
         let link_ctx = AppCtx {
@@ -239,16 +248,30 @@ fn apply(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<()> {
         link.kind
             .before_apply_application(&link_ctx, link.entry)
             .with_context(|| link.path())?;
+        if let Some(plan) = restore {
+            plan.restore_link(&link_ctx, link.kind, link.name)
+                .with_context(|| link.path())?;
+        }
     }
 
     let project = app.instance();
     let compose = instance::compose_command(ctx, app);
-    if app.deployment.build {
-        out!("  building images ...");
-        ctx.connector.exec(&format!("{compose} build -q"))?;
-    } else {
-        ctx.connector
-            .exec(&format!("{compose} pull -q --ignore-buildable"))?;
+    let images_restored = match restore {
+        Some(plan) => plan.load_images(ctx, app)?,
+        None => false,
+    };
+    // With restored images, `up` still builds or pulls the ones that are missing.
+    if !images_restored {
+        if app.deployment.build {
+            out!("  building images ...");
+            ctx.connector.exec(&format!("{compose} build -q"))?;
+        } else {
+            ctx.connector
+                .exec(&format!("{compose} pull -q --ignore-buildable"))?;
+        }
+    }
+    if let Some(plan) = restore {
+        plan.restore_volumes(ctx, app, &loaded.compose, true)?;
     }
     out!("  starting {project} ...");
     ctx.connector

@@ -18,6 +18,7 @@ macro_rules! out_part {
 }
 
 mod app;
+mod backup;
 mod cli;
 mod config;
 mod connector;
