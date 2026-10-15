@@ -1,0 +1,40 @@
+# How sampleapp is deployed (spec §6.1). Safe to commit: domains and secrets
+# go in a deployment overlay (see .depap-staging.example.yaml).
+name: sampleapp
+deployment:
+  compose_file: docker-compose.yaml
+  # Images are built on the server, so the project folder is uploaded.
+  build: true
+
+services:
+  database:
+    - name: main-db
+      type: postgres
+      version: ">=16"
+      # Both get DATABASE_URL and join the database network.
+      targets: [backend, migrate]
+      environment:
+        DATABASE_URL: db_url
+
+  ingress:
+    - name: site
+      routes:
+        # Longer paths win, so /api goes to the backend and the rest to web.
+        - name: api
+          target: backend
+          port: 5000
+          path: /api
+        - name: web
+          target: web
+          port: 8080
+
+# Names that links refer to, mapped to services in docker-compose.yaml.
+app_services:
+  - name: web
+    service: web
+  - name: backend
+    service: backend
+    environment:
+      APP_MODE: production
+  - name: migrate
+    service: migrate

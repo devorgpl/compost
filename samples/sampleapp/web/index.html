@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sampleapp</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem; }
+    output { font-size: 2.5rem; font-weight: 600; display: block; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <h1>sampleapp</h1>
+  <p>Deployed with depap. Each visit is counted by the backend in Postgres.</p>
+  <output id="hits">…</output>
+  <p id="mode"></p>
+  <script>
+    fetch("/api/hits")
+      .then((response) => response.json())
+      .then((data) => {
+        document.getElementById("hits").textContent = `${data.hits} visits`;
+        document.getElementById("mode").textContent = `backend mode: ${data.mode}`;
+      })
+      .catch(() => {
+        document.getElementById("hits").textContent = "backend not reachable";
+      });
+  </script>
+</body>
+</html>

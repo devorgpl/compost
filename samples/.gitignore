@@ -1,0 +1,4 @@
+# Real secret files; only the *.example.yaml templates are committed.
+.depap-server.secrets.yaml
+.depap-*.yaml
+!.depap-*.example.yaml

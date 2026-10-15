@@ -114,11 +114,12 @@ impl AppConfig {
         let config: AppConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("app configuration: {e}")))?;
 
+        // `depap.yaml` has the parent "", which means the current directory.
         let base_dir = files
             .first()
             .and_then(|f| f.parent())
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let compose_path = base_dir.join(&config.deployment.compose_file);
         let compose = ComposeFile::read(&compose_path)?;
         config.validate(&compose)?;
@@ -286,6 +287,20 @@ services:
 
     fn error(text: &str) -> String {
         format!("{:#}", validate(text).unwrap_err())
+    }
+
+    #[test]
+    fn samples_are_valid() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/sampleapp");
+        for (overlay, prefix) in [
+            (".depap-staging.example.yaml", "staging"),
+            (".depap-local.example.yaml", "local"),
+        ] {
+            let files = [dir.join("depap.yaml"), dir.join(overlay)];
+            let loaded = AppConfig::load(&files).unwrap_or_else(|e| panic!("{overlay}: {e:#}"));
+            assert_eq!(loaded.config.instance(), format!("sampleapp-{prefix}"));
+            assert_eq!(loaded.compose.services.len(), 3);
+        }
     }
 
     #[test]

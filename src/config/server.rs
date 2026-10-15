@@ -138,6 +138,21 @@ shared:
     }
 
     #[test]
+    fn samples_are_valid() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/server");
+        let secrets = dir.join(".depap-server.secrets.example.yaml");
+        let real = ServerConfig::load(&[dir.join("depap-server.yaml"), secrets]).unwrap();
+        assert_eq!(real.shared_apps().count(), 2);
+        let local = ServerConfig::load(&[
+            dir.join("depap-server.yaml"),
+            dir.join("depap-server.local.yaml"),
+        ])
+        .unwrap();
+        let caddy = &local.shared["ingress"][0].configuration;
+        assert_eq!(caddy["http_port"], 18080);
+    }
+
+    #[test]
     fn fills_in_default_versions() {
         let config = parse("shared: {ingress: [{name: caddy-main, type: caddy}]}").unwrap();
         assert_eq!(config.shared["ingress"][0].version, Some(2));

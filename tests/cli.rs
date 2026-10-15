@@ -967,3 +967,30 @@ fn closed_stdout_does_not_panic() {
     assert!(status.success(), "{stderr}");
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
+
+#[test]
+fn app_deploy_from_inside_the_project_folder() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/Dockerfile", "FROM scratch\n");
+
+    // Like `cd app && depap app deploy -f depap.yaml,.depap-staging.yaml`.
+    Command::cargo_bin("depap")
+        .unwrap()
+        .env("DEPAP_HOME", server.env.home.path())
+        .env("PATH", &server.path)
+        .env("FAKE_DOCKER_LOG", server.env.work.path().join("docker.log"))
+        .env("FAKE_DOCKER_RUNNING", "1")
+        .env_remove("DEPAP_SERVER")
+        .current_dir(server.env.work.path().join("app"))
+        .args(["-s", "dev", "app", "deploy", "--apply"])
+        .args(["-f", "depap.yaml,.depap-staging.yaml"])
+        .assert()
+        .success()
+        .stdout(contains("uploaded 2 files"));
+}

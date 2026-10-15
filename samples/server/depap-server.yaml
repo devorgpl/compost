@@ -1,0 +1,21 @@
+# Shared applications of the server (spec §5). Safe to commit: secrets go in
+# .depap-server.secrets.yaml (see .depap-server.secrets.example.yaml).
+#
+#   depap server deploy            # upload files only
+#   depap server deploy --apply    # and start the services
+shared:
+  ingress:
+    - name: caddy-main
+      type: caddy
+      version: 2
+      configuration:
+        http_port: 80
+        https_port: 443
+        # auto: certificates from Let's Encrypt. Domains must point to this server.
+        tls: auto
+        acme_email: admin@example.com
+  database:
+    - name: postgres16
+      type: postgres
+      version: 16
+      image: postgres:16-alpine

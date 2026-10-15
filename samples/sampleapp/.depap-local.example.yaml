@@ -1,0 +1,17 @@
+# Values for trying the sample on this machine. No secrets (depap generates
+# the database password), so it also works as is. Copy to .depap-local.yaml
+# and deploy with:
+#
+#   depap app deploy --apply -f depap.yaml,.depap-local.yaml
+#   curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits
+prefix: local
+
+services:
+  ingress:
+    - name: site
+      domains: ["sampleapp.localhost"]
+
+app_services:
+  - name: backend
+    environment:
+      APP_MODE: local
