@@ -593,8 +593,8 @@ Output: overall status, then one row per shared app: kind, name, type, version, 
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
 
-### 10.8 `depap app deploy [--apply] [-f …] [--dry-run]`
-1. Load, merge and validate the app config (§6, §7). Parse the compose file to check service names.
+### 10.8 `depap app deploy [--apply] [-f …] [--prefix <prefix>] [--dry-run]`
+1. Load, merge and validate the app config (§6, §7). `--prefix` replaces the `prefix` from the files. Parse the compose file to check service names.
 2. Preflight and lock. The server MUST be `OK` or `DEGRADED`, and every shared app this instance needs MUST be `deployed` and running.
 3. Pick the shared apps for each link (§6.3). Write the pinned names and versions to `depap-env.yaml`.
 4. Upload sources to `apps/<app>/<prefix>/sources/`:
@@ -645,8 +645,8 @@ Rules for the override:
 - A service with `network_mode` cannot join depap networks; linking it is an error.
 - The user's compose file is never modified.
 
-### 10.9 `depap app state [-f …]`
-Reads `name` and `prefix` from the given files (defaults as in deploy), or takes `--app <name> --prefix <prefix>`. Shows:
+### 10.9 `depap app state [-f … [--prefix <prefix>] | --app <name> --prefix <prefix>]`
+Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix` replaces the files' prefix), or takes `--app <name> --prefix <prefix>`. Shows:
 - the instance's status from `state.yaml`
 - each compose service: running, exited or missing, and health
 - ingress links: domains → path → upstream
@@ -654,7 +654,7 @@ Reads `name` and `prefix` from the given files (defaults as in deploy), or takes
 
 Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it runs (and its healthcheck passes), or when it exited with code 0, like a migration. Exception: a service with `restart: always` or `unless-stopped` is meant to keep running. If it has exited, it was stopped and is not healthy, whatever its exit code. Status is read from the files deploy stored on the server, so the app's repository is not needed.
 
-### 10.10 `depap app remove [-f … | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
+### 10.10 `depap app remove [-f … [--prefix <prefix>] | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
 `--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
 
 1. Validate the `--purge` values. Preflight and lock. Ask for confirmation unless `--yes`. The prompt lists what will be purged.

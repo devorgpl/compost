@@ -691,6 +691,21 @@ fn app_state_by_name_or_files() {
         .run(&["app", "state", "-f", "app/depap.yaml"], &running)
         .code(3)
         .stderr(contains("myapp-main is not deployed"));
+    // `--prefix` replaces the prefix from the files.
+    server
+        .run(
+            &[
+                "app",
+                "state",
+                "-f",
+                "app/depap.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("myapp-staging: deployed"));
 }
 
 #[test]

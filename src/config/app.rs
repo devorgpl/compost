@@ -109,10 +109,14 @@ pub struct LoadedApp {
 
 impl AppConfig {
     /// Merge and validate the given files, then read and check the compose file.
-    pub fn load(files: &[PathBuf]) -> Result<LoadedApp> {
+    /// `prefix` replaces the one from the files.
+    pub fn load(files: &[PathBuf], prefix: Option<&str>) -> Result<LoadedApp> {
         let merged = merge::load_merged(files)?;
-        let config: AppConfig = serde_yaml_ng::from_value(merged)
+        let mut config: AppConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("app configuration: {e}")))?;
+        if let Some(prefix) = prefix {
+            config.prefix = prefix.to_string();
+        }
 
         // `depap.yaml` has the parent "", which means the current directory.
         let base_dir = files
@@ -297,10 +301,24 @@ services:
             (".depap-local.example.yaml", "local"),
         ] {
             let files = [dir.join("depap.yaml"), dir.join(overlay)];
-            let loaded = AppConfig::load(&files).unwrap_or_else(|e| panic!("{overlay}: {e:#}"));
+            let loaded =
+                AppConfig::load(&files, None).unwrap_or_else(|e| panic!("{overlay}: {e:#}"));
             assert_eq!(loaded.config.instance(), format!("sampleapp-{prefix}"));
             assert_eq!(loaded.compose.services.len(), 3);
         }
+    }
+
+    #[test]
+    fn prefix_override() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/sampleapp");
+        let files = [
+            dir.join("depap.yaml"),
+            dir.join(".depap-staging.example.yaml"),
+        ];
+        let loaded = AppConfig::load(&files, Some("review")).unwrap();
+        assert_eq!(loaded.config.instance(), "sampleapp-review");
+        let error = AppConfig::load(&files, Some("Bad")).err().unwrap();
+        assert!(format!("{error:#}").contains("prefix"), "{error:#}");
     }
 
     #[test]

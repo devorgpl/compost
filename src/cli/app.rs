@@ -10,7 +10,7 @@ use super::DeployArgs;
 use crate::app::{deploy, remove, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{DepapHome, ServerEntry};
-use crate::config::merge;
+use crate::config::{check_name, merge};
 use crate::connector;
 use crate::error::config_err;
 
@@ -19,7 +19,7 @@ const APP_FILE: &str = "depap.yaml";
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
     /// Deploy the application instance described by the given files
-    Deploy(DeployArgs),
+    Deploy(AppDeployArgs),
     /// Show the state of an application instance
     State(InstanceArgs),
     /// Remove an application instance
@@ -37,11 +37,20 @@ pub struct InstanceArgs {
         conflicts_with = "app"
     )]
     pub files: Vec<PathBuf>,
-    /// Application name
+    /// Application name (instead of config files)
     #[arg(long, requires = "prefix")]
     pub app: Option<String>,
-    /// Instance prefix
-    #[arg(long, requires = "app")]
+    /// Instance prefix (overrides the one from the config files)
+    #[arg(long)]
+    pub prefix: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct AppDeployArgs {
+    #[command(flatten)]
+    pub deploy: DeployArgs,
+    /// Instance prefix (overrides the one from the config files)
+    #[arg(long)]
     pub prefix: Option<String>,
 }
 
@@ -113,16 +122,22 @@ pub fn run(
     }
 }
 
-/// Name and prefix from `--app`/`--prefix`, or from the config files.
+/// Name and prefix from `--app`/`--prefix`, or from the config files
+/// (with `--prefix` replacing theirs).
 fn instance_id(args: &InstanceArgs) -> Result<(String, String)> {
-    if let (Some(app), Some(prefix)) = (&args.app, &args.prefix) {
-        return Ok((app.clone(), prefix.clone()));
-    }
-    let files = config_files(&args.files)?;
-    let merged = merge::load_merged(&files)?;
-    let id: InstanceId = serde_yaml_ng::from_value(merged)
-        .map_err(|e| config_err(format!("app configuration: {e}")))?;
-    Ok((id.name, id.prefix))
+    let (name, prefix) = match (&args.app, &args.prefix) {
+        (Some(app), Some(prefix)) => (app.clone(), prefix.clone()),
+        _ => {
+            let files = config_files(&args.files)?;
+            let merged = merge::load_merged(&files)?;
+            let id: InstanceId = serde_yaml_ng::from_value(merged)
+                .map_err(|e| config_err(format!("app configuration: {e}")))?;
+            (id.name, args.prefix.clone().unwrap_or(id.prefix))
+        }
+    };
+    check_name("app name", &name)?;
+    check_name("prefix", &prefix)?;
+    Ok((name, prefix))
 }
 
 /// The given files, or `depap.yaml` in the current directory.
@@ -143,11 +158,15 @@ fn deploy(
     home: &DepapHome,
     manager_key: &str,
     server: &ServerEntry,
-    args: DeployArgs,
+    args: AppDeployArgs,
     verbose: bool,
 ) -> Result<()> {
+    let AppDeployArgs {
+        deploy: args,
+        prefix,
+    } = args;
     let files = config_files(&args.files)?;
-    let loaded = AppConfig::load(&files)?;
+    let loaded = AppConfig::load(&files, prefix.as_deref())?;
 
     let connector = connector::open(server, home, verbose)?;
     out!(
