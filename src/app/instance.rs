@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::app::AppConfig;
 use crate::config::server::ServerConfig;
 use crate::connector::shell_quote;
+use crate::error::{DepapError, config_err};
+use crate::server::state_file::StateFile;
 use crate::shared::{ServerCtx, SharedAppConfig};
 
 pub const OVERRIDE_FILE: &str = "compose/depap.override.yaml";
@@ -46,6 +48,44 @@ impl PinnedLink {
             .iter()
             .find(|app| app.name == self.instance)
             .cloned()
+    }
+}
+
+/// How a command names an instance.
+pub enum Selector {
+    /// App name and prefix.
+    Name { name: String, prefix: String },
+    /// `<name>-<prefix>`, as `app list` shows it.
+    Instance(String),
+}
+
+/// Name and prefix of the selected instance. `<name>-<prefix>` is looked up in
+/// `state.yaml`, since both parts may contain `-`.
+pub fn resolve(ctx: &ServerCtx, selector: &Selector) -> Result<(String, String)> {
+    let instance = match selector {
+        Selector::Name { name, prefix } => return Ok((name.clone(), prefix.clone())),
+        Selector::Instance(instance) => instance,
+    };
+    let state_file = StateFile::load(ctx)?;
+    let matches: Vec<_> = state_file
+        .apps
+        .iter()
+        .filter(|r| format!("{}-{}", r.name, r.prefix) == *instance)
+        .collect();
+    match matches.as_slice() {
+        [] => Err(DepapError::ServerNotReady(format!(
+            "{instance} is not deployed on this server (see `depap app list`)"
+        ))
+        .into()),
+        [record] => Ok((record.name.clone(), record.prefix.clone())),
+        _ => Err(config_err(format!(
+            "`{instance}` is ambiguous; use --app and --prefix ({})",
+            matches
+                .iter()
+                .map(|r| format!("--app {} --prefix {}", r.name, r.prefix))
+                .collect::<Vec<_>>()
+                .join(" or ")
+        ))),
     }
 }
 

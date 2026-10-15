@@ -4,7 +4,7 @@ use std::io::{BufRead, IsTerminal, Write};
 
 use anyhow::{Context, Result};
 
-use super::instance::{self, Instance};
+use super::instance::{self, Instance, Selector};
 use super::state::{initialized_server, not_deployed};
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
@@ -26,12 +26,13 @@ pub fn remove(
     connector: &dyn Connector,
     server_home: &str,
     manager_key: &str,
-    name: &str,
-    prefix: &str,
+    selector: &Selector,
     options: &Options,
 ) -> Result<()> {
     check_purge(&options.purge)?;
     let ctx = initialized_server(connector, server_home, manager_key)?;
+    let (name, prefix) = instance::resolve(&ctx, selector)?;
+    let (name, prefix) = (name.as_str(), prefix.as_str());
     let Some(instance) = instance::load(&ctx, name, prefix)? else {
         return Err(not_deployed(name, prefix));
     };

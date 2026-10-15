@@ -7,6 +7,7 @@ use clap::{Args, Subcommand};
 use serde::Deserialize;
 
 use super::DeployArgs;
+use crate::app::instance::Selector;
 use crate::app::{deploy, list, remove, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{DepapHome, ServerEntry};
@@ -28,9 +29,12 @@ pub enum AppCommand {
     Remove(RemoveArgs),
 }
 
-/// Selects an instance either from config files or by name and prefix.
+/// Selects an instance from config files, by name and prefix, or as `app list` shows it.
 #[derive(Debug, Args)]
 pub struct InstanceArgs {
+    /// Instance as shown by `app list`, e.g. `myapp-staging`
+    #[arg(conflicts_with_all = ["files", "app", "prefix"])]
+    pub instance: Option<String>,
     /// Config files merged in order (repeatable or comma-separated)
     #[arg(
         short = 'f',
@@ -101,18 +105,17 @@ pub fn run(
         }
         AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, verbose),
         AppCommand::State(args) => {
-            let (name, prefix) = instance_id(&args)?;
+            let selector = selector(&args)?;
             let connector = connector::open(&server, home, verbose)?;
             state::state(
                 connector.as_ref(),
                 server.server_home(),
                 &manager.manager_key,
-                &name,
-                &prefix,
+                &selector,
             )
         }
         AppCommand::Remove(args) => {
-            let (name, prefix) = instance_id(&args.instance)?;
+            let selector = selector(&args.instance)?;
             let connector = connector::open(&server, home, verbose)?;
             let options = remove::Options {
                 volumes: args.volumes,
@@ -124,17 +127,19 @@ pub fn run(
                 connector.as_ref(),
                 server.server_home(),
                 &manager.manager_key,
-                &name,
-                &prefix,
+                &selector,
                 &options,
             )
         }
     }
 }
 
-/// Name and prefix from `--app`/`--prefix`, or from the config files
-/// (with `--prefix` replacing theirs).
-fn instance_id(args: &InstanceArgs) -> Result<(String, String)> {
+/// The positional instance, name and prefix from `--app`/`--prefix`, or the
+/// config files (with `--prefix` replacing theirs).
+fn selector(args: &InstanceArgs) -> Result<Selector> {
+    if let Some(instance) = &args.instance {
+        return Ok(Selector::Instance(instance.clone()));
+    }
     let (name, prefix) = match (&args.app, &args.prefix) {
         (Some(app), Some(prefix)) => (app.clone(), prefix.clone()),
         _ => {
@@ -147,7 +152,7 @@ fn instance_id(args: &InstanceArgs) -> Result<(String, String)> {
     };
     check_name("app name", &name)?;
     check_name("prefix", &prefix)?;
-    Ok((name, prefix))
+    Ok(Selector::Name { name, prefix })
 }
 
 /// The given files, or `depap.yaml` in the current directory.
@@ -158,7 +163,7 @@ fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let default = PathBuf::from(APP_FILE);
     if !default.exists() {
         return Err(config_err(format!(
-            "{APP_FILE} not found in the current directory (pass files with -f, or --app and --prefix)"
+            "{APP_FILE} not found in the current directory (pass files with -f, an instance from `depap app list`, or --app and --prefix)"
         )));
     }
     Ok(vec![default])

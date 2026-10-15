@@ -645,8 +645,8 @@ Rules for the override:
 - A service with `network_mode` cannot join depap networks; linking it is an error.
 - The user's compose file is never modified.
 
-### 10.9 `depap app state [-f … [--prefix <prefix>] | --app <name> --prefix <prefix>]`
-Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix` replaces the files' prefix), or takes `--app <name> --prefix <prefix>`. Shows:
+### 10.9 `depap app state [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>]`
+Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix` replaces the files' prefix), or takes `--app <name> --prefix <prefix>`, or an `<instance>` as `app list` shows it (`<name>-<prefix>`). Both parts may contain `-`, so `<instance>` is looked up in `state.yaml`; if it matches more than one instance, it is a usage error (exit 2) asking for `--app` and `--prefix`. Shows:
 - the instance's status from `state.yaml`
 - each compose service: running, exited or missing, and health
 - ingress links: domains → path → upstream
@@ -654,8 +654,8 @@ Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix
 
 Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it runs (and its healthcheck passes), or when it exited with code 0, like a migration. Exception: a service with `restart: always` or `unless-stopped` is meant to keep running. If it has exited, it was stopped and is not healthy, whatever its exit code. Status is read from the files deploy stored on the server, so the app's repository is not needed.
 
-### 10.10 `depap app remove [-f … [--prefix <prefix>] | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
-`--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
+### 10.10 `depap app remove [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
+The instance is selected as in `app state`. `--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
 
 1. Validate the `--purge` values. Preflight and lock. Ask for confirmation unless `--yes`. The prompt lists what will be purged.
 2. `remove_application` for each link, in reverse `apply_order` (ingress first, so traffic stops before containers go). The hook gets the link's name, not its config: with `--app`/`--prefix` no config files are given, so kinds work from their link records. A link whose shared app is no longer configured is left as it is, with a warning. Postgres purges with `DROP DATABASE … WITH (FORCE)` because the app is still connected at this point (requires postgres 13+).

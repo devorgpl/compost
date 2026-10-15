@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::instance::{self, Instance};
+use super::instance::{self, Instance, Selector};
 use crate::config::app::ComposeFile;
 use crate::connector::Connector;
 use crate::error::DepapError;
@@ -15,12 +15,12 @@ pub fn state(
     connector: &dyn Connector,
     server_home: &str,
     manager_key: &str,
-    name: &str,
-    prefix: &str,
+    selector: &Selector,
 ) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
-    let Some(instance) = instance::load(&ctx, name, prefix)? else {
-        return Err(not_deployed(name, prefix));
+    let (name, prefix) = instance::resolve(&ctx, selector)?;
+    let Some(instance) = instance::load(&ctx, &name, &prefix)? else {
+        return Err(not_deployed(&name, &prefix));
     };
     if print(&ctx, &instance)? {
         Ok(())

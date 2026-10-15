@@ -709,6 +709,50 @@ fn app_state_by_name_or_files() {
 }
 
 #[test]
+fn app_state_and_remove_by_instance_name() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["app", "state", "myapp-staging"], &running)
+        .success()
+        .stdout(contains("myapp-staging: deployed"));
+    server
+        .run(&["app", "state", "myapp-prod"], &running)
+        .code(3)
+        .stderr(contains("myapp-prod is not deployed on this server"));
+    server
+        .run(
+            &["app", "state", "myapp-staging", "--app", "myapp"],
+            &running,
+        )
+        .code(2);
+
+    // Both parts may contain `-`, so `a-b-c` can be a-b/c or a/b-c.
+    let state = server.read_server_file("state.yaml");
+    server.write_server_file(
+        "state.yaml",
+        &state.replace(
+            "apps:\n",
+            "apps:\n\
+             - {name: a-b, prefix: c, status: deployed, updated_at: x}\n\
+             - {name: a, prefix: b-c, status: deployed, updated_at: x}\n",
+        ),
+    );
+    server
+        .run(&["app", "state", "a-b-c"], &running)
+        .code(2)
+        .stderr(contains(
+            "`a-b-c` is ambiguous; use --app and --prefix (--app a-b --prefix c or --app a --prefix b-c)",
+        ));
+
+    server
+        .run(&["app", "remove", "myapp-staging", "--yes"], &running)
+        .success()
+        .stdout(contains("Removed myapp-staging."));
+    assert!(!server.server_home.join("apps/myapp/staging").exists());
+}
+
+#[test]
 fn app_remove_keeps_database_unless_purged() {
     let server = server_with_app();
     let running = [("FAKE_DOCKER_RUNNING", "1")];
