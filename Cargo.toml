@@ -9,8 +9,11 @@ description = "Dependency and deployment manager for docker-based servers"
 anyhow = "1"
 clap = { version = "4.6", features = ["derive", "env"] }
 dirs = "7"
+humantime = "2"
+minijinja = "3"
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
+sha2 = "0.11"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 

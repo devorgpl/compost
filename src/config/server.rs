@@ -3,14 +3,15 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-use anyhow::Result;
-use serde::Deserialize;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_yaml_ng::Value;
 
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared::{self, SharedAppConfig};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Shared apps grouped by kind. Core does not know kind names; each key is
@@ -35,6 +36,27 @@ impl ServerConfig {
             .map_err(|e| config_err(format!("server configuration: {e}")))?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// A copy without secret values, safe to store on the server.
+    pub fn without_secrets(&self) -> Result<ServerConfig> {
+        let mut copy = self.clone();
+        for (kind_name, apps) in &mut copy.shared {
+            let kind = shared::find_kind(kind_name)
+                .with_context(|| format!("unknown kind `{kind_name}`"))?;
+            for app in apps {
+                let keys = kind.secret_keys(app)?;
+                if let Value::Mapping(map) = &mut app.configuration {
+                    for key in keys {
+                        map.remove(*key);
+                    }
+                    if map.is_empty() {
+                        app.configuration = Value::Null;
+                    }
+                }
+            }
+        }
+        Ok(copy)
     }
 
     /// Every shared app with the name of its kind.
@@ -101,6 +123,18 @@ shared:
         )
         .unwrap();
         assert_eq!(config.shared_apps().count(), 2);
+    }
+
+    #[test]
+    fn without_secrets_removes_secret_keys() {
+        let config = parse(
+            "shared: {database: [{name: pg, type: postgres, version: 16, configuration: {root_password: x}}]}",
+        )
+        .unwrap();
+        let text = serde_yaml_ng::to_string(&config.without_secrets().unwrap()).unwrap();
+        assert!(!text.contains("root_password"), "{text}");
+        assert!(!text.contains("configuration"), "{text}");
+        assert!(text.contains("name: pg"), "{text}");
     }
 
     #[test]

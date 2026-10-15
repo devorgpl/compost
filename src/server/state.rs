@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
 use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
+use crate::shared::project_name;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -114,7 +115,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
         let config = ServerConfig::parse(&text)
             .with_context(|| format!("invalid {config_path} on the server"))?;
         for (kind, app) in config.shared_apps() {
-            let project = format!("depap-{kind}-{}", app.name);
+            let project = project_name(kind, &app.name);
             let running = is_project_running(connector, &project)?;
             if !running {
                 report.status = Status::Degraded;

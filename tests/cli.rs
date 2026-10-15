@@ -77,50 +77,31 @@ fn define_list_connect_disconnect() {
         .stderr(contains("unknown server `nope`"));
 }
 
-#[test]
-fn server_deploy_dry_run_validates_merged_files() {
-    let env = Env::initialized_with_server();
-    fs::write(
-        env.work.path().join("depap-server.yaml"),
-        "shared:\n  ingress:\n    - {name: caddy-main, type: caddy}\n  database:\n    - {name: postgres16, type: postgres, version: 16}\n",
-    )
-    .unwrap();
-    fs::write(
-        env.work.path().join(".depap-server.secrets.yaml"),
-        "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: ''}\n",
-    )
-    .unwrap();
-
-    // The secrets file is merged by name, so its invalid password is found.
-    env.depap(&["-s", "prod1", "server", "deploy", "--dry-run"])
-        .code(2)
-        .stderr(contains(
-            "shared.database[postgres16]: root_password must not be empty",
-        ));
-
-    fs::write(
-        env.work.path().join(".depap-server.secrets.yaml"),
-        "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: secret}\n",
-    )
-    .unwrap();
-    env.depap(&["-s", "prod1", "server", "deploy", "--dry-run"])
-        .success()
-        .stdout(contains("database  postgres16"))
-        .stdout(contains("ingress   caddy-main"));
-}
-
-/// A `docker` stand-in, so state tests do not need Docker. Set
-/// FAKE_DOCKER_RUNNING=1 to report containers as running, FAKE_DOCKER_DOWN=1
-/// to fail like a missing daemon.
+/// A `docker` stand-in, so tests do not need Docker. Every call is appended to
+/// $FAKE_DOCKER_LOG. Set FAKE_DOCKER_RUNNING=1 to report containers as running,
+/// FAKE_DOCKER_DOWN=1 to fail like a missing daemon.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
+echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
-case "$1" in
-  version) echo 29.0.0 ;;
-  compose) echo 2.40.0 ;;
-  ps) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
-  *) exit 1 ;;
+case "$*" in
+  "version "*) echo 29.0.0 ;;
+  "compose version"*) echo 2.40.0 ;;
+  "compose "*" ps "*) echo "app running healthy" ;;
+  "compose "*) ;;
+  "network inspect "*) exit 1 ;;
+  "network create "*) ;;
+  "ps "*) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
+  *) echo "fake docker: unexpected call" >&2; exit 1 ;;
 esac
 "#;
+
+const SERVER_CONFIG: &str = "\
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  database:
+    - {name: postgres16, type: postgres, version: 16}
+";
 
 /// A local server whose DEPAP_SERVER_HOME is a temp dir, with fake docker on PATH.
 struct LocalServer {
@@ -160,22 +141,145 @@ impl LocalServer {
     }
 
     fn write_server_file(&self, name: &str, contents: &str) {
-        fs::create_dir_all(&self.server_home).unwrap();
-        fs::write(self.server_home.join(name), contents).unwrap();
+        let path = self.server_home.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
     }
 
-    fn state(&self, extra_env: &[(&str, &str)]) -> assert_cmd::assert::Assert {
+    fn read_server_file(&self, name: &str) -> String {
+        fs::read_to_string(self.server_home.join(name)).unwrap()
+    }
+
+    fn write_work_file(&self, name: &str, contents: &str) {
+        fs::write(self.env.work.path().join(name), contents).unwrap();
+    }
+
+    /// Calls made to the fake docker so far; clears the log.
+    fn take_docker_log(&self) -> String {
+        let path = self.env.work.path().join("docker.log");
+        let log = fs::read_to_string(&path).unwrap_or_default();
+        let _ = fs::remove_file(path);
+        log
+    }
+
+    /// Run `depap -s dev <args>` in the work directory.
+    fn run(&self, args: &[&str], extra_env: &[(&str, &str)]) -> assert_cmd::assert::Assert {
         let mut command = Command::cargo_bin("depap").unwrap();
         command
             .env("DEPAP_HOME", self.env.home.path())
             .env("PATH", &self.path)
+            .env("FAKE_DOCKER_LOG", self.env.work.path().join("docker.log"))
             .env_remove("DEPAP_SERVER")
-            .args(["-s", "dev", "server", "state"]);
+            .current_dir(self.env.work.path())
+            .args(["-s", "dev"])
+            .args(args);
         for (key, value) in extra_env {
             command.env(key, value);
         }
         command.assert()
     }
+
+    fn state(&self, extra_env: &[(&str, &str)]) -> assert_cmd::assert::Assert {
+        self.run(&["server", "state"], extra_env)
+    }
+}
+
+#[test]
+fn server_deploy_validates_merged_files() {
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file(
+        ".depap-server.secrets.yaml",
+        "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: ''}\n",
+    );
+
+    // The secrets file is merged by name, so its invalid password is found.
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .code(2)
+        .stderr(contains("shared.database[postgres16]: root_password must not be empty"));
+}
+
+#[test]
+fn server_deploy_dry_run_changes_nothing() {
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--dry-run", "--apply"], &[])
+        .success()
+        .stdout(contains("Dry run"))
+        .stdout(contains("networks: depap-db-postgres16, depap-ingress"))
+        .stdout(contains("shared/database/postgres16/secrets/postgres.env  600  (secret)"));
+    assert!(!server.server_home.exists());
+}
+
+#[test]
+fn server_deploy_then_apply() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file(
+        ".depap-server.secrets.yaml",
+        "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: s3cret}\n",
+    );
+
+    // Render and upload only.
+    server
+        .run(&["server", "deploy"], &[])
+        .success()
+        .stdout(contains("Initialized"))
+        .stdout(contains("database  postgres16       updated"))
+        .stdout(contains("Run again with --apply"));
+    let log = server.take_docker_log();
+    assert!(log.contains("docker network create depap-ingress"), "{log}");
+    assert!(log.contains("docker network create depap-db-postgres16"), "{log}");
+    assert!(!log.contains(" up -d"), "{log}");
+
+    assert_eq!(server.read_server_file("manager_key").trim(), server.manager_key());
+    assert!(!server.server_home.join("lock").exists(), "lock is released");
+    let secret = server.server_home.join("shared/database/postgres16/secrets/postgres.env");
+    assert_eq!(fs::read_to_string(&secret).unwrap(), "POSTGRES_PASSWORD='s3cret'\n");
+    assert_eq!(fs::metadata(&secret).unwrap().permissions().mode() & 0o777, 0o600);
+    let stored_config = server.read_server_file("depap-server.yaml");
+    assert!(!stored_config.contains("s3cret"), "{stored_config}");
+    assert!(server.read_server_file("state.yaml").contains("status: candidate"));
+
+    // Start: candidates are (re)created.
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("unchanged"))
+        .stdout(contains("starting database postgres16 ... running"))
+        .stdout(contains("dev (local): OK"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker compose -p depap-database-postgres16 up -d --quiet-pull --force-recreate"),
+        "{log}"
+    );
+    let state = server.read_server_file("state.yaml");
+    assert!(!state.contains("candidate") && state.contains("status: deployed"), "{state}");
+
+    // Nothing changed: containers are left alone.
+    server.run(&["server", "deploy", "--apply"], &running).success();
+    let log = server.take_docker_log();
+    assert!(log.contains("up -d --quiet-pull\n"), "{log}");
+    assert!(!log.contains("--force-recreate"), "{log}");
+}
+
+#[test]
+fn server_deploy_respects_lock() {
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.run(&["server", "deploy"], &[]).success();
+    server.write_server_file("lock/holder", "host=other pid=1\n");
+
+    server
+        .run(&["server", "deploy"], &[])
+        .code(3)
+        .stderr(contains("locked by another depap command (host=other pid=1)"));
+    server.run(&["server", "deploy", "--force-unlock"], &[]).success();
 }
 
 #[test]

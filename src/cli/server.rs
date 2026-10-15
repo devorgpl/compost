@@ -10,6 +10,7 @@ use crate::config::local::{ConnectorConfig, DepapHome, ServerEntry};
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector;
 use crate::error::{DepapError, config_err};
+use crate::server::deploy::{self, Options};
 use crate::server::state::{self, Status};
 
 const SERVER_FILE: &str = "depap-server.yaml";
@@ -138,19 +139,30 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
     Ok(())
 }
 
-pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs) -> Result<()> {
+pub fn deploy(home: &DepapHome, server: Option<&str>, args: DeployArgs, verbose: bool) -> Result<()> {
+    let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let files = if args.files.is_empty() { default_files()? } else { args.files };
     let config = ServerConfig::load(&files)?;
 
-    if !args.dry_run {
-        return Err(DepapError::NotImplemented("server deploy (use --dry-run)").into());
-    }
-    let mode = if args.apply { "deploy --apply" } else { "deploy" };
-    println!("Configuration is valid. `{mode}` on {} would manage:", server.name);
-    for (kind, app) in config.shared_apps() {
-        let version = app.version.map_or_else(|| "-".to_string(), |v| v.to_string());
-        println!("  {kind:<9} {:<16} {} {version}", app.name, app.type_name);
+    let connector = connector::open(&server, verbose);
+    println!("Deploying to {} ({})", server.name, connector.target());
+    let options = Options {
+        apply: args.apply,
+        dry_run: args.dry_run,
+        force_unlock: args.force_unlock,
+    };
+    deploy::deploy(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &config,
+        &options,
+    )?;
+
+    if args.apply && !args.dry_run {
+        println!();
+        return state(home, Some(&server.name), verbose);
     }
     Ok(())
 }

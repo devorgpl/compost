@@ -77,6 +77,9 @@ pub struct DeployArgs {
     /// Validate and show what would happen without changing the server
     #[arg(long)]
     pub dry_run: bool,
+    /// Remove a lock left behind by an interrupted depap command
+    #[arg(long)]
+    pub force_unlock: bool,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -87,7 +90,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
         Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
-        Command::Server(ServerCommand::Deploy(args)) => server::deploy(&home, server, args),
+        Command::Server(ServerCommand::Deploy(args)) => server::deploy(&home, server, args, cli.verbose),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command),

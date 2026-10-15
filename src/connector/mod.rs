@@ -4,7 +4,7 @@
 //! (checked execution, reading and writing files) is built on top of it as
 //! default methods, so every connector behaves the same way.
 
-mod local;
+pub mod local;
 mod ssh;
 
 use std::io::Write;
@@ -65,7 +65,6 @@ pub trait Connector {
     /// Create or replace a file atomically with the given permissions (e.g. `0o600`).
     /// Parent directories are created with mode 0700. Contents go through stdin,
     /// so secrets never appear on a command line.
-    #[allow(dead_code)] // first used by `server deploy`
     fn write_file(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
         let path = shell_quote(path);
         let script = format!(

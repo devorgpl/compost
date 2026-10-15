@@ -142,7 +142,7 @@ At most one ingress is allowed per server (validation error otherwise).
 |---|---|---|---|
 | `version` | int | required | Major version |
 | `image` | string | `postgres:<version>` | MUST be an official `postgres` image (or compatible) |
-| `configuration.root_password` | secret | generated | 32 alphanumeric characters. Changing it after the first deploy is an error in 0.1 |
+| `configuration.root_password` | secret | generated | Generated: 32 hexadecimal characters. Single line, no `'`. Changing it after the first deploy is an error in 0.1 |
 
 Postgres is not published on a host port in 0.1. Only containers on its network can reach it.
 
@@ -469,7 +469,7 @@ networks:
 }
 import /etc/caddy/sites/*.caddy
 ```
-`conf/sites/00-default.caddy` is an empty placeholder so the import always matches a file.
+`conf/sites/00-default.caddy` holds a catch-all `:80` site that answers 404 ("no application is deployed for this host"). The import therefore always matches a file, and an unknown host gets a clear answer.
 
 Site file for an ingress link. Routes are written longest path first, `/` last. Unmatched paths return 404.
 ```
@@ -508,7 +508,7 @@ services:
     environment:
       POSTGRES_USER: postgres
     volumes:
-      - ./data:/var/lib/postgresql/data
+      - ./data:/var/lib/postgresql/data   # with PGDATA set to this path explicitly (postgres 18 images moved the default)
     networks:
       depap-db-postgres16:
         aliases: [postgres16]
@@ -584,8 +584,8 @@ Output: overall status, then one row per shared app: kind, name, type, version, 
 4. Create missing docker networks (`depap-ingress` if an ingress is defined, `depap-db-<name>` per database).
 5. For each shared app: work out its secrets (config → existing secret files → generated), `render`, upload into `shared/<kind>/<name>/` and the root connector. Mark it `candidate` in `state.yaml` if `config_hash` changed or it is new.
 6. Upload the effective `depap-server.yaml` (secrets removed).
-7. With `--apply`, for each shared app with status `candidate`: `docker compose -p depap-<kind>-<name> up -d`, adding `--force-recreate` when the config changed. Wait up to 60 s for running/healthy. Mark `deployed`, or `failed` and exit 3.
-8. Run `server state`, print it and exit with its code.
+7. With `--apply`, for every shared app: `docker compose -p depap-<kind>-<name> up -d`. Compose leaves unchanged containers alone. `--force-recreate` is added when the app is not `deployed` (candidate or failed), because compose cannot see changes in mounted files. Wait up to 60 s for running/healthy. Mark `deployed`, or `failed` and exit 3. Running `up -d` for every app also restarts apps that were stopped.
+8. With `--apply`, run `server state`, print it and exit with its code. Without `--apply`, print a hint to run with `--apply`.
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
 
