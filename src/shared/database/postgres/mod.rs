@@ -4,10 +4,13 @@ use anyhow::{Result, bail, ensure};
 use minijinja::context;
 use serde::Deserialize;
 
-use super::{DatabaseType, KIND, base};
+use super::base::{self, DatabaseLink, Endpoint};
+use super::{DatabaseType, KIND};
+use crate::config::app::AppConfig;
+use crate::connector::shell_quote;
 use crate::shared::{
-    Rendered, RenderedFile, ServerCtx, SharedAppConfig, connectors_dir, generate_password,
-    render_template, shared_dir,
+    AppCtx, Rendered, RenderedFile, ServerCtx, SharedAppConfig, connectors_dir, generate_password,
+    project_name, render_template, shared_dir,
 };
 
 pub struct Postgres;
@@ -24,6 +27,45 @@ struct PostgresConfig {
 impl DatabaseType for Postgres {
     fn type_name(&self) -> &'static str {
         "postgres"
+    }
+
+    fn endpoint(&self) -> Endpoint {
+        Endpoint { url_scheme: "postgres", port: 5432 }
+    }
+
+    /// Extends the generic link validation: names must be plain Postgres identifiers.
+    fn validate_link(&self, link: &DatabaseLink, app: &AppConfig) -> Result<()> {
+        base::validate_link(link, app)?;
+        let (name, user) = base::names(app, link);
+        for (key, value) in [("db_name", &name), ("db_user", &user)] {
+            ensure!(
+                is_identifier(value),
+                "{key} `{value}` must match ^[a-z_][a-z0-9_]{{0,62}}$ (set {key} to a shorter name if the default is too long)"
+            );
+        }
+        Ok(())
+    }
+
+    /// Create the user and database if missing, and set the user's password.
+    fn before_apply_application(&self, ctx: &AppCtx, link: &DatabaseLink) -> Result<()> {
+        let credentials = base::credentials(ctx, link)?;
+        let sql = provisioning_sql(&credentials.name, &credentials.user, &credentials.password);
+        let dir = ctx.server.path(&shared_dir(KIND, &ctx.shared.name));
+        let script = format!(
+            "cd {} && docker compose -p {} exec -T postgres psql -U postgres -d postgres -q -v ON_ERROR_STOP=1",
+            shell_quote(&dir),
+            shell_quote(&project_name(KIND, &ctx.shared.name))
+        );
+        // The SQL holds the password, so it goes through stdin.
+        let output = ctx.server.connector.run(&script, Some(sql.as_bytes()))?;
+        if !output.success() {
+            bail!(
+                "creating database `{}` failed: {}",
+                credentials.name,
+                output.stderr.trim()
+            );
+        }
+        Ok(())
     }
 
     /// Extends the generic database validation with Postgres' own settings.
@@ -99,6 +141,26 @@ impl DatabaseType for Postgres {
             networks: Vec::new(),
         })
     }
+}
+
+/// `^[a-z_][a-z0-9_]{0,62}$`: safe to use unquoted and inside double quotes.
+fn is_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    value.len() <= 63
+        && chars.next().is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Idempotent SQL for psql. Identifiers are validated by `is_identifier`;
+/// the password is a string literal with `'` doubled.
+fn provisioning_sql(database: &str, user: &str, password: &str) -> String {
+    let password = password.replace('\'', "''");
+    format!(
+        "SELECT 'CREATE ROLE \"{user}\" LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{user}')\\gexec\n\
+         ALTER ROLE \"{user}\" WITH LOGIN PASSWORD '{password}';\n\
+         SELECT 'CREATE DATABASE \"{database}\" OWNER \"{user}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{database}')\\gexec\n\
+         GRANT ALL PRIVILEGES ON DATABASE \"{database}\" TO \"{user}\";\n"
+    )
 }
 
 /// The password from a `POSTGRES_PASSWORD='…'` line written by `render`.
@@ -210,5 +272,29 @@ mod tests {
             let err = render(&home, &with_password("second")).unwrap_err();
             assert!(err.to_string().contains("differs"), "{err}");
         }
+    }
+
+    #[test]
+    fn provisioning_sql_escapes_password() {
+        let sql = provisioning_sql("appdb", "appuser", "it's");
+        assert!(sql.contains("WHERE rolname = 'appuser')\\gexec\n"), "{sql}");
+        assert!(sql.contains("ALTER ROLE \"appuser\" WITH LOGIN PASSWORD 'it''s';"), "{sql}");
+        assert!(sql.contains("CREATE DATABASE \"appdb\" OWNER \"appuser\""), "{sql}");
+    }
+
+    #[test]
+    fn link_names_must_be_identifiers() {
+        let app: AppConfig = serde_yaml_ng::from_str(
+            "{name: a, app_services: [{name: backend, service: backend}]}",
+        )
+        .unwrap();
+        let link = |text: &str| -> DatabaseLink { serde_yaml_ng::from_str(text).unwrap() };
+        Postgres
+            .validate_link(&link("{name: data, type: postgres, targets: [backend]}"), &app)
+            .unwrap();
+        let err = Postgres
+            .validate_link(&link("{name: data, type: postgres, targets: [backend], db_name: My-DB}"), &app)
+            .unwrap_err();
+        assert!(err.to_string().contains("db_name `My-DB`"), "{err}");
     }
 }

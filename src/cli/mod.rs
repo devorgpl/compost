@@ -93,7 +93,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::Deploy(args)) => server::deploy(&home, server, args, cli.verbose),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
-        Command::App(command) => app::run(&home, server, command),
+        Command::App(command) => app::run(&home, server, command, cli.verbose),
         Command::Connector(ConnectorCommand::List) => {
             Err(DepapError::NotImplemented("connector list").into())
         }

@@ -12,6 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
+pub use crate::app::contribution::Contribution;
+use crate::config::app::AppConfig;
 use crate::connector::Connector;
 
 /// One entry under `shared.<kind>` in depap-server.yaml.
@@ -57,6 +59,41 @@ impl ServerCtx<'_> {
     pub fn read(&self, relative: &str) -> Result<Option<String>> {
         self.connector.read_file(&self.path(relative))
     }
+}
+
+/// What a link hook knows: the server, the application and the shared app the
+/// link was resolved to.
+pub struct AppCtx<'a> {
+    pub server: &'a ServerCtx<'a>,
+    pub app: &'a AppConfig,
+    pub shared: &'a SharedAppConfig,
+}
+
+impl AppCtx<'_> {
+    /// Compose service behind an `app_services` name (checked during validation).
+    pub fn compose_service(&self, app_service: &str) -> Result<&str> {
+        self.app
+            .app_service(app_service)
+            .map(|s| s.service.as_str())
+            .with_context(|| format!("`{app_service}` is not in app_services"))
+    }
+
+    /// Unique name of an app service on shared networks, e.g. `myapp-staging-backend`.
+    pub fn service_alias(&self, compose_service: &str) -> String {
+        format!("{}-{compose_service}", self.app.instance())
+    }
+
+    /// Name of a link's records on the server, e.g. `myapp-staging-system-data`.
+    pub fn link_id(&self, entry: &str) -> String {
+        format!("{}-{entry}", self.app.instance())
+    }
+}
+
+/// Which shared app a link uses.
+pub enum Resolution<'s> {
+    Use(&'s SharedAppConfig),
+    /// The link is not used in this deployment; the text says why.
+    Skip(String),
 }
 
 /// Everything a shared app needs on the server, produced by `render`.
@@ -110,6 +147,36 @@ pub trait Kind: Sync {
 
     /// Files, directories and networks for one shared app.
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
+
+    // --- Links from applications (entries under `services.<kind>` in depap.yaml).
+
+    /// Hooks run in ascending order on deploy (and reverse order on remove).
+    fn apply_order(&self) -> i32;
+
+    /// Keys of a link entry that are secrets.
+    fn link_secret_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Validate one link entry (spec §6.3).
+    fn validate_link(&self, link: &Value, app: &AppConfig) -> Result<()>;
+
+    /// Pick the shared app for a link from the ones deployed and running.
+    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>>;
+
+    /// Render phase: add networks and variables, write link records.
+    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution) -> Result<()>;
+
+    /// Before the application's containers start.
+    fn before_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()>;
+
+    /// After the application's containers started.
+    fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()>;
+}
+
+/// Parse a link entry into a kind's own struct.
+pub fn parse_link<T: DeserializeOwned>(link: &Value) -> Result<T> {
+    serde_yaml_ng::from_value(link.clone()).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 static KINDS: &[&dyn Kind] = &[&database::DatabaseKind, &ingress::IngressKind];
@@ -141,6 +208,13 @@ pub fn project_name(kind: &str, name: &str) -> String {
 pub fn render_template(source: &str, context: minijinja::Value) -> Result<String> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
+    // Generated files end with a newline, like their templates.
+    env.set_syntax(
+        minijinja::syntax::SyntaxConfig::builder()
+            .keep_trailing_newline(true)
+            .build()
+            .context("invalid template syntax configuration")?,
+    );
     env.render_str(source, context)
         .context("template rendering failed (this is a bug in depap)")
 }

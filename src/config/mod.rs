@@ -1,5 +1,6 @@
 //! Configuration files: local depap home, server config, merging.
 
+pub mod app;
 pub mod local;
 pub mod merge;
 pub mod server;

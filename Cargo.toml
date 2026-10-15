@@ -10,10 +10,13 @@ anyhow = "1"
 clap = { version = "4.6", features = ["derive", "env"] }
 dirs = "7"
 humantime = "2"
-minijinja = "3"
+ignore = "0.4"
+minijinja = { version = "3", features = ["serde"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
+tar = "0.4"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 

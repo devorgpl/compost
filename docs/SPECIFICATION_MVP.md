@@ -282,8 +282,7 @@ $DEPAP_SERVER_HOME/
 └── apps/<app>/<prefix>/
     ├── sources/                      # uploaded files (whole dir, or only the compose file)
     ├── compose/
-    │   ├── depap.override.yaml       # generated compose override
-    │   └── env/<service>.env         # generated variables (0600)
+    │   └── depap.override.yaml       # generated compose override, includes variables (0600)
     ├── depap.yaml                    # effective app config, secrets removed
     └── depap-env.yaml                # pinned shared apps used by this instance
 ```
@@ -520,7 +519,7 @@ networks:
   depap-db-postgres16:
     external: true
 ```
-- `prepare_application` (inherited from `database::base`): work out the database name, user and password. Values come from the overlay, else the existing connector record, else defaults or a generated password. Attach the target services to `depap-db-<name>`. Write the mapped variables into `compose/env/<service>.env`. Write the database connector record.
+- `prepare_application` (inherited from `database::base`): work out the database name, user and password. Values come from the overlay, else the existing connector record, else defaults or a generated password. Attach the target services to `depap-db-<name>`. Add the mapped variables to the target services. Write the database connector record.
 - `before_apply_application`: run psql inside the container as `postgres`, with the SQL sent on stdin (never on the command line). The steps are idempotent:
   ```sql
   DO $$ BEGIN
@@ -596,15 +595,16 @@ Shared apps missing from the new config are reported as `orphaned` and left runn
 4. Upload sources to `apps/<app>/<prefix>/sources/`:
    - `attach_sources: true`: the directory containing `depap.yaml`, excluding `.git/`, every file passed with `-f`, files matching `.depap-*.yaml`, and the patterns in `.depapignore` (gitignore syntax).
    - otherwise: only the compose file.
-5. **Render phase**: call `prepare_application` for each link and write `compose/depap.override.yaml`, `compose/env/*.env`, connector records and the effective `depap.yaml` (secrets removed). Mark the instance `candidate`. Without `--apply`, stop here.
+5. **Render phase**: call `prepare_application` for each link and write `compose/depap.override.yaml` (0600), connector records and the effective `depap.yaml` (secrets removed). Mark the instance `candidate`. Without `--apply`, stop here.
 6. **Apply phase** (`--apply`):
    1. `before_apply_application` for each link (database before ingress).
    2. Run with `C = docker compose -p <app>-<prefix> --project-directory sources -f sources/<compose_file> -f compose/depap.override.yaml`:
       - `C build` if `build: true`, otherwise `C pull`
       - `C up -d --remove-orphans`
-   3. `after_apply_application` for each link.
-   4. Mark `deployed`, or `failed` and exit 3.
-7. Run `app state`, print it and exit 0, or 4 if unhealthy.
+   3. Wait up to 60 s until every container is running (healthy, if it has a healthcheck) or has exited with code 0. An exit with another code fails at once.
+   4. `after_apply_application` for each link.
+   5. Mark `deployed`, or `failed` and exit 3.
+7. Print the services' state. (Until `app state` exists, this is the `docker compose ps` summary.)
 
 Generated `depap.override.yaml` for the API example (§12.4):
 ```yaml
@@ -615,14 +615,17 @@ services:
       depap-ingress:
         aliases: [myapp-staging-front-webapp]
   backend-webapp:
-    env_file: [/home/depapuser/.depap-server/apps/myapp/staging/compose/env/backend-webapp.env]
+    environment:
+      APP_MODE: staging
+      POSTGRES_PASSWORD: …
     networks:
       default: {}
       depap-ingress:
         aliases: [myapp-staging-backend-webapp]
       depap-db-postgres16: {}
   backend-migration:
-    env_file: [/home/depapuser/.depap-server/apps/myapp/staging/compose/env/backend-migration.env]
+    environment:
+      POSTGRES_PASSWORD: …
     networks:
       default: {}
       depap-db-postgres16: {}
@@ -632,7 +635,9 @@ networks:
 ```
 Rules for the override:
 - `default` is added only when the service defines no `networks` itself. Otherwise adding a network would silently drop the default one.
-- Env files hold static `app_services[].environment` plus link variables. Paths are absolute.
+- `environment` holds static `app_services[].environment` plus link variables. Every `$` is written as `$$` so compose does not interpolate it. The file therefore contains secrets and is stored as 0600. (Per-service env files were considered, but their quoting rules make arbitrary passwords unreliable.)
+- Setting the same variable of a service to two different values is an error.
+- A service with `network_mode` cannot join depap networks; linking it is an error.
 - The user's compose file is never modified.
 
 ### 10.9 `depap app state [-f …]`
@@ -665,7 +670,7 @@ database
 
 ## 11. Security
 
-- Secret files on the server (`secrets/`, `connectors/database/**`, `compose/env/`) are created with mode `0600`. Their directories use `0700`.
+- Secret files on the server (`secrets/`, `connectors/database/**`, `compose/depap.override.yaml`) are created with mode `0600`. Their directories use `0700`.
 - Secrets never appear in `depap-server.yaml`, the effective `depap.yaml`, `state.yaml`, terminal output, `--dry-run` output (shown as `***`), or remote command lines.
 - Overlay files are never uploaded as sources.
 - Every instance linked to the same shared app shares that app's docker network. Network isolation between instances is a later feature.

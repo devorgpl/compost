@@ -1,12 +1,15 @@
 //! Caddy ingress type (spec §5.3, §9.2).
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use minijinja::context;
 use serde::Deserialize;
 
-use super::{IngressType, KIND, base};
+use super::base::{self, IngressLink};
+use super::{IngressType, KIND};
+use crate::connector::shell_quote;
 use crate::shared::{
-    Rendered, RenderedFile, ServerCtx, SharedAppConfig, render_template, shared_dir,
+    AppCtx, Rendered, RenderedFile, ServerCtx, SharedAppConfig, project_name, render_template,
+    shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -115,6 +118,56 @@ impl IngressType for Caddy {
             networks: Vec::new(),
         })
     }
+
+    /// Write the site file, let Caddy validate it, then reload without downtime.
+    fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()> {
+        let caddy: CaddyConfig = ctx.shared.configuration()?;
+        let mut routes = base::routes(ctx, link)?;
+        // The `/` route becomes the fallback for everything not matched before.
+        let fallback = routes
+            .iter()
+            .position(|r| r.path == "/")
+            .map(|i| routes.remove(i).upstream);
+        let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
+        let addresses: Vec<String> = link.domains.iter().map(|d| format!("{scheme}{d}")).collect();
+        let site = render_template(
+            include_str!("templates/site.caddy.j2"),
+            context! {
+                instance => ctx.app.instance(),
+                entry => link.name.as_str(),
+                addresses => addresses.join(", "),
+                routes => minijinja::value::Serde(&routes),
+                fallback,
+            },
+        )?;
+
+        let connector = ctx.server.connector;
+        let dir = ctx.server.path(&shared_dir(KIND, &ctx.shared.name));
+        let site_path = format!("{dir}/conf/sites/{}.caddy", ctx.link_id(&link.name));
+        let previous = connector.read_file(&site_path)?;
+        connector.write_file(&site_path, site.as_bytes(), 0o644)?;
+
+        let caddy_command = |command: &str| {
+            format!(
+                "cd {} && docker compose -p {} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile",
+                shell_quote(&dir),
+                shell_quote(&project_name(KIND, &ctx.shared.name))
+            )
+        };
+        if let Err(err) = connector.exec(&caddy_command("validate")) {
+            match previous {
+                Some(previous) => connector.write_file(&site_path, previous.as_bytes(), 0o644)?,
+                None => {
+                    connector.exec(&format!("rm -f -- {}", shell_quote(&site_path)))?;
+                }
+            }
+            return Err(err.context("Caddy rejected the generated site configuration"));
+        }
+        connector
+            .exec(&caddy_command("reload"))
+            .context("Caddy could not reload its configuration")?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +224,7 @@ mod tests {
         assert!(compose.contains("image: caddy:2-alpine"), "{compose}");
         assert!(compose.contains(r#""443:443/udp""#), "{compose}");
         assert!(compose.contains("networks: [depap-ingress]"), "{compose}");
+        assert!(compose.ends_with("external: true\n"), "keeps the final newline: {compose:?}");
 
         let caddyfile = file(&rendered, "conf/Caddyfile");
         assert!(!caddyfile.contains('{'), "no global options block: {caddyfile}");

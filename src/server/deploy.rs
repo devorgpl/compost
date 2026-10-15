@@ -1,12 +1,11 @@
 //! `depap server deploy` (spec §10.7).
 
 use std::io::Write;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
+use super::compose::wait_until_ready;
 use super::lock::Lock;
 use super::state::{self, Status};
 use super::state_file::{DeployStatus, StateFile};
@@ -15,12 +14,6 @@ use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::error::DepapError;
 use crate::shared::{self, Rendered, ServerCtx, SharedAppConfig};
-
-/// How long `--apply` waits for a shared app to be running (and healthy).
-const START_TIMEOUT: Duration = Duration::from_secs(60);
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-/// `docker compose ps` output: one `<service> <state> <health>` line per container.
-const PS_FORMAT: &str = "'{{.Service}} {{.State}} {{.Health}}'";
 
 pub struct Options {
     pub apply: bool,
@@ -216,35 +209,8 @@ fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
         "cd {dir} && docker compose -p {} up -d --quiet-pull{recreate}",
         shell_quote(&project)
     ))?;
-    wait_until_running(ctx.connector, &project)
-}
-
-/// Poll until every container of the project is running and, if it has a
-/// healthcheck, healthy.
-fn wait_until_running(connector: &dyn Connector, project: &str) -> Result<()> {
-    let deadline = Instant::now() + START_TIMEOUT;
-    let script = format!("docker compose -p {} ps -a --format {PS_FORMAT}", shell_quote(project));
-    loop {
-        let output = connector.exec(&script)?;
-        let ready = !output.trim().is_empty()
-            && output.lines().all(|line| {
-                let mut fields = line.split_whitespace().skip(1);
-                let state = fields.next().unwrap_or_default();
-                let health = fields.next().unwrap_or_default();
-                state == "running" && (health.is_empty() || health == "healthy")
-            });
-        if ready {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "not running after {}s:\n{}",
-                START_TIMEOUT.as_secs(),
-                output.trim_end()
-            );
-        }
-        sleep(POLL_INTERVAL);
-    }
+    wait_until_ready(ctx.connector, &project)?;
+    Ok(())
 }
 
 fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {

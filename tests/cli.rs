@@ -86,7 +86,8 @@ echo "docker $*" >> "$FAKE_DOCKER_LOG"
 case "$*" in
   "version "*) echo 29.0.0 ;;
   "compose version"*) echo 2.40.0 ;;
-  "compose "*" ps "*) echo "app running healthy" ;;
+  "compose "*" ps "*) echo "app running 0 healthy" ;;
+  "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*) ;;
   "network inspect "*) exit 1 ;;
   "network create "*) ;;
@@ -151,7 +152,9 @@ impl LocalServer {
     }
 
     fn write_work_file(&self, name: &str, contents: &str) {
-        fs::write(self.env.work.path().join(name), contents).unwrap();
+        let path = self.env.work.path().join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
     }
 
     /// Calls made to the fake docker so far; clears the log.
@@ -349,3 +352,160 @@ fn server_must_be_selected() {
         .code(2)
         .stderr(contains("no server selected"));
 }
+
+const APP_CONFIG: &str = "\
+name: myapp
+deployment:
+  build: true
+services:
+  database:
+    - name: system-data
+      type: postgres
+      version: '>=16'
+      targets: [backend]
+      environment:
+        DATABASE_URL: db_url
+        DATABASE_PASSWORD: db_password
+  ingress:
+    - name: ui-front
+      routes:
+        - {name: ui, target: webapp, port: 8080, path: /ui, strip_prefix: true}
+        - {name: api, target: backend, port: 5000}
+    - name: docs
+      optional: true
+      routes:
+        - {name: docs, target: webapp, port: 8080}
+app_services:
+  - name: webapp
+    service: front-webapp
+  - name: backend
+    service: backend-webapp
+    environment: {APP_MODE: production, PRICE: $5}
+";
+
+const APP_OVERLAY: &str = "\
+prefix: staging
+services:
+  database:
+    - name: system-data
+      db_password: pa$$word
+  ingress:
+    - name: ui-front
+      domains: [staging.example.com]
+app_services:
+  - name: backend
+    environment: {APP_MODE: staging}
+";
+
+/// A server with caddy and postgres deployed and running.
+fn server_with_shared_apps() -> LocalServer {
+    let server = LocalServer::new();
+    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .success();
+    server.take_docker_log();
+    server
+}
+
+#[test]
+fn app_deploy_needs_deployed_shared_apps() {
+    let server = LocalServer::new();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server
+        .run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &[])
+        .code(3)
+        .stderr(contains("run `depap server deploy --apply` first"));
+}
+
+#[test]
+fn app_deploy_end_to_end() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: ., networks: [internal]}}\nnetworks: {internal: {}}\n",
+    );
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/Dockerfile", "FROM scratch\n");
+    server.write_work_file("app/.git/HEAD", "ref\n");
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let files = "app/depap.yaml,app/.depap-staging.yaml";
+
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success()
+        .stdout(contains("Deploying myapp-staging to dev"))
+        .stdout(contains("services.ingress[docs]: skipped (optional and no domains given)"))
+        .stdout(contains("uploaded 2 files"))
+        .stdout(contains("myapp-staging is deployed"));
+
+    // Sources: no .git and no config files (the overlay holds secrets).
+    let instance = server.server_home.join("apps/myapp/staging");
+    let mut uploaded: Vec<_> = fs::read_dir(instance.join("sources"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    uploaded.sort();
+    assert_eq!(uploaded, ["Dockerfile", "docker-compose.yaml"]);
+
+    // Compose override: networks, aliases and escaped variables.
+    let override_yaml = fs::read_to_string(instance.join("compose/depap.override.yaml")).unwrap();
+    for expected in [
+        "aliases:\n        - myapp-staging-front-webapp",
+        "default: {}",
+        "depap-db-postgres16: {}",
+        "APP_MODE: staging",
+        "PRICE: $$5",
+        "DATABASE_PASSWORD: pa$$$$word",
+        "DATABASE_URL: postgres://myapp_staging_system_data:pa%24%24word@postgres16:5432/myapp_staging_system_data",
+    ] {
+        assert!(override_yaml.contains(expected), "missing {expected:?} in\n{override_yaml}");
+    }
+    // backend-webapp has its own networks, so `default` is not added to it.
+    let backend = override_yaml.split("backend-webapp:").nth(1).unwrap();
+    assert!(!backend.split("front-webapp:").next().unwrap().contains("default"), "{override_yaml}");
+
+    let effective = fs::read_to_string(instance.join("depap.yaml")).unwrap();
+    assert!(!effective.contains("pa$$word"), "{effective}");
+    assert!(fs::read_to_string(instance.join("depap-env.yaml")).unwrap().contains("instance: postgres16"));
+
+    // Database created before the app started, Caddy reloaded after.
+    let log = server.take_docker_log();
+    let position = |needle: &str| log.find(needle).unwrap_or_else(|| panic!("{needle:?} not in\n{log}"));
+    let created = position("ALTER ROLE \"myapp_staging_system_data\" WITH LOGIN PASSWORD 'pa$$word'");
+    let built = position("--project-directory sources -f sources/docker-compose.yaml -f compose/depap.override.yaml build -q");
+    let started = position("up -d --remove-orphans");
+    let reloaded = position("exec -T caddy caddy reload");
+    assert!(created < built && built < started && started < reloaded, "{log}");
+
+    // Caddy site: longest path first, `/` as fallback.
+    let site = fs::read_to_string(
+        server.server_home.join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy"),
+    )
+    .unwrap();
+    assert!(site.contains("staging.example.com {"), "{site}");
+    assert!(site.contains("@ui path /ui /ui/*\n\thandle @ui {\n\t\turi strip_prefix /ui\n\t\treverse_proxy myapp-staging-front-webapp:8080"), "{site}");
+    assert!(site.contains("\thandle {\n\t\treverse_proxy myapp-staging-backend-webapp:5000"), "{site}");
+
+    assert!(server.read_server_file("state.yaml").contains("prefix: staging\n  status: deployed"));
+}
+
+#[test]
+fn app_deploy_rejects_domain_used_by_another_instance() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/docker-compose.yaml", "services: {front-webapp: {build: .}, backend-webapp: {build: .}}");
+    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.depap-other.yaml", &APP_OVERLAY.replace("staging", "other").replace("other.example", "staging.example"));
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+
+    server.run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-staging.yaml"], &running).success();
+    server
+        .run(&["app", "deploy", "-f", "app/depap.yaml,app/.depap-other.yaml"], &running)
+        .code(3)
+        .stderr(contains("domain `staging.example.com` is already used by myapp/staging (ui-front)"));
+}
+

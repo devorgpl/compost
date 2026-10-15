@@ -4,8 +4,11 @@ mod base;
 mod caddy;
 
 use anyhow::{Result, bail};
+use serde_yaml_ng::Value;
 
-use super::{Kind, Rendered, ServerCtx, SharedAppConfig};
+use super::{AppCtx, Contribution, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig, parse_link};
+use crate::config::app::AppConfig;
+use base::IngressLink;
 
 pub const KIND: &str = "ingress";
 
@@ -22,8 +25,20 @@ pub trait IngressType: Sync {
         base::validate_config(config)
     }
 
-    /// Type-specific, no default.
+    fn prepare_application(&self, ctx: &AppCtx, link: &IngressLink, out: &mut Contribution) -> Result<()> {
+        base::prepare_application(ctx, link, out)
+    }
+
+    fn before_apply_application(&self, _ctx: &AppCtx, _link: &IngressLink) -> Result<()> {
+        Ok(())
+    }
+
+    // Type-specific, no default.
+
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
+
+    /// Make the proxy route the link's domains to the app.
+    fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()>;
 }
 
 static TYPES: &[&dyn IngressType] = &[&caddy::Caddy];
@@ -54,6 +69,32 @@ impl Kind for IngressKind {
         let mut rendered = find_type(&config.type_name)?.render(ctx, config)?;
         rendered.networks.push(base::NETWORK.to_string());
         Ok(rendered)
+    }
+
+    fn apply_order(&self) -> i32 {
+        20 // after databases: routes go live once the app runs
+    }
+
+    fn validate_link(&self, link: &Value, app: &AppConfig) -> Result<()> {
+        base::validate_link(&parse_link(link)?, app)
+    }
+
+    fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
+        base::resolve(&parse_link(link)?, available)
+    }
+
+    // An ingress link names no type: the type of the resolved ingress handles it.
+
+    fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.prepare_application(ctx, &parse_link(link)?, out)
+    }
+
+    fn before_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.before_apply_application(ctx, &parse_link(link)?)
+    }
+
+    fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.after_apply_application(ctx, &parse_link(link)?)
     }
 }
 

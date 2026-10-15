@@ -78,6 +78,30 @@ pub trait Connector {
         Ok(())
     }
 
+    /// Names of the entries in a directory (empty if it does not exist).
+    fn list_dir(&self, path: &str) -> Result<Vec<String>> {
+        let path = shell_quote(path);
+        let output = self.exec(&format!("[ -d {path} ] || exit 0; ls -1A -- {path}"))?;
+        Ok(output.lines().map(str::to_string).collect())
+    }
+
+    /// Replace a directory with the contents of an uncompressed tar archive.
+    /// The new contents are unpacked next to it first, so a failed upload
+    /// leaves the old directory in place.
+    fn replace_dir(&self, path: &str, tar: &[u8]) -> Result<()> {
+        let new = shell_quote(&format!("{path}.new"));
+        let path = shell_quote(path);
+        let script = format!(
+            "rm -rf -- {new} && mkdir -p -- {new} && tar -x -f - -C {new} \
+             && rm -rf -- {path} && mv -- {new} {path}"
+        );
+        let output = self.run(&script, Some(tar))?;
+        if !output.success() {
+            return Err(command_failed(&script, &output));
+        }
+        Ok(())
+    }
+
     /// Expand a leading `~` using the server's `$HOME`.
     fn resolve_path(&self, path: &str) -> Result<String> {
         let rest = match path.strip_prefix('~') {

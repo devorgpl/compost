@@ -17,8 +17,10 @@ pub struct StateFile {
     #[serde(default)]
     pub shared: Vec<SharedRecord>,
     #[serde(default)]
+    pub apps: Vec<AppRecord>,
+    #[serde(default)]
     pub depap_version: String,
-    /// Sections this version does not know (e.g. `apps`), kept unchanged.
+    /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
 }
@@ -30,6 +32,15 @@ pub struct SharedRecord {
     pub status: DeployStatus,
     /// Hash of the rendered files; a different hash means the config changed.
     pub config_hash: String,
+    pub updated_at: String,
+}
+
+/// One application instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppRecord {
+    pub name: String,
+    pub prefix: String,
+    pub status: DeployStatus,
     pub updated_at: String,
 }
 
@@ -47,6 +58,7 @@ impl Default for StateFile {
         Self {
             schema: SCHEMA,
             shared: Vec::new(),
+            apps: Vec::new(),
             depap_version: String::new(),
             other: Mapping::new(),
         }
@@ -80,11 +92,29 @@ impl StateFile {
             name: name.to_string(),
             status,
             config_hash: config_hash.to_string(),
-            updated_at: humantime::format_rfc3339_seconds(SystemTime::now()).to_string(),
+            updated_at: now(),
         };
         match self.shared.iter_mut().find(|r| r.kind == kind && r.name == name) {
             Some(existing) => *existing = record,
             None => self.shared.push(record),
         }
     }
+
+    /// Add or update the record of an application instance.
+    pub fn set_app(&mut self, name: &str, prefix: &str, status: DeployStatus) {
+        let record = AppRecord {
+            name: name.to_string(),
+            prefix: prefix.to_string(),
+            status,
+            updated_at: now(),
+        };
+        match self.apps.iter_mut().find(|r| r.name == name && r.prefix == prefix) {
+            Some(existing) => *existing = record,
+            None => self.apps.push(record),
+        }
+    }
+}
+
+fn now() -> String {
+    humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
 }
