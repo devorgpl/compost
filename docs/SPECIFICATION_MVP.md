@@ -1,9 +1,9 @@
-# depap — MVP specification
+# compost — MVP specification
 
 Status: draft for implementation · Target release: 0.1.0
 Vision document: [SPECIFICATION_DRAFT.md](SPECIFICATION_DRAFT.md)
 
-This document describes the **minimum viable product**: the smallest version of depap that runs the four scenarios of the draft end to end (see [§12 Acceptance scenarios](#12-acceptance-scenarios)). Everything not listed here is out of scope for 0.1 and is collected in [§15 Roadmap](#15-roadmap). The MVP is designed so that later features plug into existing extension points instead of requiring rewrites.
+This document describes the **minimum viable product**: the smallest version of compost that runs the four scenarios of the draft end to end (see [§12 Acceptance scenarios](#12-acceptance-scenarios)). Everything not listed here is out of scope for 0.1 and is collected in [§15 Roadmap](#15-roadmap). The MVP is designed so that later features plug into existing extension points instead of requiring rewrites.
 
 Key words MUST, SHOULD and MAY are used as in RFC 2119.
 
@@ -12,12 +12,12 @@ Key words MUST, SHOULD and MAY are used as in RFC 2119.
 ## 1. Scope
 
 ### 1.1 In scope (0.1)
-- A single CLI binary `depap`, run on the operator's machine.
+- A single CLI binary `compost`, run on the operator's machine.
 - Managing one or more servers, reached over **SSH** or on **localhost**.
 - Shared applications:
   - **ingress**: `caddy` (one instance per server)
   - **database**: `postgres` (any number of instances)
-- User applications defined by a **docker compose** file plus `depap.yaml` and a deployment overlay.
+- User applications defined by a **docker compose** file plus `compost.yaml` and a deployment overlay.
 - Linking user applications to shared applications:
   - ingress link: domains + path routes → app service port
   - database link: database + role creation, connection variables injected into app services
@@ -30,7 +30,7 @@ WebUI, API server, satellites, OIDC, S3, logs, metrics, backup/restore, more tha
 
 | Side | Requirement |
 |---|---|
-| Operator machine | Linux or macOS, `depap` binary, OpenSSH client (`ssh`) |
+| Operator machine | Linux or macOS, `compost` binary, OpenSSH client (`ssh`) |
 | Server | Linux, POSIX `sh`, `tar`, Docker Engine ≥ 24, Docker Compose v2 plugin (`docker compose`) |
 | Server user | Can log in with a key over SSH, member of the `docker` group (no sudo needed) |
 
@@ -38,11 +38,11 @@ WebUI, API server, satellites, OIDC, S3, logs, metrics, backup/restore, more tha
 
 | Term | Meaning |
 |---|---|
-| **Server** | A host managed by depap. Has a name in the local config. |
-| **Connector** | How depap reaches a server: `ssh` or `local`. |
-| **Manager key** | UUID that identifies the depap installation managing a server. A server is managed by exactly one manager key. |
+| **Server** | A host managed by compost. Has a name in the local config. |
+| **Connector** | How compost reaches a server: `ssh` or `local`. |
+| **Manager key** | UUID that identifies the compost installation managing a server. A server is managed by exactly one manager key. |
 | **Shared app** | Server-wide service built from a built-in template: `type` (`caddy`, `postgres`), `name` (unique per server), `version`. Belongs to a **kind** (`ingress`, `database`). |
-| **User app** | The operator's application: compose file + `depap.yaml`. Identified by `name`. |
+| **User app** | The operator's application: compose file + `compost.yaml`. Identified by `name`. |
 | **Instance** | One deployment of a user app on a server: `<name>` + `<prefix>`. One app may have many instances (e.g. `staging`, `prod`). |
 | **Link** | Connection between an instance and a shared app (ingress link, database link). Stored on the server as a connector record. |
 | **Hook** | Function a shared app type implements to take part in deploying an instance (see §9). |
@@ -54,13 +54,13 @@ WebUI, API server, satellites, OIDC, S3, logs, metrics, backup/restore, more tha
 
 ## 4. Local files
 
-`DEPAP_HOME` defaults to `~/.depap` and MAY be overridden with the `DEPAP_HOME` environment variable.
+`COMPOST_HOME` defaults to `~/.compost` and MAY be overridden with the `COMPOST_HOME` environment variable.
 
-### 4.1 `depap-manager.yaml`
+### 4.1 `compost-manager.yaml`
 ```yaml
 manager_key: 0d6c2f5e-7c55-4c1e-9a5b-3f1f1f0e2a11
 ```
-Created by `depap init`. To manage the same servers from a second machine, copy this file (shared manager keys are the MVP answer to teams).
+Created by `compost init`. To manage the same servers from a second machine, copy this file (shared manager keys are the MVP answer to teams).
 
 ### 4.2 `servers.yaml`
 ```yaml
@@ -70,9 +70,9 @@ servers:
       type: ssh              # ssh | local
       address: 203.0.113.10  # host name or IP; ssh only
       port: 22               # optional, default 22
-      user: depapuser        # optional, default "depapuser"
+      user: compostuser        # optional, default "compostuser"
       identity_file: ~/.ssh/id_ed25519  # optional; default: ssh config / agent / ~/.ssh/id_*
-    server_home: ~/.depap-server       # optional, default ~/.depap-server (on the server)
+    server_home: ~/.compost-server       # optional, default ~/.compost-server (on the server)
     deploy:                            # optional; overrides config.yaml for this server
       apply: false
   - name: dev
@@ -81,7 +81,7 @@ servers:
 ```
 
 ### 4.3 `config.yaml`
-Preferences of the operator, written by `depap config` (§10.22).
+Preferences of the operator, written by `compost config` (§10.22).
 ```yaml
 deploy:
   apply: true     # `server deploy` and `app deploy` start services without --apply
@@ -92,18 +92,18 @@ Per server, `servers.yaml` `deploy.apply` wins over this file. `--apply`/`--no-a
 Plain text file containing a server name. Written by `connect`, removed by `disconnect`.
 
 ### 4.5 Choosing the target server
-Every command that talks to a server uses, in order: `--server/-s <name>` → `DEPAP_SERVER` environment variable → `current_context`. If none is set, the command fails with exit code 2.
+Every command that talks to a server uses, in order: `--server/-s <name>` → `COMPOST_SERVER` environment variable → `current_context`. If none is set, the command fails with exit code 2.
 
 ## 5. Server configuration
 
 The operator keeps server configuration in a working directory (e.g. a Git repository with infrastructure files).
 
-- `depap-server.yaml` — structure, safe to commit.
-- `.depap-server.secrets.yaml` — secrets, MUST NOT be committed (depap prints a warning if it is tracked by Git).
+- `compost-server.yaml` — structure, safe to commit.
+- `.compost-server.secrets.yaml` — secrets, MUST NOT be committed (compost prints a warning if it is tracked by Git).
 
 Both are loaded by default; `-f` replaces the defaults (see §7).
 
-### 5.1 `depap-server.yaml`
+### 5.1 `compost-server.yaml`
 ```yaml
 shared:
   ingress:
@@ -122,16 +122,16 @@ shared:
       image: postgres:16-alpine      # optional, default postgres:<version>
 backup:                              # optional (§10.13)
   target: local                      # local | server | s3 ; default local (s3: not implemented yet)
-  server_path: backups               # archive folder of the server target; absolute or relative to DEPAP_SERVER_HOME
+  server_path: backups               # archive folder of the server target; absolute or relative to COMPOST_SERVER_HOME
 ```
-`depap server generate` (§10.19) writes this file as the setup for the operator's own machine (Caddy on port 18080 without TLS), plus `depap-server.prod.yaml`, an overlay with what a real server changes (ports 80/443, `tls: auto`, `acme_email`):
+`compost server generate` (§10.19) writes this file as the setup for the operator's own machine (Caddy on port 18080 without TLS), plus `compost-server.prod.yaml`, an overlay with what a real server changes (ports 80/443, `tls: auto`, `acme_email`):
 ```sh
-depap server deploy --apply -f depap-server.yaml,depap-server.prod.yaml,.depap-server.secrets.yaml
+compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
 ```
 
 `backup` is kept in the stored effective config, so `backup`/`restore` commands read the default target from the server.
 
-### 5.2 `.depap-server.secrets.yaml`
+### 5.2 `.compost-server.secrets.yaml`
 ```yaml
 shared:
   database:
@@ -167,7 +167,7 @@ Postgres is not published on a host port in 0.1. Only containers on its network 
 
 ## 6. User application configuration
 
-### 6.1 `depap.yaml` (in the application repository)
+### 6.1 `compost.yaml` (in the application repository)
 ```yaml
 name: myapp
 deployment:
@@ -218,8 +218,8 @@ Database link values available in `environment` mappings:
 
 Compose services not listed in `app_services` are deployed unchanged and cannot be linked.
 
-### 6.2 Deployment overlay (e.g. `.depap-staging.yaml`)
-Holds per-instance values and secrets. It MAY live outside the repository. It uses the same schema as `depap.yaml` plus the keys below.
+### 6.2 Deployment overlay (e.g. `.compost-staging.yaml`)
+Holds per-instance values and secrets. It MAY live outside the repository. It uses the same schema as `compost.yaml` plus the keys below.
 ```yaml
 prefix: staging                        # default "main"
 services:
@@ -270,22 +270,22 @@ Errors raised against the server during deploy (exit code 3). These are also kin
 3. All other lists and scalars from later files **replace** earlier values.
 
 Defaults when `-f` is not given:
-- `server deploy`: `depap-server.yaml` and `.depap-server.secrets.yaml` if present.
-- `app deploy`: `depap.yaml`. An overlay MUST be passed explicitly: `-f depap.yaml -f .depap-staging.yaml`, or stored on the server with `depap secret deploy` (§10.21).
+- `server deploy`: `compost-server.yaml` and `.compost-server.secrets.yaml` if present.
+- `app deploy`: `compost.yaml`. An overlay MUST be passed explicitly: `-f compost.yaml -f .compost-staging.yaml`, or stored on the server with `compost secret deploy` (§10.21).
 
-`app deploy` merges the instance's stored overlay, if there is one, right after the first file: `depap.yaml` → stored secrets → the other `-f` files. Local overlays can still override stored values.
+`app deploy` merges the instance's stored overlay, if there is one, right after the first file: `compost.yaml` → stored secrets → the other `-f` files. Local overlays can still override stored values.
 
 The **effective configuration** (merge result plus defaults, e.g. each type's default `version`) is what gets validated, stored on the server (with secrets removed) and shown by `--dry-run`.
 
 ## 8. Server layout
 
-`DEPAP_SERVER_HOME` = `server_home` from `servers.yaml`, resolved once to an absolute path.
+`COMPOST_SERVER_HOME` = `server_home` from `servers.yaml`, resolved once to an absolute path.
 
 ```
-$DEPAP_SERVER_HOME/
+$COMPOST_SERVER_HOME/
 ├── manager_key                       # manager key UUID
-├── depap-server.yaml                 # effective server config, secrets removed
-├── state.yaml                        # depap-owned state (§8.2)
+├── compost-server.yaml                 # effective server config, secrets removed
+├── state.yaml                        # compost-owned state (§8.2)
 ├── lock/                             # exists while a mutating command runs (§10.1)
 ├── backups/                          # archives of the `server` backup target (§10.13, `backup.server_path`)
 ├── secrets/apps/<app>/<prefix>.yaml  # overlay stored by `secret deploy` (0600, §10.21); kept by `app remove`
@@ -308,20 +308,20 @@ $DEPAP_SERVER_HOME/
 └── apps/<app>/<prefix>/
     ├── sources/                      # uploaded files (whole dir, or only the compose file)
     ├── compose/
-    │   └── depap.override.yaml       # generated compose override, includes variables (0600)
-    ├── depap.yaml                    # effective app config, secrets removed
-    └── depap-env.yaml                # pinned shared apps used by this instance
+    │   └── compost.override.yaml       # generated compose override, includes variables (0600)
+    ├── compost.yaml                    # effective app config, secrets removed
+    └── compost-env.yaml                # pinned shared apps used by this instance
 ```
 
 ### 8.1 Docker naming
 | Object | Name |
 |---|---|
-| Ingress network | `depap-ingress` (external, created by depap) |
-| Database network | `depap-db-<name>` (external, created by depap) |
-| Shared app compose project | `depap-<kind>-<name>`, e.g. `depap-database-postgres16` |
+| Ingress network | `compost-ingress` (external, created by compost) |
+| Database network | `compost-db-<name>` (external, created by compost) |
+| Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres16` |
 | Instance compose project | `<app>-<prefix>` |
-| Ingress alias of an app service | `<app>-<prefix>-<service>` on `depap-ingress` |
-| Database host name | `<name>` (alias on `depap-db-<name>`) |
+| Ingress alias of an app service | `<app>-<prefix>-<service>` on `compost-ingress` |
+| Database host name | `<name>` (alias on `compost-db-<name>`) |
 
 ### 8.2 `state.yaml`
 ```yaml
@@ -338,9 +338,9 @@ apps:
     status: deployed          # candidate | deployed | failed
     config_hash: sha256:…
     updated_at: 2026-10-15T12:05:00Z
-depap_version: 0.1.0
+compost_version: 0.1.0
 ```
-Only depap writes this file. User config files are never changed by depap.
+Only compost writes this file. User config files are never changed by compost.
 
 ### 8.3 Connector records
 `root-connector.yaml`:
@@ -348,7 +348,7 @@ Only depap writes this file. User config files are never changed by depap.
 type: postgres
 instance: postgres16
 version: 16
-network: depap-db-postgres16
+network: compost-db-postgres16
 host: postgres16
 port: 5432
 root_db: postgres
@@ -484,9 +484,9 @@ services:
       - ./conf/sites:/etc/caddy/sites:ro
       - ./data:/data
       - ./config:/config
-    networks: [depap-ingress]
+    networks: [compost-ingress]
 networks:
-  depap-ingress:
+  compost-ingress:
     external: true
 ```
 `conf/Caddyfile`:
@@ -520,7 +520,7 @@ staging.domain.tld, www.staging.domain.tld {
 ```
 With `strip_prefix: true` the route uses `uri strip_prefix /ui` before `reverse_proxy`. With `tls: off` the site address is `http://<domain>`.
 
-- `prepare_application` (inherited from `ingress::base`): attach each target service to `depap-ingress` with its alias; write the ingress connector record.
+- `prepare_application` (inherited from `ingress::base`): attach each target service to `compost-ingress` with its alias; write the ingress connector record.
 - `after_apply_application`: write the site file; run `caddy validate`, then `caddy reload` (via `docker compose exec -T caddy`). If validation fails, restore the previous site file and fail the deploy.
 - `remove_application` (extends `ingress::base`): the base deletes the connector record; caddy then deletes the site file and reloads. Ingress does not support `--purge` in 0.1.
 
@@ -541,17 +541,17 @@ services:
     volumes:
       - ./data:/var/lib/postgresql/data   # with PGDATA set to this path explicitly (postgres 18 images moved the default)
     networks:
-      depap-db-postgres16:
+      compost-db-postgres16:
         aliases: [postgres16]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       retries: 12
 networks:
-  depap-db-postgres16:
+  compost-db-postgres16:
     external: true
 ```
-- `prepare_application` (inherited from `database::base`): work out the database name, user and password. Values come from the overlay, else the existing connector record, else defaults or a generated password. Attach the target services to `depap-db-<name>`. Add the mapped variables to the target services. Write the database connector record.
+- `prepare_application` (inherited from `database::base`): work out the database name, user and password. Values come from the overlay, else the existing connector record, else defaults or a generated password. Attach the target services to `compost-db-<name>`. Add the mapped variables to the target services. Write the database connector record.
 - `before_apply_application`: run psql inside the container as `postgres`, with the SQL sent on stdin (never on the command line). The steps are idempotent:
   ```sql
   DO $$ BEGIN
@@ -574,70 +574,70 @@ Exit codes: `0` OK · `1` unexpected error · `2` invalid local config or usage 
 
 ### 10.1 Rules shared by mutating commands
 - **Preflight**: run the `server state` checks first and stop on `UNREACHABLE`, `NO_DOCKER` or `FOREIGN`.
-- **Lock**: create `$DEPAP_SERVER_HOME/lock/` atomically (`mkdir`) and write `holder` (host, user, pid, time) inside it. Remove it on exit, including on errors and Ctrl-C. If the lock exists, fail and print who holds it; `--force-unlock` removes a stale lock.
-- **Ctrl-C**: the first Ctrl-C stops the running remote command (the terminal signals the whole foreground job). depap then starts no new command except cleanup, releases the lock and exits with 130. A second Ctrl-C exits at once, possibly leaving the lock. A remote command whose ssh session was cut may keep running on the server.
+- **Lock**: create `$COMPOST_SERVER_HOME/lock/` atomically (`mkdir`) and write `holder` (host, user, pid, time) inside it. Remove it on exit, including on errors and Ctrl-C. If the lock exists, fail and print who holds it; `--force-unlock` removes a stale lock.
+- **Ctrl-C**: the first Ctrl-C stops the running remote command (the terminal signals the whole foreground job). compost then starts no new command except cleanup, releases the lock and exits with 130. A second Ctrl-C exits at once, possibly leaving the lock. A remote command whose ssh session was cut may keep running on the server.
 - **Idempotent**: running the same command again converges to the same result and does not recreate unchanged containers.
 - **`--dry-run`**: load, merge and validate the config, run the read-only server checks, and print the files and commands that would run. Nothing is changed on the server.
 - **Remote execution**: every remote action is `sh -c` over a single `ssh` invocation (or locally for `local`). Files are uploaded as a tar stream (`ssh … 'tar -x -C <dir>'`). Directories are replaced atomically: extract to `<dir>.new`, then swap. Remote scripts use only POSIX `sh` and tools BusyBox also provides, so minimal servers (e.g. Alpine) work.
-- **SSH connection sharing**: depap passes `ControlMaster=auto`, `ControlPath=$DEPAP_HOME/ssh/%C` and `ControlPersist=60`. One connection serves all commands of a run, and stays open 60 s for the next run. If the socket path would be too long for a Unix socket, depap connects separately for each command instead. Measured: 53 remote commands took 7.2 s shared vs 15.7 s unshared, between two containers on one machine; real networks gain more.
+- **SSH connection sharing**: compost passes `ControlMaster=auto`, `ControlPath=$COMPOST_HOME/ssh/%C` and `ControlPersist=60`. One connection serves all commands of a run, and stays open 60 s for the next run. If the socket path would be too long for a Unix socket, compost connects separately for each command instead. Measured: 53 remote commands took 7.2 s shared vs 15.7 s unshared, between two containers on one machine; real networks gain more.
 
-### 10.2 `depap init [--key <manager key> [--force]]`
-1. If `DEPAP_HOME/depap-manager.yaml` exists, print its manager key and exit 0. With `--key` and a different key, fail with exit 2 unless `--force`, which replaces the key (servers deployed with the old key then show as `FOREIGN`).
-2. Otherwise create `DEPAP_HOME` with the `--key` manager key or a new UUIDv4 one, plus an empty `servers.yaml`.
+### 10.2 `compost init [--key <manager key> [--force]]`
+1. If `COMPOST_HOME/compost-manager.yaml` exists, print its manager key and exit 0. With `--key` and a different key, fail with exit 2 unless `--force`, which replaces the key (servers deployed with the old key then show as `FOREIGN`).
+2. Otherwise create `COMPOST_HOME` with the `--key` manager key or a new UUIDv4 one, plus an empty `servers.yaml`.
 
 `--key` takes an existing manager key (a UUID, stored in its canonical lowercase form), so another machine or a reinstalled one manages the same servers.
 
 All other commands require `init` (exit 2 with a hint otherwise).
 
-### 10.3 `depap server define <name>`
-`--address <host> [--user depapuser] [--port 22] [--identity-file <path>] [--server-home <path>]` or `--local`.
+### 10.3 `compost server define <name>`
+`--address <host> [--user compostuser] [--port 22] [--identity-file <path>] [--server-home <path>]` or `--local`.
 Adds or replaces (with `--force`) the entry in `servers.yaml`. It does not contact the server.
 
-### 10.4 `depap server list`
+### 10.4 `compost server list`
 Table: name, connector, address, current context marker.
 
-### 10.5 `depap connect <name>` / `depap disconnect`
+### 10.5 `compost connect <name>` / `compost disconnect`
 `connect` checks that `<name>` is in `servers.yaml`, then writes `current_context`. `disconnect` deletes `current_context`.
 
-### 10.6 `depap server state`
+### 10.6 `compost server state`
 Checks, in order:
 | Check | Failure status |
 |---|---|
 | Connector works (`ssh … true`) | `UNREACHABLE` |
 | `docker version` and `docker compose version` work | `NO_DOCKER` |
-| `DEPAP_SERVER_HOME/manager_key` exists | `UNINITIALIZED` (not an error for `server deploy`) |
+| `COMPOST_SERVER_HOME/manager_key` exists | `UNINITIALIZED` (not an error for `server deploy`) |
 | `manager_key` equals the local key | `FOREIGN` |
-| Every shared app in the remote `depap-server.yaml` is running (healthy if it has a healthcheck) | `DEGRADED` |
+| Every shared app in the remote `compost-server.yaml` is running (healthy if it has a healthcheck) | `DEGRADED` |
 | – | `OK` |
 
 Output: overall status, then one row per shared app: kind, name, type, version, state.yaml status, container status. Exit code 0 for `OK`/`UNINITIALIZED`, 3 for `UNREACHABLE`/`NO_DOCKER`/`FOREIGN`, 4 for `DEGRADED`.
 
-### 10.7 `depap server deploy [--apply | --no-apply] [-f …] [--dry-run]`
+### 10.7 `compost server deploy [--apply | --no-apply] [-f …] [--dry-run]`
 
 Without `--apply` or `--no-apply`, `deploy.apply` from `servers.yaml` or `config.yaml` decides (§4.3). The same holds for `app deploy`.
 
 1. Load, merge and validate the server config (§5, §7).
 2. Preflight and lock (§10.1).
-3. If `UNINITIALIZED`: create `DEPAP_SERVER_HOME` and write `manager_key`.
-4. Create missing docker networks (`depap-ingress` if an ingress is defined, `depap-db-<name>` per database).
+3. If `UNINITIALIZED`: create `COMPOST_SERVER_HOME` and write `manager_key`.
+4. Create missing docker networks (`compost-ingress` if an ingress is defined, `compost-db-<name>` per database).
 5. For each shared app: work out its secrets (config → existing secret files → generated), `render`, upload into `shared/<kind>/<name>/` and the root connector. Mark it `candidate` in `state.yaml` if `config_hash` changed or it is new.
-6. Upload the effective `depap-server.yaml` (secrets removed).
-7. With `--apply`, for every shared app: `docker compose -p depap-<kind>-<name> up -d`. Compose leaves unchanged containers alone. `--force-recreate` is added when the app is not `deployed` (candidate or failed), because compose cannot see changes in mounted files. Wait up to 60 s for running/healthy. Mark `deployed`, or `failed` and exit 3. Running `up -d` for every app also restarts apps that were stopped.
+6. Upload the effective `compost-server.yaml` (secrets removed).
+7. With `--apply`, for every shared app: `docker compose -p compost-<kind>-<name> up -d`. Compose leaves unchanged containers alone. `--force-recreate` is added when the app is not `deployed` (candidate or failed), because compose cannot see changes in mounted files. Wait up to 60 s for running/healthy. Mark `deployed`, or `failed` and exit 3. Running `up -d` for every app also restarts apps that were stopped.
 8. With `--apply`, run `server state`, print it and exit with its code. Without `--apply`, print a hint to run with `--apply`.
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
 
-### 10.8 `depap app deploy [--apply | --no-apply] [-f …] [--prefix <prefix>] [--dry-run]`
+### 10.8 `compost app deploy [--apply | --no-apply] [-f …] [--prefix <prefix>] [--dry-run]`
 1. Load, merge and validate the app config (§6, §7), including the instance's overlay stored on the server (§10.21). `--prefix` replaces the `prefix` from the files and selects the stored overlay. Parse the compose file to check service names.
 2. Preflight and lock. The server MUST be `OK` or `DEGRADED`, and every shared app this instance needs MUST be `deployed` and running.
-3. Pick the shared apps for each link (§6.3). Write the pinned names and versions to `depap-env.yaml`.
+3. Pick the shared apps for each link (§6.3). Write the pinned names and versions to `compost-env.yaml`.
 4. Upload sources to `apps/<app>/<prefix>/sources/`:
-   - `attach_sources: true`: the directory containing `depap.yaml`, excluding `.git/`, every file passed with `-f`, files matching `.depap-*.yaml` or `.depap.*.yaml`, and the patterns in `.depapignore` (gitignore syntax).
+   - `attach_sources: true`: the directory containing `compost.yaml`, excluding `.git/`, every file passed with `-f`, files matching `.compost-*.yaml` or `.compost.*.yaml`, and the patterns in `.compostignore` (gitignore syntax).
    - otherwise: only the compose file.
-5. **Render phase**: call `prepare_application` for each link and write `compose/depap.override.yaml` (0600), connector records and the effective `depap.yaml` (secrets removed). Mark the instance `candidate`. Without `--apply`, stop here.
+5. **Render phase**: call `prepare_application` for each link and write `compose/compost.override.yaml` (0600), connector records and the effective `compost.yaml` (secrets removed). Mark the instance `candidate`. Without `--apply`, stop here.
 6. **Apply phase** (`--apply`):
    1. `before_apply_application` for each link (database before ingress).
-   2. Run with `C = docker compose -p <app>-<prefix> --project-directory sources -f sources/<compose_file> -f compose/depap.override.yaml`:
+   2. Run with `C = docker compose -p <app>-<prefix> --project-directory sources -f sources/<compose_file> -f compose/compost.override.yaml`:
       - `C build` if `build: true`, otherwise `C pull`
       - `C up -d --remove-orphans`
    3. Wait up to 60 s until every container is running (healthy, if it has a healthcheck) or has exited with code 0. An exit with another code fails at once.
@@ -645,13 +645,13 @@ Shared apps missing from the new config are reported as `orphaned` and left runn
    5. Mark `deployed`, or `failed` and exit 3.
 7. Print the same view as `app state`.
 
-Generated `depap.override.yaml` for the API example (§12.4):
+Generated `compost.override.yaml` for the API example (§12.4):
 ```yaml
 services:
   front-webapp:
     networks:
       default: {}                        # added because the service had no networks of its own
-      depap-ingress:
+      compost-ingress:
         aliases: [myapp-staging-front-webapp]
   backend-webapp:
     environment:
@@ -659,27 +659,27 @@ services:
       POSTGRES_PASSWORD: …
     networks:
       default: {}
-      depap-ingress:
+      compost-ingress:
         aliases: [myapp-staging-backend-webapp]
-      depap-db-postgres16: {}
+      compost-db-postgres16: {}
   backend-migration:
     environment:
       POSTGRES_PASSWORD: …
     networks:
       default: {}
-      depap-db-postgres16: {}
+      compost-db-postgres16: {}
 networks:
-  depap-ingress: { external: true }
-  depap-db-postgres16: { external: true }
+  compost-ingress: { external: true }
+  compost-db-postgres16: { external: true }
 ```
 Rules for the override:
 - `default` is added only when the service defines no `networks` itself. Otherwise adding a network would silently drop the default one.
 - `environment` holds static `app_services[].environment` plus link variables. Every `$` is written as `$$` so compose does not interpolate it. The file therefore contains secrets and is stored as 0600. (Per-service env files were considered, but their quoting rules make arbitrary passwords unreliable.)
 - Setting the same variable of a service to two different values is an error.
-- A service with `network_mode` cannot join depap networks; linking it is an error.
+- A service with `network_mode` cannot join compost networks; linking it is an error.
 - The user's compose file is never modified.
 
-### 10.9 `depap app state [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>]`
+### 10.9 `compost app state [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>]`
 Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix` replaces the files' prefix), or takes `--app <name> --prefix <prefix>`, or an `<instance>` as `app list` shows it (`<name>-<prefix>`). Both parts may contain `-`, so `<instance>` is looked up in `state.yaml`; if it matches more than one instance, it is a usage error (exit 2) asking for `--app` and `--prefix`. Shows:
 - the instance's status from `state.yaml`
 - each compose service: running, exited or missing, and health
@@ -688,7 +688,7 @@ Reads `name` and `prefix` from the given files (defaults as in deploy; `--prefix
 
 Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it runs (and its healthcheck passes), or when it exited with code 0, like a migration. Exception: a service with `restart: always` or `unless-stopped` is meant to keep running. If it has exited, it was stopped and is not healthy, whatever its exit code. Status is read from the files deploy stored on the server, so the app's repository is not needed.
 
-### 10.10 `depap app remove [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
+### 10.10 `compost app remove [<instance> | -f … [--prefix <prefix>] | --app <name> --prefix <prefix>] [--volumes] [--purge <kind>]… [--yes]`
 The instance is selected as in `app state`. `--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
 
 1. Validate the `--purge` values. Preflight and lock. Ask for confirmation unless `--yes`. The prompt lists what will be purged.
@@ -696,7 +696,7 @@ The instance is selected as in `app state`. `--purge <kind>` is generic: it can 
 3. `C down --remove-orphans` (plus `-v` with `--volumes`).
 4. Delete `apps/<app>/<prefix>/` and the `state.yaml` entry.
 
-### 10.11 `depap connector list`
+### 10.11 `compost connector list`
 Tree built from `connectors/`, the state checks and `state.yaml`. Kinds come from the server config, and links from the link records of each shared app (`root-*` files describe the shared app itself and are skipped). Every link record starts with `app`, `prefix` and `entry`, so core reads records of any kind; the line itself comes from the kind's `describe_link`, the same one `app state` uses.
 ```
 database
@@ -708,41 +708,41 @@ ingress
    ├─ myapp-prod/ui-front  prod.example.com  /ui → myapp-prod-front-webapp:8080  app: deployed
    └─ myapp-staging/ui-front  staging.example.com  /ui → myapp-staging-front-webapp:8080  app: deployed
 ```
-A record whose instance no longer exists is shown as `app not deployed (leftover record …)`, not hidden. On a server depap has not deployed to, it prints a notice and exits 0.
+A record whose instance no longer exists is shown as `app not deployed (leftover record …)`, not hidden. On a server compost has not deployed to, it prints a notice and exits 0.
 
-### 10.12 `depap app list`
+### 10.12 `compost app list`
 One line per application instance in `state.yaml`, sorted by name and prefix: the instance, its deploy status, whether its compose project has a running container, and when the record was last updated.
 ```
 myapp-prod     deployed   running      2026-10-14T09:12:03Z
 myapp-staging  candidate  not running  2026-10-15T07:40:51Z
 ```
-Instances are listed from `state.yaml` only, so the app's repository is not needed. On a server depap has not deployed to, it prints a notice and exits 0.
+Instances are listed from `state.yaml` only, so the app's repository is not needed. On a server compost has not deployed to, it prints a notice and exits 0.
 
 ### 10.13 Backups: targets, formats, archive layout
 Backups are taken by `app backup` and `server backup` and restored by `app restore` and `server restore`.
 
-**Target** (`--target` for backups, `--source` for restores; default `backup.target` of the stored `depap-server.yaml`, else `local`):
+**Target** (`--target` for backups, `--source` for restores; default `backup.target` of the stored `compost-server.yaml`, else `local`):
 - `local`: items are streamed through the connector into a temporary folder on this machine, then packed there. Nothing is left on the server.
-- `server`: items are written next to the archive folder (`backup.server_path`, default `$DEPAP_SERVER_HOME/backups`) and packed with `tar -cz` on the server; no data crosses the network. `-o` is then a file name in that folder, and restores take a file name in it (or an absolute path).
+- `server`: items are written next to the archive folder (`backup.server_path`, default `$COMPOST_SERVER_HOME/backups`) and packed with `tar -cz` on the server; no data crosses the network. `-o` is then a file name in that folder, and restores take a file name in it (or an absolute path).
 - `s3`: accepted in config and flags, fails with exit 2 ("not implemented yet").
 
 **Format** (`--format`):
-- `depap` (default): `<name>.depap.tar.gz` with `manifest.yaml` and the configuration needed to restore. Only this format can be restored.
+- `compost` (default): `<name>.compost.tar.gz` with `manifest.yaml` and the configuration needed to restore. Only this format can be restored.
 - `raw`: the data alone, without manifest, configuration or secrets. One item is written as the plain file (e.g. a `.sql` dump or a `.caddy` site file); several are packed as `<name>.tar.gz`.
 
 Archives are created with mode `0600` and never overwrite an existing file. Default names: `<app>-<prefix>-<UTC yyyymmdd-hhmmss>`, `apps-<time>` (`--all`), `<server>-<time>` or `<server>-<shared app>-<time>`.
 
 ```
-manifest.yaml                                  # format: 1, scope: server|app|apps, depap_version, created_at,
+manifest.yaml                                  # format: 1, scope: server|app|apps, compost_version, created_at,
                                                # server, instances, shared, items [{path, size}]
-apps/<app>/<prefix>/depap.yaml                 # stored effective config (no secrets)
-apps/<app>/<prefix>/depap-env.yaml
+apps/<app>/<prefix>/compost.yaml                 # stored effective config (no secrets)
+apps/<app>/<prefix>/compost-env.yaml
 apps/<app>/<prefix>/secrets.yaml               # overlay stored with `secret deploy`, if any (secrets)
 apps/<app>/<prefix>/sources.tar                # the uploaded sources (only the compose file without attach_sources)
 apps/<app>/<prefix>/volumes/<volume>.tar
 apps/<app>/<prefix>/images.tar                 # docker save
 apps/<app>/<prefix>/links/<kind>/<entry>.*     # database: <entry>.sql; ingress: <entry>.yaml (record), <entry>.caddy
-server/depap-server.yaml                       # stored effective config
+server/compost-server.yaml                       # stored effective config
 server/connectors.tar                          # link records of the saved shared apps (secrets)
 server/shared/<kind>/<name>/…                  # postgres: dumpall.sql, postgres.env (secret); caddy: caddy.tar
 ```
@@ -752,16 +752,16 @@ Kinds take part through `Kind` hooks with no-op defaults: `backup_link`, `restor
 - postgres server: `pg_dumpall` plus `secrets/postgres.env`. The password file is put back before the first start, so the data folder gets the same root password as the dump. When loading, the error for the always existing `postgres` role is ignored; any other error fails the restore.
 - caddy link: the link record and site file (for review; deploy rebuilds routing). caddy server: `data/`, `config/` and `conf/`; restore puts back `data/` (certificates, which avoids ACME rate limits on a move) and `config/`.
 
-### 10.14 `depap app backup [<instance> | -f … | --app … --prefix … | --all] [--include …] [--link …]… [--format …] [-o …] [--target …] [--stop]`
+### 10.14 `compost app backup [<instance> | -f … | --app … --prefix … | --all] [--include …] [--link …]… [--format …] [-o …] [--target …] [--stop]`
 Parts (`--include`, comma-separated): `links`, `sources`, `volumes`, `images`. Default: `links,sources,volumes`. With `--link <entry>` or `--link <kind>:<entry>` (repeatable) only links are saved unless `--include` says otherwise, e.g. `--link main-db --format raw` writes a plain SQL dump. A `--link` that matches no link is a usage error.
 1. Preflight, lock (a backup during a deploy would be inconsistent).
-2. Per instance: the stored `depap.yaml` and `depap-env.yaml`, and the overlay stored with `secret deploy` if there is one (depap format only; depap says so, as the archive then holds secrets); `sources/` as tar; each link's `backup_link`; each `backup.volumes` volume through a `busybox` helper container (`tar -cf - -C /v .`; a volume that does not exist yet is skipped with a warning); with `images`, `docker save` of the images of `C config --images` that exist.
+2. Per instance: the stored `compost.yaml` and `compost-env.yaml`, and the overlay stored with `secret deploy` if there is one (compost format only; compost says so, as the archive then holds secrets); `sources/` as tar; each link's `backup_link`; each `backup.volumes` volume through a `busybox` helper container (`tar -cf - -C /v .`; a volume that does not exist yet is skipped with a warning); with `images`, `docker save` of the images of `C config --images` that exist.
 3. `--stop` stops the running services while volumes are copied and starts the same services again afterwards (also on errors and Ctrl-C).
 
-### 10.15 `depap app restore <archive> [--instance <instance> | --all] [--prefix <prefix>] [-f …] [--include …] [--link …]… [--source …] [--replace] [--yes]`
+### 10.15 `compost app restore <archive> [--instance <instance> | --all] [--prefix <prefix>] [-f …] [--include …] [--link …]… [--source …] [--replace] [--yes]`
 The archive must be an app archive (exit 2 otherwise). With several instances, `--instance` or `--all` is required. Parts default to everything in the archive (only links with `--link`).
 
-**Deployment restore** (sources are restored): the archived `depap.yaml` is the base config, `-f` overlays are merged over it and `--prefix` replaces its prefix. Stored secrets are merged after the base config as in `app deploy` (§7): the target instance's own stored overlay if the server has one, else the archived one, which is stored for the target (with its prefix) once the deploy succeeded. This makes a copy, e.g. `--prefix review -f review-domains.yaml` (domains must differ, see §6.3; database names follow the new prefix unless the config sets `db_name`). The instance is deployed as with `app deploy --apply` (§10.8), and after the `before_apply_application` hooks:
+**Deployment restore** (sources are restored): the archived `compost.yaml` is the base config, `-f` overlays are merged over it and `--prefix` replaces its prefix. Stored secrets are merged after the base config as in `app deploy` (§7): the target instance's own stored overlay if the server has one, else the archived one, which is stored for the target (with its prefix) once the deploy succeeded. This makes a copy, e.g. `--prefix review -f review-domains.yaml` (domains must differ, see §6.3; database names follow the new prefix unless the config sets `db_name`). The instance is deployed as with `app deploy --apply` (§10.8), and after the `before_apply_application` hooks:
 1. `restore_link` for each selected link (the database was just created by the link);
 2. `docker load` of the images; images built for the archived instance are tagged for the new one, and the build/pull step is skipped;
 3. `C create`, then each volume's contents are replaced;
@@ -771,10 +771,10 @@ The archive must be an app archive (exit 2 otherwise). With several instances, `
 
 In both modes, volumes and databases that already hold data are replaced only with `--replace` (exit 3 otherwise).
 
-### 10.16 `depap server backup [--shared <name>]… [--format …] [-o …] [--target …]`
-Saves the stored `depap-server.yaml`, the `connectors/` records and each shared app's `backup_shared` items (all shared apps, or those named). The archive holds secrets (root passwords, link credentials); depap says so after writing it.
+### 10.16 `compost server backup [--shared <name>]… [--format …] [-o …] [--target …]`
+Saves the stored `compost-server.yaml`, the `connectors/` records and each shared app's `backup_shared` items (all shared apps, or those named). The archive holds secrets (root passwords, link credentials); compost says so after writing it.
 
-### 10.17 `depap server restore <archive> [--shared <name>]… [--source …] [--yes]`
+### 10.17 `compost server restore <archive> [--shared <name>]… [--source …] [--yes]`
 Restores shared apps onto a server that does not have them yet (a new server, or one without these shared apps; exit 3 if one is deployed).
 1. Preflight (an uninitialized server is fine). Merge the selected shared apps from the archived config into the server's config (the archived `backup` settings are used when the server has none). Confirm unless `--yes`.
 2. Lock; put back the link records of the selected shared apps and their `restore_shared_files`.
@@ -783,41 +783,41 @@ Restores shared apps onto a server that does not have them yet (a new server, or
 
 Applications are restored afterwards with `app restore`. Their link records are back, so they keep their database credentials; when the server dump already holds their data, restore them without links: `--include sources,volumes,images`.
 
-### 10.18 `depap backup list [--source server]`
+### 10.18 `compost backup list [--source server]`
 Lists the files in the server's backup folder with their sizes. With the `local` target it is a usage error: local backups are files on this machine.
 
-### 10.19 `depap server generate [--list | --with <type>,… [--force]]`
+### 10.19 `compost server generate [--list | --with <type>,… [--force]]`
 Writes starter files to the current directory and needs neither `init` nor a server:
-- `depap-server.yaml`: the chosen shared apps, set up to run on this machine;
-- `depap-server.prod.yaml`: the overrides for a real server (`shared: {}` if none);
-- `.depap-server.secrets.example.yaml`: the secret keys of the chosen apps, with placeholder values.
+- `compost-server.yaml`: the chosen shared apps, set up to run on this machine;
+- `compost-server.prod.yaml`: the overrides for a real server (`shared: {}` if none);
+- `.compost-server.secrets.example.yaml`: the secret keys of the chosen apps, with placeholder values.
 
-`--list` prints the types as `<kind>/<type>`. `--with` takes types (`caddy`) or `<kind>/<type>`. Without `--with`, depap shows a numbered list and asks; without a terminal it fails with exit 2. Existing files are only overwritten with `--force`. Afterwards it prints the deploy commands and each type's notes (e.g. postgres: set `root_password`). The snippets and notes come from each type (`generate` in the type interface, §9.1).
+`--list` prints the types as `<kind>/<type>`. `--with` takes types (`caddy`) or `<kind>/<type>`. Without `--with`, compost shows a numbered list and asks; without a terminal it fails with exit 2. Existing files are only overwritten with `--force`. Afterwards it prints the deploy commands and each type's notes (e.g. postgres: set `root_password`). The snippets and notes come from each type (`generate` in the type interface, §9.1).
 
-### 10.20 `depap app generate [--compose-file <path>] [--name <name>] [--force]`
+### 10.20 `compost app generate [--compose-file <path>] [--name <name>] [--force]`
 Reads the compose file (default `docker-compose.yaml`) and writes:
-- `depap.yaml`: `name` (default: the current directory's name, made valid), the compose file if it is not the default, `build: true` if a service has a `build` section, one `app_services` entry per compose service, and commented-out ingress and database links;
-- `.depap.secrets.example.yaml`: `name`, `prefix: staging` and commented-out domains and database credentials with placeholders.
+- `compost.yaml`: `name` (default: the current directory's name, made valid), the compose file if it is not the default, `build: true` if a service has a `build` section, one `app_services` entry per compose service, and commented-out ingress and database links;
+- `.compost.secrets.example.yaml`: `name`, `prefix: staging` and commented-out domains and database credentials with placeholders.
 
 Compose services whose names are not valid names (§3.1) are listed in a comment instead. Existing files are only overwritten with `--force`. Needs neither `init` nor a server.
 
-### 10.21 `depap secret deploy <file> [--prefix <prefix>]` / `secret list` / `secret remove --app <name> [--prefix <prefix>]`
+### 10.21 `compost secret deploy <file> [--prefix <prefix>]` / `secret list` / `secret remove --app <name> [--prefix <prefix>]`
 `deploy` stores a deployment overlay (§6.2) that names its app (`name:`) at `secrets/apps/<app>/<prefix>.yaml` on the server, mode 0600. The prefix is `--prefix`, else the file's `prefix`, else `main`. The stored copy always has the `prefix`. The server must be initialized. Takes the lock.
 
-`app deploy` then needs only `depap.yaml` (§7). `app backup` saves the overlay and `app restore` puts it back (§10.14, §10.15). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
+`app deploy` then needs only `compost.yaml` (§7). `app backup` saves the overlay and `app restore` puts it back (§10.14, §10.15). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
 
-### 10.22 `depap config set <key> <value> [--for-server <name>]` / `config unset <key> [--for-server <name>]` / `config show`
+### 10.22 `compost config set <key> <value> [--for-server <name>]` / `config unset <key> [--for-server <name>]` / `config show`
 Edits `config.yaml` (§4.3), or with `--for-server` the server's entry in `servers.yaml`. The only key is `deploy.apply` (`true`/`false`). `server define --force` keeps a server's settings.
 
 ## 11. Security
 
-- Secret files on the server (`secrets/`, `connectors/database/**`, `compose/depap.override.yaml`) are created with mode `0600`. Their directories use `0700`.
-- Secrets never appear in `depap-server.yaml`, the effective `depap.yaml`, `state.yaml`, terminal output, `--dry-run` output (shown as `***`), or remote command lines.
+- Secret files on the server (`secrets/`, `connectors/database/**`, `compose/compost.override.yaml`) are created with mode `0600`. Their directories use `0700`.
+- Secrets never appear in `compost-server.yaml`, the effective `compost.yaml`, `state.yaml`, terminal output, `--dry-run` output (shown as `***`), or remote command lines.
 - Overlay files are never uploaded as sources.
 - Overlays stored with `secret deploy` are written with mode `0600` and never printed.
 - Backup archives are written with mode `0600`. App archives hold no secrets from config, but database dumps hold the app's data. Server archives hold the shared apps' secrets and link credentials.
 - Every instance linked to the same shared app shares that app's docker network. Network isolation between instances is a later feature.
-- depap only uses the SSH server's existing host key checking. It never disables it.
+- compost only uses the SSH server's existing host key checking. It never disables it.
 
 ## 12. Acceptance scenarios
 
@@ -825,32 +825,32 @@ These scenarios define "done" for 0.1. Each one also becomes an automated integr
 
 ### 12.1 Initialize
 ```
-$ depap init
-Created ~/.depap (manager key 0d6c2f5e-…)
-$ depap init
+$ compost init
+Created ~/.compost (manager key 0d6c2f5e-…)
+$ compost init
 Already initialized (manager key 0d6c2f5e-…)
 ```
 
 ### 12.2 Define a server and check its state
 ```
-$ depap server define prod1 --address 203.0.113.10 --user depapuser
-$ depap connect prod1
-$ depap server state
+$ compost server define prod1 --address 203.0.113.10 --user compostuser
+$ compost connect prod1
+$ compost server state
 prod1: UNINITIALIZED (no shared applications)
 ```
 Expected: exit 0; `servers.yaml` contains `prod1`; nothing is created on the server.
 
 ### 12.3 Caddy and Postgres on the server
-Working directory contains `depap-server.yaml` (§5.1) and `.depap-server.secrets.yaml` (§5.2).
+Working directory contains `compost-server.yaml` (§5.1) and `.compost-server.secrets.yaml` (§5.2).
 ```
-$ depap server deploy            # render + upload, state: candidate
-$ depap server deploy --apply    # start
-$ depap server state
+$ compost server deploy            # render + upload, state: candidate
+$ compost server deploy --apply    # start
+$ compost server state
 prod1: OK
   ingress   caddy-main  caddy 2      deployed  running
   database  postgres16  postgres 16  deployed  healthy
 ```
-Expected: the layout of §8 exists; networks `depap-ingress` and `depap-db-postgres16` exist; `curl -i http://203.0.113.10/` gets a response from Caddy. Running the command again changes nothing (containers are not recreated).
+Expected: the layout of §8 exists; networks `compost-ingress` and `compost-db-postgres16` exist; `curl -i http://203.0.113.10/` gets a response from Caddy. Running the command again changes nothing (containers are not recreated).
 
 ### 12.4 Static web application
 `docker-compose.yaml`:
@@ -859,7 +859,7 @@ services:
   front-webapp:
     build: .        # Dockerfile: FROM nginxinc/nginx-unprivileged:alpine (listens on 8080), COPY ui/ /usr/share/nginx/html/ui/
 ```
-`depap.yaml`:
+`compost.yaml`:
 ```yaml
 name: mystaticweb
 deployment:
@@ -876,7 +876,7 @@ app_services:
   - name: webapp
     service: front-webapp
 ```
-`.depap-staging.yaml`:
+`.compost-staging.yaml`:
 ```yaml
 prefix: staging
 services:
@@ -885,10 +885,10 @@ services:
       domains: ["staging.domain.tld", "www.staging.domain.tld"]
 ```
 ```
-$ depap app deploy --apply -f depap.yaml -f .depap-staging.yaml
+$ compost app deploy --apply -f compost.yaml -f .compost-staging.yaml
 ```
 Expected:
-- `apps/mystaticweb/staging/sources/` contains the repository, without `.depap-staging.yaml`.
+- `apps/mystaticweb/staging/sources/` contains the repository, without `.compost-staging.yaml`.
 - Compose project `mystaticweb-staging` is running.
 - `conf/sites/mystaticweb-staging-ui-front.caddy` exists and Caddy was reloaded, not restarted.
 - `curl --resolve staging.domain.tld:443:203.0.113.10 https://staging.domain.tld/ui/` returns the page.
@@ -897,7 +897,7 @@ Expected:
 ### 12.5 Web application with API and database
 `docker-compose.yaml` services: `front-webapp`, `backend-webapp` (listens on 5000), `backend-migration` (runs once, exits 0).
 
-`depap.yaml`:
+`compost.yaml`:
 ```yaml
 name: myapp
 deployment:
@@ -942,7 +942,7 @@ app_services:
       APP_MODE: production
       APP_FEATURE_USERS: "true"
 ```
-`.depap-staging.yaml`:
+`.compost-staging.yaml`:
 ```yaml
 prefix: staging
 services:
@@ -962,30 +962,30 @@ app_services:
       APP_MODE: staging
 ```
 ```
-$ depap app deploy --apply -f depap.yaml -f .depap-staging.yaml
+$ compost app deploy --apply -f compost.yaml -f .compost-staging.yaml
 ```
 Expected:
-- `depap-env.yaml` pins `database: postgres16 (16)` and `ingress: caddy-main (2)`.
+- `compost-env.yaml` pins `database: postgres16 (16)` and `ingress: caddy-main (2)`.
 - Role `myappuser` and database `mystagingappdb` exist in `postgres16`.
 - `docker compose -p myapp-staging exec backend-webapp env` shows `POSTGRES_HOST=postgres16`, `POSTGRES_DB=mystagingappdb`, `APP_MODE=staging`, `APP_FEATURE_USERS=true`.
 - `backend-migration` exited 0, and `app state` reports OK.
 - `https://staging.domain.tld/api/…` and `https://api.staging.domain.tld/…` both reach the backend.
-- `depap connector list` shows both ingress links and the database link.
+- `compost connector list` shows both ingress links and the database link.
 - Deploying again with no changes keeps the data and the password and does not recreate containers.
-- `depap app remove -f depap.yaml -f .depap-staging.yaml --yes` removes the site files and containers but keeps the database. Adding `--purge database` drops it.
+- `compost app remove -f compost.yaml -f .compost-staging.yaml --yes` removes the site files and containers but keeps the database. Adding `--purge database` drops it.
 
 ## 13. Changes compared to the draft
 
 | Draft | MVP | Why |
 |---|---|---|
-| `depap-`/`depapp-`, `.depap-server-deployment.yaml`, `.depap-deploy.yaml`, `.depap.yaml` | `depap-server.yaml`, `.depap-server.secrets.yaml`, `depap.yaml`, `.depap-<env>.yaml` | One naming scheme |
+| `compost-`, `.compost-server-deployment.yaml`, `.compost-deploy.yaml`, `.compost.yaml` | `compost-server.yaml`, `.compost-server.secrets.yaml`, `compost.yaml`, `.compost-<env>.yaml` | One naming scheme |
 | Mixed `kebab-case` keys, `app-services` | `snake_case` everywhere, `app_services` | Matches compose style, one rule |
 | `--server_name`, `--server_address` | `-s/--server`, positional name in `server define` | Common CLI style |
 | Ingress `links[].link` | `routes[].target` | "link" now only means the connection to a shared app |
 | Database `links[]` nested in an entry, `links: [...]` | One database entry = one link with `targets: [...]` | Draft examples always had one link; simpler schema |
 | `useprefix` | Defaults include the prefix; an explicit `db_name` is used as given | Removes a flag |
 | Prefix defaults to the app name | Prefix defaults to `main` | Project name `<app>-<prefix>` stays readable |
-| depap modifies the user's compose file | Generated override file | The user's file stays untouched; re-deploys are clean |
+| compost modifies the user's compose file | Generated override file | The user's file stays untouched; re-deploys are clean |
 | Variables in `compose/.env` | `env_file` per service | `.env` only feeds interpolation; it does not reach containers |
 | `compose/` holds a copy of the compose file | `sources/` holds the compose file, `compose/` holds generated files | Build contexts stay relative to the sources |
 | Service name `<prefix>-front-webapp` | Network alias `<app>-<prefix>-<service>` | Unique across apps, works with compose naming |
@@ -995,7 +995,7 @@ Expected:
 | `ssl-enabled`, `optional` without a definition | `ssl-enabled` dropped; `optional` defined (§6.1) | |
 | Flat hook list per shared app | core → kind → type layers with default (inherited) behavior | Generic logic written once per kind; types only add what differs |
 | `apply_application` | `prepare_application` + `before_apply_application` | Lets `--dry-run` and render-only deploys work |
-| `DEPAP_SERVER_HOME` pointer file (`depap_home.env`) | `server_home` in `servers.yaml` | Pointer file postponed |
+| `COMPOST_SERVER_HOME` pointer file (`compost_home.env`) | `server_home` in `servers.yaml` | Pointer file postponed |
 
 ## 14. Implementation notes
 
@@ -1007,9 +1007,9 @@ Rust is a good fit:
 
 Costs to manage: slower iteration than Go or Python, and async complexity. For 0.1:
 - **Synchronous code** (no tokio). All work is sequential process calls.
-- **No Docker or SSH libraries**: depap runs the system `ssh` binary and `docker compose` on the host. Users' `~/.ssh/config`, agents, jump hosts and known_hosts work with no extra code. A native SSH implementation (`russh`) can come later behind the same trait.
+- **No Docker or SSH libraries**: compost runs the system `ssh` binary and `docker compose` on the host. Users' `~/.ssh/config`, agents, jump hosts and known_hosts work with no extra code. A native SSH implementation (`russh`) can come later behind the same trait.
 
-Suggested crates: `clap` (derive), `serde` + a maintained YAML crate (`serde_yaml` is archived; use `serde_yaml_ng` or `serde-saphyr`), `minijinja` (templates), `include_dir` (embedded templates), `anyhow` + `thiserror`, `uuid`, `semver`, `sha2`, `tar`, `ignore` (`.depapignore` matching), `comfy-table` (output); tests: `insta`, `assert_cmd`, `tempfile`.
+Suggested crates: `clap` (derive), `serde` + a maintained YAML crate (`serde_yaml` is archived; use `serde_yaml_ng` or `serde-saphyr`), `minijinja` (templates), `include_dir` (embedded templates), `anyhow` + `thiserror`, `uuid`, `semver`, `sha2`, `tar`, `ignore` (`.compostignore` matching), `comfy-table` (output); tests: `insta`, `assert_cmd`, `tempfile`.
 
 ### 14.2 Module layout
 ```
@@ -1046,4 +1046,4 @@ src/
 | 0.4 | OIDC (Keycloak) link: realms, clients, users | New `oidc` kind (`Kind` + `OidcType`) |
 | 0.5 | Logs (OpenObserve) and metrics | Hooks that add to the compose override |
 | 0.6 | Rollback (keep N previous `apps/…` revisions), per-instance networks | Atomic directory swap |
-| 1.0 | `depap-server` mode: API + WebUI; satellites that register with a parent server | `Connector` trait gets a `satellite` implementation |
+| 1.0 | `compost-server` mode: API + WebUI; satellites that register with a parent server | `Connector` trait gets a `satellite` implementation |

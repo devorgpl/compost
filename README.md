@@ -1,28 +1,28 @@
-# depap
+# compost
 
 Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS) and Postgres.
 
-depap is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers. See [the MVP specification](docs/SPECIFICATION_MVP.md) and the [samples](samples/README.md).
+compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers. See [the MVP specification](docs/SPECIFICATION_MVP.md) and the [samples](samples/README.md).
 
 ## Install
 
-depap is a single portable binary with no dependencies. Linux builds are static and run on any distribution. It needs `ssh` on your machine; servers need Docker with compose v2.
+compost is a single portable binary with no dependencies. Linux builds are static and run on any distribution. It needs `ssh` on your machine; servers need Docker with compose v2.
 
 **With the install script:** detects your system, verifies the checksum, and installs to `~/.local/bin`.
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/depap/raw/branch/master/scripts/install.sh | sh
+curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
 ```
 
 For a specific release or another directory, pass options after `sh -s --`, e.g. `... | sh -s -- --version v0.1.0 --to /usr/local/bin`.
 
-**By hand:** download the archive for your system and `SHA256SUMS` from the [releases page](https://gitrepo.dev.org.pl/dev.org.pl/depap/releases), then:
+**By hand:** download the archive for your system and `SHA256SUMS` from the [releases page](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases), then:
 
 ```sh
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf depap-v0.1.0-x86_64-unknown-linux-musl.tar.gz
-install -m 755 depap-v0.1.0-x86_64-unknown-linux-musl/depap ~/.local/bin/depap
-depap --version
+tar -xzf compost-v0.1.0-x86_64-unknown-linux-musl.tar.gz
+install -m 755 compost-v0.1.0-x86_64-unknown-linux-musl/compost ~/.local/bin/compost
+compost --version
 ```
 
 | System | Target |
@@ -33,18 +33,18 @@ depap --version
 **macOS:** there are no prebuilt binaries yet, because linking for macOS needs Apple's SDK, which only a macOS machine has. Build from source with Rust instead:
 
 ```sh
-cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/depap --tag v0.1.0
+cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/compost --tag v0.1.0
 ```
 
-To update, install again. To uninstall, delete the binary and `~/.depap`.
+To update, install again. To uninstall, delete the binary and `~/.compost`.
 
 ## Quick start
 
 ```sh
-depap init
-depap server define prod --address 203.0.113.10   # SSH user depapuser by default
-depap connect prod
-depap server state
+compost init
+compost server define prod --address 203.0.113.10   # SSH user compostuser by default
+compost connect prod
+compost server state
 ```
 
 Then follow [samples/README.md](samples/README.md).
@@ -53,26 +53,26 @@ Then follow [samples/README.md](samples/README.md).
 
 ```sh
 # Infrastructure folder: shared apps of the server
-depap server generate --with caddy,postgres   # or without --with to choose interactively
-depap server deploy --apply                   # this machine; see the printed notes for prod
+compost server generate --with caddy,postgres   # or without --with to choose interactively
+compost server deploy --apply                   # this machine; see the printed notes for prod
 
 # Application folder: reads docker-compose.yaml
-depap app generate
-cp .depap.secrets.example.yaml .depap.secrets.yaml      # domains, passwords
-depap secret deploy .depap.secrets.yaml --prefix staging  # kept on the server
-depap app deploy --apply --prefix staging
+compost app generate
+cp .compost.secrets.example.yaml .compost.secrets.yaml      # domains, passwords
+compost secret deploy .compost.secrets.yaml --prefix staging  # kept on the server
+compost app deploy --apply --prefix staging
 
-depap config set deploy.apply true            # optional: deploy without --apply
+compost config set deploy.apply true            # optional: deploy without --apply
 ```
 
 ## Backup and restore
 
 ```sh
-depap app backup myapp-prod                       # links, sources and volumes → myapp-prod-<time>.depap.tar.gz
-depap app backup myapp-prod --link main-db --format raw   # just the SQL dump
-depap app restore myapp-prod-….depap.tar.gz --prefix review -f review.yaml   # a copy of the app
-depap server backup --target server               # shared apps, kept in the server's backups/ folder
-depap server restore prod-….depap.tar.gz          # on a new server, then `depap app restore`
+compost app backup myapp-prod                       # links, sources and volumes → myapp-prod-<time>.compost.tar.gz
+compost app backup myapp-prod --link main-db --format raw   # just the SQL dump
+compost app restore myapp-prod-….compost.tar.gz --prefix review -f review.yaml   # a copy of the app
+compost server backup --target server               # shared apps, kept in the server's backups/ folder
+compost server restore prod-….compost.tar.gz          # on a new server, then `compost app restore`
 ```
 
 See §10.13–§10.18 of [docs/SPECIFICATION_MVP.md](docs/SPECIFICATION_MVP.md).
@@ -84,7 +84,7 @@ Needs Rust, plus [just](https://just.systems), `rustfmt` and `clippy`.
 ```sh
 just            # list recipes
 just ci         # formatting, clippy, tests: run before committing
-just try init   # run depap with a throwaway home in target/
+just try init   # run compost with a throwaway home in target/
 ```
 
 ## Releases

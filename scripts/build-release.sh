@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build portable depap binaries for a release tag into dist/:
-#   dist/depap-<tag>-<target>.tar.gz   (depap binary + README.md)
+# Build portable compost binaries for a release tag into dist/:
+#   dist/compost-<tag>-<target>.tar.gz   (compost binary + README.md)
 #   dist/SHA256SUMS
 #
 #   scripts/build-release.sh v0.1.0
@@ -27,9 +27,9 @@ for target in $targets; do
     rustup target add "$target" >/dev/null
     cargo zigbuild --release --locked --target "$target"
 
-    name="depap-$tag-$target"
+    name="compost-$tag-$target"
     mkdir "dist/$name"
-    cp "target/$target/release/depap" README.md "dist/$name/"
+    cp "target/$target/release/compost" README.md "dist/$name/"
     tar -C dist -czf "dist/$name.tar.gz" "$name"
     rm -r "dist/$name"
 done

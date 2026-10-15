@@ -14,9 +14,9 @@ use crate::shared::{
 };
 
 /// Docker network shared by the ingress and every app service it routes to.
-pub const NETWORK: &str = "depap-ingress";
+pub const NETWORK: &str = "compost-ingress";
 
-/// An entry under `services.ingress` in depap.yaml (spec §6.1).
+/// An entry under `services.ingress` in compost.yaml (spec §6.1).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IngressLink {
@@ -147,7 +147,7 @@ pub fn resolve<'s>(link: &IngressLink, available: &'s [SharedAppConfig]) -> Resu
     match available.first() {
         Some(ingress) => Ok(Resolution::Use(ingress)),
         None => bail!(
-            "no ingress is running on the server; define one in depap-server.yaml and run `depap server deploy --apply`"
+            "no ingress is running on the server; define one in compost-server.yaml and run `compost server deploy --apply`"
         ),
     }
 }

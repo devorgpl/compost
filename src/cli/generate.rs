@@ -1,4 +1,4 @@
-//! `depap server generate` and `depap app generate`: starter configuration files.
+//! `compost server generate` and `compost app generate`: starter configuration files.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -14,11 +14,11 @@ use crate::config::check_name;
 use crate::error::config_err;
 use crate::shared::{self, Generated, Kind};
 
-const SERVER_FILE: &str = "depap-server.yaml";
-const SERVER_PROD_FILE: &str = "depap-server.prod.yaml";
-const SERVER_SECRETS_EXAMPLE: &str = ".depap-server.secrets.example.yaml";
-const APP_FILE: &str = "depap.yaml";
-const APP_SECRETS_EXAMPLE: &str = ".depap.secrets.example.yaml";
+const SERVER_FILE: &str = "compost-server.yaml";
+const SERVER_PROD_FILE: &str = "compost-server.prod.yaml";
+const SERVER_SECRETS_EXAMPLE: &str = ".compost-server.secrets.example.yaml";
+const APP_FILE: &str = "compost.yaml";
+const APP_SECRETS_EXAMPLE: &str = ".compost.secrets.example.yaml";
 const DEFAULT_COMPOSE_FILE: &str = "docker-compose.yaml";
 
 #[derive(Debug, Args)]
@@ -99,9 +99,9 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
         args.force,
     )?;
     out!();
-    out!("On this machine:   depap server deploy --apply");
+    out!("On this machine:   compost server deploy --apply");
     out!(
-        "On a real server:  depap server deploy --apply -f {SERVER_FILE},{SERVER_PROD_FILE},.depap-server.secrets.yaml"
+        "On a real server:  compost server deploy --apply -f {SERVER_FILE},{SERVER_PROD_FILE},.compost-server.secrets.yaml"
     );
     print_notes(&files.notes);
     Ok(())
@@ -183,23 +183,23 @@ fn server_files(selected: &[&Choice]) -> Result<ServerFiles> {
     Ok(ServerFiles {
         base: shared_file(
             "# Shared applications of the server (spec §5). This file runs them on this\n\
-             # machine; depap-server.prod.yaml holds what a real server changes.\n\
-             # Safe to commit: secrets go in .depap-server.secrets.yaml.\n\
+             # machine; compost-server.prod.yaml holds what a real server changes.\n\
+             # Safe to commit: secrets go in .compost-server.secrets.yaml.\n\
              #\n\
-             #   depap server deploy --apply\n",
+             #   compost server deploy --apply\n",
             &by_kind,
             |g| Some(g.local),
         ),
         prod: shared_file(
-            "# Overrides for a real server, merged by `name` over depap-server.yaml:\n\
+            "# Overrides for a real server, merged by `name` over compost-server.yaml:\n\
              #\n\
-             #   depap server deploy --apply -f depap-server.yaml,depap-server.prod.yaml,.depap-server.secrets.yaml\n",
+             #   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml\n",
             &by_kind,
             |g| g.prod,
         ),
         secrets: shared_file(
-            "# Secrets of the shared applications. Copy to .depap-server.secrets.yaml,\n\
-             # which `depap server deploy` loads next to depap-server.yaml. Never commit\n\
+            "# Secrets of the shared applications. Copy to .compost-server.secrets.yaml,\n\
+             # which `compost server deploy` loads next to compost-server.yaml. Never commit\n\
              # the copy. Merged by `name`, so only the secret keys are repeated here.\n",
             &by_kind,
             |g| g.secrets,
@@ -250,9 +250,9 @@ pub fn app(args: AppGenerateArgs) -> Result<()> {
     out!();
     out!("Next:");
     out!("  1. Uncomment the links the app uses in both files and fill in the ports.");
-    out!("  2. cp {APP_SECRETS_EXAMPLE} .depap.secrets.yaml   # set domains and passwords");
-    out!("  3. depap secret deploy .depap.secrets.yaml --prefix staging");
-    out!("  4. depap app deploy --apply --prefix staging");
+    out!("  2. cp {APP_SECRETS_EXAMPLE} .compost.secrets.yaml   # set domains and passwords");
+    out!("  3. compost secret deploy .compost.secrets.yaml --prefix staging");
+    out!("  4. compost app deploy --apply --prefix staging");
     Ok(())
 }
 
@@ -292,7 +292,7 @@ fn sanitize_name(raw: &str) -> String {
     name
 }
 
-/// `depap.yaml` and `.depap.secrets.example.yaml` for the compose services.
+/// `compost.yaml` and `.compost.secrets.example.yaml` for the compose services.
 fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, String) {
     let (services, skipped): (Vec<&str>, Vec<&str>) = compose
         .services
@@ -304,7 +304,7 @@ fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, 
 
     let mut config = format!(
         "# How {name} is deployed (spec §6.1). Safe to commit: domains and secrets\n\
-         # go in .depap.secrets.yaml (see {APP_SECRETS_EXAMPLE}).\n\
+         # go in .compost.secrets.yaml (see {APP_SECRETS_EXAMPLE}).\n\
          name: {name}\n\
          deployment:\n"
     );
@@ -320,7 +320,7 @@ fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, 
         config,
         "
 # Links to shared apps of the server. Uncomment the ones the app uses, together
-# with the matching entries in .depap.secrets.yaml.
+# with the matching entries in .compost.secrets.yaml.
 # services:
 #   ingress:
 #     - name: site
@@ -356,17 +356,17 @@ fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, 
     }
 
     let secrets = format!(
-        "# Values and secrets of one instance of {name}. Copy to .depap.secrets.yaml
+        "# Values and secrets of one instance of {name}. Copy to .compost.secrets.yaml
 # (never commit the copy) and store it on the server:
 #
-#   depap secret deploy .depap.secrets.yaml --prefix staging
-#   depap app deploy --apply --prefix staging
+#   compost secret deploy .compost.secrets.yaml --prefix staging
+#   compost app deploy --apply --prefix staging
 #
-# Files named .depap.*.yaml are never uploaded with the sources.
+# Files named .compost.*.yaml are never uploaded with the sources.
 name: {name}
 prefix: staging
 
-# Uncomment together with the matching entries in depap.yaml.
+# Uncomment together with the matching entries in compost.yaml.
 # services:
 #   ingress:
 #     - name: site
@@ -374,7 +374,7 @@ prefix: staging
 #   database:
 #     - name: main-db
 #       # Optional. Defaults: {db_name}_<prefix>_main_db for both, and a
-#       # generated password that depap keeps on the server.
+#       # generated password that compost keeps on the server.
 #       db_name: {db_name}_staging
 #       db_user: {db_name}
 #       db_password: change-me-to-a-long-random-string
@@ -503,9 +503,9 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "docker-compose.yaml", &compose_text);
-        let depap = write(dir.path(), "depap.yaml", &config);
+        let compost = write(dir.path(), "compost.yaml", &config);
         let overlay = write(dir.path(), "secrets.yaml", &secrets);
-        let loaded = AppConfig::load(&[depap, overlay], None).unwrap();
+        let loaded = AppConfig::load(&[compost, overlay], None).unwrap();
         assert_eq!(loaded.config.instance(), "my-app-staging");
         assert_eq!(loaded.config.app_services.len(), 3);
 
@@ -522,9 +522,9 @@ mod tests {
                 .collect();
             lines.join("\n")
         };
-        let depap = write(dir.path(), "depap.yaml", &uncomment(&config));
+        let compost = write(dir.path(), "compost.yaml", &uncomment(&config));
         let overlay = write(dir.path(), "secrets.yaml", &uncomment(&secrets));
-        let loaded = AppConfig::load(&[depap, overlay], None)
+        let loaded = AppConfig::load(&[compost, overlay], None)
             .unwrap_or_else(|e| panic!("{e:#}\n{}", uncomment(&config)));
         assert_eq!(loaded.config.links().count(), 2);
     }

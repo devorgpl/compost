@@ -1,4 +1,4 @@
-//! `state.yaml`: what depap deployed on the server (spec §8.2). Only depap writes it.
+//! `state.yaml`: what compost deployed on the server (spec §8.2). Only compost writes it.
 
 use std::fmt;
 use std::time::SystemTime;
@@ -20,7 +20,7 @@ pub struct StateFile {
     #[serde(default)]
     pub apps: Vec<AppRecord>,
     #[serde(default)]
-    pub depap_version: String,
+    pub compost_version: String,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -70,7 +70,7 @@ impl Default for StateFile {
             schema: SCHEMA,
             shared: Vec::new(),
             apps: Vec::new(),
-            depap_version: String::new(),
+            compost_version: String::new(),
             other: Mapping::new(),
         }
     }
@@ -86,7 +86,7 @@ impl StateFile {
     }
 
     pub fn save(&mut self, ctx: &ServerCtx) -> Result<()> {
-        self.depap_version = env!("CARGO_PKG_VERSION").to_string();
+        self.compost_version = env!("CARGO_PKG_VERSION").to_string();
         let text = serde_yaml_ng::to_string(self)?;
         ctx.connector
             .write_file(&ctx.path(STATE_FILE), text.as_bytes(), 0o644)

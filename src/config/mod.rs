@@ -1,4 +1,4 @@
-//! Configuration files: local depap home, server config, merging.
+//! Configuration files: local compost home, server config, merging.
 
 pub mod app;
 pub mod local;

@@ -1,4 +1,4 @@
-//! `depap app restore` (spec §10.14). An archive with sources is deployed
+//! `compost app restore` (spec §10.14). An archive with sources is deployed
 //! again, possibly as a copy under another prefix; its data is loaded before
 //! the services start. Without sources, data is loaded into an instance that
 //! is already deployed.
@@ -18,13 +18,13 @@ use crate::backup::{self, Archive, InstanceRef, ItemReader, Manifest, Scope};
 use crate::config::app::{AppConfig, ComposeFile};
 use crate::config::server::{BackupTarget, ServerConfig};
 use crate::connector::{Connector, shell_quote};
-use crate::error::{DepapError, config_err};
+use crate::error::{CompostError, config_err};
 use crate::server::lock::Lock;
 use crate::shared::{self, AppCtx, Kind, ServerCtx};
 
 /// Name of the archived config next to the unpacked sources. Files named
-/// `.depap-*.yaml` are never uploaded.
-const RESTORED_CONFIG: &str = ".depap-restore.yaml";
+/// `.compost-*.yaml` are never uploaded.
+const RESTORED_CONFIG: &str = ".compost-restore.yaml";
 
 pub struct Options {
     pub archive: String,
@@ -54,7 +54,7 @@ pub fn restore(
     let archive = open_archive(&ctx, &server_config, options.source, &options.archive)?;
     if archive.manifest.scope == Scope::Server {
         return Err(config_err(format!(
-            "{} is a server backup; restore it with `depap server restore`",
+            "{} is a server backup; restore it with `compost server restore`",
             options.archive
         )));
     }
@@ -181,7 +181,7 @@ fn restore_deployment(
     options: &Options,
 ) -> Result<()> {
     let work = tempfile::Builder::new()
-        .prefix("depap-restore-")
+        .prefix("compost-restore-")
         .tempdir()?;
     let sources = work.path().join("sources");
     let sources_tar = work.path().join("sources.tar");
@@ -396,7 +396,7 @@ impl RestorePlan<'_, '_> {
         for volume in self.volumes(app) {
             let name = app.docker_volume(compose, volume);
             if volumes::exists(ctx.connector, &name)? && !volumes::is_empty(ctx.connector, &name)? {
-                return Err(DepapError::ServerNotReady(format!(
+                return Err(CompostError::ServerNotReady(format!(
                     "volume {name} is not empty; add --replace to overwrite it"
                 ))
                 .into());

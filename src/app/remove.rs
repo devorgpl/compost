@@ -1,4 +1,4 @@
-//! `depap app remove` (spec §10.10).
+//! `compost app remove` (spec §10.10).
 
 use anyhow::{Context, Result};
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Create (or update) a Gitea release for a tag and upload files to it.
 #
-#   GITEA_URL=https://gitea.example.com GITEA_REPO=owner/depap GITEA_TOKEN=... \
+#   GITEA_URL=https://gitea.example.com GITEA_REPO=owner/compost GITEA_TOKEN=... \
 #     scripts/gitea-release.sh v0.1.0 notes.md dist/*.tar.gz dist/SHA256SUMS
 #
 # Running it again for the same tag updates the notes and replaces files with

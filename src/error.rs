@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum DepapError {
+pub enum CompostError {
     /// Invalid local configuration or command usage.
     #[error("{0}")]
     Config(String),
@@ -18,18 +18,18 @@ pub enum DepapError {
     Interrupted,
 }
 
-impl DepapError {
+impl CompostError {
     pub fn exit_code(&self) -> u8 {
         match self {
-            DepapError::Config(_) => 2,
-            DepapError::ServerNotReady(_) => 3,
-            DepapError::Unhealthy(_) => 4,
-            DepapError::Interrupted => 130,
+            CompostError::Config(_) => 2,
+            CompostError::ServerNotReady(_) => 3,
+            CompostError::Unhealthy(_) => 4,
+            CompostError::Interrupted => 130,
         }
     }
 }
 
 /// Shorthand for returning a configuration error (exit code 2).
 pub fn config_err(message: impl Into<String>) -> anyhow::Error {
-    DepapError::Config(message.into()).into()
+    CompostError::Config(message.into()).into()
 }

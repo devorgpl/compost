@@ -17,7 +17,7 @@ pub use crate::backup::{ItemReader, ItemWriter, Role};
 use crate::config::app::AppConfig;
 use crate::connector::Connector;
 
-/// One entry under `shared.<kind>` in depap-server.yaml.
+/// One entry under `shared.<kind>` in compost-server.yaml.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedAppConfig {
@@ -44,10 +44,10 @@ impl SharedAppConfig {
     }
 }
 
-/// Access to the server while rendering. Paths are relative to DEPAP_SERVER_HOME.
+/// Access to the server while rendering. Paths are relative to COMPOST_SERVER_HOME.
 pub struct ServerCtx<'a> {
     pub connector: &'a dyn Connector,
-    /// DEPAP_SERVER_HOME as an absolute path.
+    /// COMPOST_SERVER_HOME as an absolute path.
     pub home: String,
 }
 
@@ -109,7 +109,7 @@ pub struct Rendered {
 
 #[derive(Debug)]
 pub struct RenderedFile {
-    /// Relative to DEPAP_SERVER_HOME.
+    /// Relative to COMPOST_SERVER_HOME.
     pub path: String,
     pub contents: String,
     /// Unix permissions; 0o600 marks a file holding secrets.
@@ -142,11 +142,11 @@ impl RenderedFile {
 /// Snippets are YAML list items, indented for `shared.<kind>`.
 #[derive(Debug, Default)]
 pub struct Generated {
-    /// For depap-server.yaml: a setup that works on this machine.
+    /// For compost-server.yaml: a setup that works on this machine.
     pub local: &'static str,
-    /// For depap-server.prod.yaml: what a real server changes.
+    /// For compost-server.prod.yaml: what a real server changes.
     pub prod: Option<&'static str>,
-    /// For .depap-server.secrets.example.yaml.
+    /// For .compost-server.secrets.example.yaml.
     pub secrets: Option<&'static str>,
     /// Shown after the files are written.
     pub notes: &'static [&'static str],
@@ -181,7 +181,7 @@ pub trait Kind: Sync {
     /// Files, directories and networks for one shared app.
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
 
-    // --- Links from applications (entries under `services.<kind>` in depap.yaml).
+    // --- Links from applications (entries under `services.<kind>` in compost.yaml).
 
     /// Hooks run in ascending order on deploy (and reverse order on remove).
     fn apply_order(&self) -> i32;
@@ -297,9 +297,9 @@ pub fn connectors_dir(kind: &str, name: &str) -> String {
     format!("connectors/{kind}/{name}")
 }
 
-/// Docker compose project of a shared app, e.g. `depap-database-postgres16`.
+/// Docker compose project of a shared app, e.g. `compost-database-postgres16`.
 pub fn project_name(kind: &str, name: &str) -> String {
-    format!("depap-{kind}-{name}")
+    format!("compost-{kind}-{name}")
 }
 
 /// Render an embedded template. Using an undefined variable is an error.
@@ -314,7 +314,7 @@ pub fn render_template(source: &str, context: minijinja::Value) -> Result<String
             .context("invalid template syntax configuration")?,
     );
     env.render_str(source, context)
-        .context("template rendering failed (this is a bug in depap)")
+        .context("template rendering failed (this is a bug in compost)")
 }
 
 /// A new random password: 32 hexadecimal characters (122 random bits).

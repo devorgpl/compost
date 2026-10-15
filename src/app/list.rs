@@ -1,9 +1,9 @@
-//! `depap app list` (spec §10.12): the application instances in `state.yaml`.
+//! `compost app list` (spec §10.12): the application instances in `state.yaml`.
 
 use anyhow::Result;
 
 use crate::connector::Connector;
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::server::state::{self as server_state, Status, is_project_running};
 use crate::server::state_file::StateFile;
 use crate::shared::ServerCtx;
@@ -13,11 +13,11 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
     let home = match (report.status, report.home) {
         (Status::Ok | Status::Degraded, Some(home)) => home,
         (Status::Uninitialized, _) => {
-            out!("No applications: depap has not deployed anything on this server.");
+            out!("No applications: compost has not deployed anything on this server.");
             return Ok(());
         }
         (status, _) => {
-            return Err(DepapError::ServerNotReady(format!(
+            return Err(CompostError::ServerNotReady(format!(
                 "server is {status}: {}",
                 report.detail.unwrap_or_default()
             ))

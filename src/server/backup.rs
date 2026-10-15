@@ -1,4 +1,4 @@
-//! `depap server backup`, `server restore` and `backup list` (spec §10.15–§10.17).
+//! `compost server backup`, `server restore` and `backup list` (spec §10.15–§10.17).
 
 use std::path::PathBuf;
 
@@ -14,10 +14,10 @@ use crate::backup::{
 };
 use crate::config::server::{BackupTarget, ServerConfig};
 use crate::connector::{Connector, shell_quote};
-use crate::error::{DepapError, config_err};
+use crate::error::{CompostError, config_err};
 use crate::shared::{self, ServerCtx, SharedAppConfig, connectors_dir};
 
-const CONFIG_ITEM: &str = "server/depap-server.yaml";
+const CONFIG_ITEM: &str = "server/compost-server.yaml";
 const CONNECTORS_ITEM: &str = "server/connectors.tar";
 
 pub struct BackupOptions {
@@ -46,7 +46,7 @@ fn select<'c>(
     for name in names {
         if !config.shared_apps().any(|(_, app)| app.name == *name) {
             return Err(config_err(format!(
-                "--shared {name}: no such shared app (see `depap server state`)"
+                "--shared {name}: no such shared app (see `compost server state`)"
             )));
         }
     }
@@ -83,7 +83,7 @@ pub fn backup(
     out!("Backing up {server_name}:");
     let stored = ctx
         .read(super::SERVER_CONFIG_FILE)?
-        .context("the server has no depap-server.yaml")?;
+        .context("the server has no compost-server.yaml")?;
     backup.file(CONFIG_ITEM, Role::Meta, stored.as_bytes())?;
 
     // Link records hold the apps' database credentials: restored apps keep them.
@@ -141,7 +141,7 @@ pub fn restore(
     let home = match (report.status, report.home) {
         (Status::Ok | Status::Degraded | Status::Uninitialized, Some(home)) => home,
         (status, _) => {
-            return Err(DepapError::ServerNotReady(format!(
+            return Err(CompostError::ServerNotReady(format!(
                 "server is {status}: {}",
                 report.detail.unwrap_or_default()
             ))
@@ -153,12 +153,12 @@ pub fn restore(
     let archive = open_archive(&ctx, &current, options.source, &options.archive)?;
     if archive.manifest.scope != Scope::Server {
         return Err(config_err(format!(
-            "{} is an application backup; restore it with `depap app restore`",
+            "{} is an application backup; restore it with `compost app restore`",
             options.archive
         )));
     }
     let archived = ServerConfig::parse(&archive.read(CONFIG_ITEM)?)
-        .context("invalid depap-server.yaml in the archive")?;
+        .context("invalid compost-server.yaml in the archive")?;
     let selected: Vec<(String, SharedAppConfig)> = select(&archived, &options.shared)?
         .into_iter()
         .filter(|(kind, app)| {
@@ -180,7 +180,7 @@ pub fn restore(
     let state_file = StateFile::load(&ctx)?;
     for (kind, app) in &selected {
         if state_file.shared(kind, &app.name).is_some() {
-            return Err(DepapError::ServerNotReady(format!(
+            return Err(CompostError::ServerNotReady(format!(
                 "{kind} {} is already deployed on this server; restore onto a server without it, or choose others with --shared",
                 app.name
             ))
@@ -236,7 +236,7 @@ pub fn restore(
         kind.restore_shared_data(&ctx, app, &reader)
             .with_context(|| format!("{kind_name} {}", app.name))?;
     }
-    out!("Restored. Restore applications with `depap app restore`.");
+    out!("Restored. Restore applications with `compost app restore`.");
     Ok(())
 }
 
@@ -289,7 +289,7 @@ fn restore_records(
     archive.feed(CONNECTORS_ITEM, b"", &script)
 }
 
-/// `depap backup list`: archives in the server's backup folder.
+/// `compost backup list`: archives in the server's backup folder.
 pub fn list(
     connector: &dyn Connector,
     server_home: &str,

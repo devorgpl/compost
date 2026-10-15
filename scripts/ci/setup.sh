@@ -1,5 +1,5 @@
 #!/bin/sh
-# Prepare a Debian/Ubuntu CI runner for building depap.
+# Prepare a Debian/Ubuntu CI runner for building compost.
 #
 #   scripts/ci/setup.sh            Rust (from rust-toolchain.toml), just, test tools
 #   scripts/ci/setup.sh release    also zig and cargo-zigbuild for portable builds

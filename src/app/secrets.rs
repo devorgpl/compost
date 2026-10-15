@@ -1,5 +1,5 @@
-//! Secrets of application instances kept on the server (`depap secret …`): a
-//! deployment overlay per instance, which `app deploy` merges after depap.yaml.
+//! Secrets of application instances kept on the server (`compost secret …`): a
+//! deployment overlay per instance, which `app deploy` merges after compost.yaml.
 
 use anyhow::{Context, Result};
 use serde_yaml_ng::Value;
@@ -12,10 +12,10 @@ use crate::error::config_err;
 use crate::server::lock::Lock;
 use crate::shared::ServerCtx;
 
-/// Relative to DEPAP_SERVER_HOME. Outside `apps/`, so `app remove` keeps them.
+/// Relative to COMPOST_SERVER_HOME. Outside `apps/`, so `app remove` keeps them.
 const DIR: &str = "secrets/apps";
 
-/// The stored overlay in an app archive, next to the instance's `depap.yaml`.
+/// The stored overlay in an app archive, next to the instance's `compost.yaml`.
 pub const ARCHIVE_ITEM: &str = "secrets.yaml";
 
 /// `secrets/apps/<app>/<prefix>.yaml`
@@ -64,7 +64,7 @@ pub fn prepare(text: &str, prefix: Option<&str>) -> Result<Overlay> {
     })
 }
 
-/// `depap secret deploy`
+/// `compost secret deploy`
 pub fn deploy(
     connector: &dyn Connector,
     server_home: &str,
@@ -123,7 +123,7 @@ pub fn read_in(ctx: &ServerCtx, name: &str, prefix: &str) -> Result<Option<(Stri
     Ok(Some((path, value)))
 }
 
-/// `depap secret list`
+/// `compost secret list`
 pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let mut found = Vec::new();
@@ -135,7 +135,7 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
         }
     }
     if found.is_empty() {
-        out!("No stored secrets. Add some with `depap secret deploy`.");
+        out!("No stored secrets. Add some with `compost secret deploy`.");
         return Ok(());
     }
     found.sort();
@@ -147,7 +147,7 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
     Ok(())
 }
 
-/// `depap secret remove`
+/// `compost secret remove`
 pub fn remove(
     connector: &dyn Connector,
     server_home: &str,
@@ -160,7 +160,7 @@ pub fn remove(
     let relative = path(name, prefix);
     if ctx.read(&relative)?.is_none() {
         return Err(config_err(format!(
-            "no stored secrets for {name}-{prefix} (see `depap secret list`)"
+            "no stored secrets for {name}-{prefix} (see `compost secret list`)"
         )));
     }
     let _lock = Lock::acquire(connector, &ctx.home, force_unlock)?;

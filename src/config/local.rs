@@ -1,4 +1,4 @@
-//! Files in DEPAP_HOME on the operator's machine (spec §4).
+//! Files in COMPOST_HOME on the operator's machine (spec §4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::config_err;
 
-const MANAGER_FILE: &str = "depap-manager.yaml";
+const MANAGER_FILE: &str = "compost-manager.yaml";
 const SERVERS_FILE: &str = "servers.yaml";
 const CONTEXT_FILE: &str = "current_context";
 const SETTINGS_FILE: &str = "config.yaml";
 const SSH_CONTROL_DIR: &str = "ssh";
-pub const DEFAULT_SSH_USER: &str = "depapuser";
+pub const DEFAULT_SSH_USER: &str = "compostuser";
 pub const DEFAULT_SSH_PORT: u16 = 22;
-const DEFAULT_SERVER_HOME: &str = "~/.depap-server";
+const DEFAULT_SERVER_HOME: &str = "~/.compost-server";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,7 +43,7 @@ pub struct ServerEntry {
     pub deploy: DeploySettings,
 }
 
-/// Preferences of the operator, `config.yaml` in DEPAP_HOME.
+/// Preferences of the operator, `config.yaml` in COMPOST_HOME.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
@@ -71,7 +71,7 @@ impl ServerEntry {
     }
 }
 
-/// How depap reaches a server. `type: ssh` or `type: local` in servers.yaml.
+/// How compost reaches a server. `type: ssh` or `type: local` in servers.yaml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ConnectorConfig {
@@ -88,7 +88,7 @@ pub enum ConnectorConfig {
 }
 
 impl ConnectorConfig {
-    /// Short human-readable form, e.g. `ssh depapuser@10.0.0.1:22`.
+    /// Short human-readable form, e.g. `ssh compostuser@10.0.0.1:22`.
     pub fn describe(&self) -> String {
         match self {
             ConnectorConfig::Ssh {
@@ -109,18 +109,18 @@ impl ConnectorConfig {
     }
 }
 
-/// The local depap directory, `~/.depap` unless `DEPAP_HOME` is set.
-pub struct DepapHome {
+/// The local compost directory, `~/.compost` unless `COMPOST_HOME` is set.
+pub struct CompostHome {
     root: PathBuf,
 }
 
-impl DepapHome {
+impl CompostHome {
     pub fn locate() -> Result<Self> {
-        let root = match std::env::var_os("DEPAP_HOME") {
+        let root = match std::env::var_os("COMPOST_HOME") {
             Some(path) => PathBuf::from(path),
             None => dirs::home_dir()
-                .context("cannot determine the home directory; set DEPAP_HOME")?
-                .join(".depap"),
+                .context("cannot determine the home directory; set COMPOST_HOME")?
+                .join(".compost"),
         };
         Ok(Self { root })
     }
@@ -133,10 +133,10 @@ impl DepapHome {
         read_yaml_if_exists(&self.root.join(MANAGER_FILE))
     }
 
-    /// The manager, or an error telling the user to run `depap init`.
+    /// The manager, or an error telling the user to run `compost init`.
     pub fn require_manager(&self) -> Result<Manager> {
         self.manager()?
-            .ok_or_else(|| config_err("depap is not initialized; run `depap init` first"))
+            .ok_or_else(|| config_err("compost is not initialized; run `compost init` first"))
     }
 
     pub fn save_manager(&self, manager: &Manager) -> Result<()> {
@@ -163,7 +163,7 @@ impl DepapHome {
             .find(|s| s.name == name)
             .ok_or_else(|| {
                 config_err(format!(
-                    "unknown server `{name}`; see `depap server list` or add it with `depap server define`"
+                    "unknown server `{name}`; see `compost server list` or add it with `compost server define`"
                 ))
             })
     }
@@ -218,12 +218,12 @@ impl DepapHome {
         .with_context(|| format!("cannot update {}", path.display()))
     }
 
-    /// Target server: `--server`/`DEPAP_SERVER` (handled by clap), then current context (spec §4.5).
+    /// Target server: `--server`/`COMPOST_SERVER` (handled by clap), then current context (spec §4.5).
     pub fn resolve_server(&self, flag: Option<&str>) -> Result<ServerEntry> {
         let name = match flag {
             Some(name) => name.to_string(),
             None => self.current_context()?.ok_or_else(|| {
-                config_err("no server selected; use --server, DEPAP_SERVER or `depap connect`")
+                config_err("no server selected; use --server, COMPOST_SERVER or `compost connect`")
             })?,
         };
         self.find_server(&name)

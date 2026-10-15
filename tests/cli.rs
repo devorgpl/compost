@@ -1,4 +1,4 @@
-//! End-to-end tests of the depap binary. Each test uses its own DEPAP_HOME.
+//! End-to-end tests of the compost binary. Each test uses its own COMPOST_HOME.
 
 use std::fs;
 
@@ -20,11 +20,11 @@ impl Env {
         }
     }
 
-    fn depap(&self, args: &[&str]) -> assert_cmd::assert::Assert {
-        Command::cargo_bin("depap")
+    fn compost(&self, args: &[&str]) -> assert_cmd::assert::Assert {
+        Command::cargo_bin("compost")
             .unwrap()
-            .env("DEPAP_HOME", self.home.path())
-            .env_remove("DEPAP_SERVER")
+            .env("COMPOST_HOME", self.home.path())
+            .env_remove("COMPOST_SERVER")
             .current_dir(self.work.path())
             .args(args)
             .assert()
@@ -32,8 +32,8 @@ impl Env {
 
     fn initialized_with_server() -> Self {
         let env = Self::new();
-        env.depap(&["init"]).success();
-        env.depap(&["server", "define", "prod1", "--address", "10.0.0.1"])
+        env.compost(&["init"]).success();
+        env.compost(&["server", "define", "prod1", "--address", "10.0.0.1"])
             .success();
         env
     }
@@ -42,8 +42,8 @@ impl Env {
 #[test]
 fn init_is_idempotent() {
     let env = Env::new();
-    env.depap(&["init"]).success().stdout(contains("Created"));
-    env.depap(&["init"])
+    env.compost(&["init"]).success().stdout(contains("Created"));
+    env.compost(&["init"])
         .success()
         .stdout(contains("Already initialized"));
 }
@@ -53,24 +53,24 @@ fn init_with_existing_key() {
     let key = "0B9A2E5C-7F1D-4C3B-9A8E-6D5F4C3B2A10";
     let normalized = "0b9a2e5c-7f1d-4c3b-9a8e-6d5f4c3b2a10";
     let env = Env::new();
-    env.depap(&["init", "--key", "not-a-key"])
+    env.compost(&["init", "--key", "not-a-key"])
         .code(2)
         .stderr(contains("is not a manager key"));
-    env.depap(&["init", "--key", key])
+    env.compost(&["init", "--key", key])
         .success()
         .stdout(contains(format!("manager key {normalized}")));
-    env.depap(&["init", "--key", normalized])
+    env.compost(&["init", "--key", normalized])
         .success()
         .stdout(contains("Already initialized"));
 
     let other = "11111111-2222-4333-8444-555555555555";
-    env.depap(&["init", "--key", other])
+    env.compost(&["init", "--key", other])
         .code(2)
         .stderr(contains("add --force"));
-    env.depap(&["init", "--key", other, "--force"])
+    env.compost(&["init", "--key", other, "--force"])
         .success()
         .stdout(contains(format!("manager key {other}")));
-    env.depap(&["init"]).success().stdout(contains(format!(
+    env.compost(&["init"]).success().stdout(contains(format!(
         "Already initialized (manager key {other})"
     )));
 }
@@ -78,29 +78,30 @@ fn init_with_existing_key() {
 #[test]
 fn commands_require_init() {
     let env = Env::new();
-    env.depap(&["server", "list"])
+    env.compost(&["server", "list"])
         .code(2)
-        .stderr(contains("run `depap init`"));
+        .stderr(contains("run `compost init`"));
 }
 
 #[test]
 fn define_list_connect_disconnect() {
     let env = Env::initialized_with_server();
-    env.depap(&["server", "define", "dev", "--local"]).success();
-    env.depap(&["server", "define", "prod1", "--address", "10.0.0.2"])
+    env.compost(&["server", "define", "dev", "--local"])
+        .success();
+    env.compost(&["server", "define", "prod1", "--address", "10.0.0.2"])
         .code(2)
         .stderr(contains("--force"));
 
-    env.depap(&["connect", "prod1"]).success();
-    env.depap(&["server", "list"])
+    env.compost(&["connect", "prod1"]).success();
+    env.compost(&["server", "list"])
         .success()
-        .stdout(contains("* prod1  ssh depapuser@10.0.0.1:22"))
+        .stdout(contains("* prod1  ssh compostuser@10.0.0.1:22"))
         .stdout(contains("  dev    local"));
 
-    env.depap(&["disconnect"])
+    env.compost(&["disconnect"])
         .success()
         .stdout(contains("Disconnected from prod1"));
-    env.depap(&["connect", "nope"])
+    env.compost(&["connect", "nope"])
         .code(2)
         .stderr(contains("unknown server `nope`"));
 }
@@ -133,7 +134,7 @@ shared:
     - {name: postgres16, type: postgres, version: 16}
 ";
 
-/// A local server whose DEPAP_SERVER_HOME is a temp dir, with fake docker on PATH.
+/// A local server whose COMPOST_SERVER_HOME is a temp dir, with fake docker on PATH.
 struct LocalServer {
     env: Env,
     server_home: std::path::PathBuf,
@@ -152,8 +153,8 @@ impl LocalServer {
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
         let server_home = env.work.path().join("server-home");
-        env.depap(&["init"]).success();
-        env.depap(&[
+        env.compost(&["init"]).success();
+        env.compost(&[
             "server",
             "define",
             "dev",
@@ -170,7 +171,7 @@ impl LocalServer {
     }
 
     fn manager_key(&self) -> String {
-        let text = fs::read_to_string(self.env.home.path().join("depap-manager.yaml")).unwrap();
+        let text = fs::read_to_string(self.env.home.path().join("compost-manager.yaml")).unwrap();
         text.trim()
             .trim_start_matches("manager_key:")
             .trim()
@@ -201,14 +202,14 @@ impl LocalServer {
         log
     }
 
-    /// Run `depap -s dev <args>` in the work directory.
+    /// Run `compost -s dev <args>` in the work directory.
     fn run(&self, args: &[&str], extra_env: &[(&str, &str)]) -> assert_cmd::assert::Assert {
-        let mut command = Command::cargo_bin("depap").unwrap();
+        let mut command = Command::cargo_bin("compost").unwrap();
         command
-            .env("DEPAP_HOME", self.env.home.path())
+            .env("COMPOST_HOME", self.env.home.path())
             .env("PATH", &self.path)
             .env("FAKE_DOCKER_LOG", self.env.work.path().join("docker.log"))
-            .env_remove("DEPAP_SERVER")
+            .env_remove("COMPOST_SERVER")
             .current_dir(self.env.work.path())
             .args(["-s", "dev"])
             .args(args);
@@ -226,9 +227,9 @@ impl LocalServer {
 #[test]
 fn server_deploy_validates_merged_files() {
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server.write_work_file(
-        ".depap-server.secrets.yaml",
+        ".compost-server.secrets.yaml",
         "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: ''}\n",
     );
 
@@ -244,12 +245,12 @@ fn server_deploy_validates_merged_files() {
 #[test]
 fn server_deploy_dry_run_changes_nothing() {
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server
         .run(&["server", "deploy", "--dry-run", "--apply"], &[])
         .success()
         .stdout(contains("Dry run"))
-        .stdout(contains("networks: depap-db-postgres16, depap-ingress"))
+        .stdout(contains("networks: compost-db-postgres16, compost-ingress"))
         .stdout(contains(
             "shared/database/postgres16/secrets/postgres.env  600  (secret)",
         ));
@@ -261,9 +262,9 @@ fn server_deploy_then_apply() {
     use std::os::unix::fs::PermissionsExt;
 
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server.write_work_file(
-        ".depap-server.secrets.yaml",
+        ".compost-server.secrets.yaml",
         "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: s3cret}\n",
     );
 
@@ -275,9 +276,12 @@ fn server_deploy_then_apply() {
         .stdout(contains("database  postgres16       updated"))
         .stdout(contains("Run again with --apply"));
     let log = server.take_docker_log();
-    assert!(log.contains("docker network create depap-ingress"), "{log}");
     assert!(
-        log.contains("docker network create depap-db-postgres16"),
+        log.contains("docker network create compost-ingress"),
+        "{log}"
+    );
+    assert!(
+        log.contains("docker network create compost-db-postgres16"),
         "{log}"
     );
     assert!(!log.contains(" up -d"), "{log}");
@@ -301,7 +305,7 @@ fn server_deploy_then_apply() {
         fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
         0o600
     );
-    let stored_config = server.read_server_file("depap-server.yaml");
+    let stored_config = server.read_server_file("compost-server.yaml");
     assert!(!stored_config.contains("s3cret"), "{stored_config}");
     assert!(
         server
@@ -320,7 +324,7 @@ fn server_deploy_then_apply() {
     let log = server.take_docker_log();
     assert!(
         log.contains(
-            "docker compose -p depap-database-postgres16 up -d --quiet-pull --force-recreate"
+            "docker compose -p compost-database-postgres16 up -d --quiet-pull --force-recreate"
         ),
         "{log}"
     );
@@ -342,7 +346,7 @@ fn server_deploy_then_apply() {
 #[test]
 fn server_deploy_respects_lock() {
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server.run(&["server", "deploy"], &[]).success();
     server.write_server_file("lock/holder", "host=other pid=1\n");
 
@@ -350,7 +354,7 @@ fn server_deploy_respects_lock() {
         .run(&["server", "deploy"], &[])
         .code(3)
         .stderr(contains(
-            "locked by another depap command (host=other pid=1)",
+            "locked by another compost command (host=other pid=1)",
         ));
     server
         .run(&["server", "deploy", "--force-unlock"], &[])
@@ -389,7 +393,7 @@ fn state_reports_shared_apps() {
     let server = LocalServer::new();
     server.write_server_file("manager_key", &server.manager_key());
     server.write_server_file(
-        "depap-server.yaml",
+        "compost-server.yaml",
         "shared:\n  database:\n    - {name: postgres16, type: postgres, version: 16}\n",
     );
 
@@ -408,8 +412,8 @@ fn state_reports_shared_apps() {
 #[test]
 fn state_of_unreachable_ssh_server() {
     let env = Env::new();
-    env.depap(&["init"]).success();
-    env.depap(&[
+    env.compost(&["init"]).success();
+    env.compost(&[
         "server",
         "define",
         "gone",
@@ -419,7 +423,7 @@ fn state_of_unreachable_ssh_server() {
         "1",
     ])
     .success();
-    env.depap(&["-s", "gone", "server", "state"])
+    env.compost(&["-s", "gone", "server", "state"])
         .code(3)
         .stderr(contains("UNREACHABLE"))
         .stderr(contains("cannot connect"));
@@ -428,7 +432,7 @@ fn state_of_unreachable_ssh_server() {
 #[test]
 fn server_must_be_selected() {
     let env = Env::initialized_with_server();
-    env.depap(&["server", "state"])
+    env.compost(&["server", "state"])
         .code(2)
         .stderr(contains("no server selected"));
 }
@@ -480,7 +484,7 @@ app_services:
 /// A server with caddy and postgres deployed and running.
 fn server_with_shared_apps() -> LocalServer {
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server
         .run(
             &["server", "deploy", "--apply"],
@@ -494,39 +498,39 @@ fn server_with_shared_apps() -> LocalServer {
 #[test]
 fn app_deploy_needs_deployed_shared_apps() {
     let server = LocalServer::new();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     server
         .run(
             &[
                 "app",
                 "deploy",
                 "-f",
-                "app/depap.yaml,app/.depap-staging.yaml",
+                "app/compost.yaml,app/.compost-staging.yaml",
             ],
             &[],
         )
         .code(3)
-        .stderr(contains("run `depap server deploy --apply` first"));
+        .stderr(contains("run `compost server deploy --apply` first"));
 }
 
 #[test]
 fn app_deploy_end_to_end() {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: ., networks: [internal]}}\nnetworks: {internal: {}}\n",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     server.write_work_file("app/Dockerfile", "FROM scratch\n");
     server.write_work_file("app/.git/HEAD", "ref\n");
     let running = [("FAKE_DOCKER_RUNNING", "1")];
-    let files = "app/depap.yaml,app/.depap-staging.yaml";
+    let files = "app/compost.yaml,app/.compost-staging.yaml";
 
     server
         .run(&["app", "deploy", "--apply", "-f", files], &running)
@@ -548,11 +552,11 @@ fn app_deploy_end_to_end() {
     assert_eq!(uploaded, ["Dockerfile", "docker-compose.yaml"]);
 
     // Compose override: networks, aliases and escaped variables.
-    let override_yaml = fs::read_to_string(instance.join("compose/depap.override.yaml")).unwrap();
+    let override_yaml = fs::read_to_string(instance.join("compose/compost.override.yaml")).unwrap();
     for expected in [
         "aliases:\n        - myapp-staging-front-webapp",
         "default: {}",
-        "depap-db-postgres16: {}",
+        "compost-db-postgres16: {}",
         "APP_MODE: staging",
         "PRICE: $$5",
         "DATABASE_PASSWORD: pa$$$$word",
@@ -574,10 +578,10 @@ fn app_deploy_end_to_end() {
         "{override_yaml}"
     );
 
-    let effective = fs::read_to_string(instance.join("depap.yaml")).unwrap();
+    let effective = fs::read_to_string(instance.join("compost.yaml")).unwrap();
     assert!(!effective.contains("pa$$word"), "{effective}");
     assert!(
-        fs::read_to_string(instance.join("depap-env.yaml"))
+        fs::read_to_string(instance.join("compost-env.yaml"))
             .unwrap()
             .contains("instance: postgres16")
     );
@@ -591,7 +595,7 @@ fn app_deploy_end_to_end() {
     let created =
         position("ALTER ROLE \"myapp_staging_system_data\" WITH LOGIN PASSWORD 'pa$$word'");
     let built = position(
-        "--project-directory sources -f sources/docker-compose.yaml -f compose/depap.override.yaml build -q",
+        "--project-directory sources -f sources/docker-compose.yaml -f compose/compost.override.yaml build -q",
     );
     let started = position("up -d --remove-orphans");
     let reloaded = position("exec -T caddy caddy reload");
@@ -624,14 +628,14 @@ fn app_deploy_end_to_end() {
 #[test]
 fn app_deploy_rejects_domain_used_by_another_instance() {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     server.write_work_file(
-        "app/.depap-other.yaml",
+        "app/.compost-other.yaml",
         &APP_OVERLAY
             .replace("staging", "other")
             .replace("other.example", "staging.example"),
@@ -644,7 +648,7 @@ fn app_deploy_rejects_domain_used_by_another_instance() {
                 "app",
                 "deploy",
                 "-f",
-                "app/depap.yaml,app/.depap-staging.yaml",
+                "app/compost.yaml,app/.compost-staging.yaml",
             ],
             &running,
         )
@@ -655,7 +659,7 @@ fn app_deploy_rejects_domain_used_by_another_instance() {
                 "app",
                 "deploy",
                 "-f",
-                "app/depap.yaml,app/.depap-other.yaml",
+                "app/compost.yaml,app/.compost-other.yaml",
             ],
             &running,
         )
@@ -668,12 +672,12 @@ fn app_deploy_rejects_domain_used_by_another_instance() {
 /// A server with myapp-staging deployed; returns the server.
 fn server_with_app() -> LocalServer {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     server
         .run(
             &[
@@ -681,7 +685,7 @@ fn server_with_app() -> LocalServer {
                 "deploy",
                 "--apply",
                 "-f",
-                "app/depap.yaml,app/.depap-staging.yaml",
+                "app/compost.yaml,app/.compost-staging.yaml",
             ],
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
@@ -709,14 +713,14 @@ fn app_state_by_name_or_files() {
                 "app",
                 "state",
                 "-f",
-                "app/depap.yaml,app/.depap-staging.yaml",
+                "app/compost.yaml,app/.compost-staging.yaml",
             ],
             &running,
         )
         .success();
     // Without the overlay the prefix is `main`, which is not deployed.
     server
-        .run(&["app", "state", "-f", "app/depap.yaml"], &running)
+        .run(&["app", "state", "-f", "app/compost.yaml"], &running)
         .code(3)
         .stderr(contains("myapp-main is not deployed"));
     // `--prefix` replaces the prefix from the files.
@@ -726,7 +730,7 @@ fn app_state_by_name_or_files() {
                 "app",
                 "state",
                 "-f",
-                "app/depap.yaml",
+                "app/compost.yaml",
                 "--prefix",
                 "staging",
             ],
@@ -891,12 +895,12 @@ fn app_remove_purge_database() {
 #[test]
 fn app_state_reports_stopped_service_as_unhealthy() {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: ., restart: unless-stopped}, backend-webapp: {build: .}}",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     server
         .run(
@@ -905,7 +909,7 @@ fn app_state_reports_stopped_service_as_unhealthy() {
                 "deploy",
                 "--apply",
                 "-f",
-                "app/depap.yaml,app/.depap-staging.yaml",
+                "app/compost.yaml,app/.compost-staging.yaml",
             ],
             &running,
         )
@@ -961,7 +965,7 @@ fn app_list_shows_deployed_instances() {
     server
         .run(&["app", "list"], &[])
         .success()
-        .stdout(contains("depap has not deployed anything"));
+        .stdout(contains("compost has not deployed anything"));
 
     let server = server_with_app();
     server
@@ -993,7 +997,7 @@ fn connector_list_on_fresh_server() {
     server
         .run(&["connector", "list"], &[])
         .success()
-        .stdout(contains("depap has not deployed anything"));
+        .stdout(contains("compost has not deployed anything"));
 }
 
 #[test]
@@ -1003,14 +1007,14 @@ fn ctrl_c_stops_and_releases_the_lock() {
     use std::time::{Duration, Instant};
 
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     let log = server.env.work.path().join("docker.log");
-    let child = std::process::Command::new(env!("CARGO_BIN_EXE_depap"))
-        .env("DEPAP_HOME", server.env.home.path())
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_compost"))
+        .env("COMPOST_HOME", server.env.home.path())
         .env("PATH", &server.path)
         .env("FAKE_DOCKER_LOG", &log)
         .env("FAKE_DOCKER_SLOW_UP", "1")
-        .env_remove("DEPAP_SERVER")
+        .env_remove("COMPOST_SERVER")
         .current_dir(server.env.work.path())
         .args(["-s", "dev", "server", "deploy", "--apply"])
         .stdout(Stdio::piped())
@@ -1030,7 +1034,7 @@ fn ctrl_c_stops_and_releases_the_lock() {
     }
     assert!(server.server_home.join("lock").exists());
 
-    // Ctrl-C in a terminal signals the whole group: depap, sh, docker.
+    // Ctrl-C in a terminal signals the whole group: compost, sh, docker.
     let group = format!("-{}", child.id());
     std::process::Command::new("kill")
         .args(["-INT", "--", &group])
@@ -1064,8 +1068,8 @@ fn closed_stdout_does_not_panic() {
     use std::process::Stdio;
 
     let server = server_with_app();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_depap"))
-        .env("DEPAP_HOME", server.env.home.path())
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_compost"))
+        .env("COMPOST_HOME", server.env.home.path())
         .env("PATH", &server.path)
         .env("FAKE_DOCKER_LOG", server.env.work.path().join("docker.log"))
         .env("FAKE_DOCKER_RUNNING", "1")
@@ -1090,25 +1094,25 @@ fn closed_stdout_does_not_panic() {
 #[test]
 fn app_deploy_from_inside_the_project_folder() {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
-    server.write_work_file("app/.depap-staging.yaml", APP_OVERLAY);
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
     server.write_work_file("app/Dockerfile", "FROM scratch\n");
 
-    // Like `cd app && depap app deploy -f depap.yaml,.depap-staging.yaml`.
-    Command::cargo_bin("depap")
+    // Like `cd app && compost app deploy -f compost.yaml,.compost-staging.yaml`.
+    Command::cargo_bin("compost")
         .unwrap()
-        .env("DEPAP_HOME", server.env.home.path())
+        .env("COMPOST_HOME", server.env.home.path())
         .env("PATH", &server.path)
         .env("FAKE_DOCKER_LOG", server.env.work.path().join("docker.log"))
         .env("FAKE_DOCKER_RUNNING", "1")
-        .env_remove("DEPAP_SERVER")
+        .env_remove("COMPOST_SERVER")
         .current_dir(server.env.work.path().join("app"))
         .args(["-s", "dev", "app", "deploy", "--apply"])
-        .args(["-f", "depap.yaml,.depap-staging.yaml"])
+        .args(["-f", "compost.yaml,.compost-staging.yaml"])
         .assert()
         .success()
         .stdout(contains("uploaded 2 files"));
@@ -1255,7 +1259,7 @@ fn server_backup_holds_dump_secrets_and_records() {
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
         .code(2)
-        .stderr(contains("restore it with `depap server restore`"));
+        .stderr(contains("restore it with `compost server restore`"));
     server
         .run(
             &["server", "restore", "server.tar.gz", "--yes"],
@@ -1275,7 +1279,7 @@ fn restore_rejects_files_that_are_not_archives() {
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
         .code(2)
-        .stderr(contains("is not a depap archive"));
+        .stderr(contains("is not a compost archive"));
     server
         .run(&["app", "backup", "--all", "myapp-staging"], &[])
         .code(2)
@@ -1303,9 +1307,9 @@ fn server_generate_writes_deployable_files() {
     server
         .run(&["server", "generate", "--with", "caddy,postgres"], &[])
         .success()
-        .stdout(contains("Wrote depap-server.yaml"))
-        .stdout(contains("Wrote depap-server.prod.yaml"))
-        .stdout(contains("Wrote .depap-server.secrets.example.yaml"))
+        .stdout(contains("Wrote compost-server.yaml"))
+        .stdout(contains("Wrote compost-server.prod.yaml"))
+        .stdout(contains("Wrote .compost-server.secrets.example.yaml"))
         .stdout(contains("postgres: set `root_password`"));
     server
         .run(&["server", "generate", "--with", "caddy"], &[])
@@ -1317,13 +1321,13 @@ fn server_generate_writes_deployable_files() {
         .success()
         .stdout(contains("Dry run"));
     server.write_work_file(
-        ".depap-server.secrets.yaml",
+        ".compost-server.secrets.yaml",
         &fs::read_to_string(
             server
                 .env
                 .work
                 .path()
-                .join(".depap-server.secrets.example.yaml"),
+                .join(".compost-server.secrets.example.yaml"),
         )
         .unwrap(),
     );
@@ -1334,7 +1338,7 @@ fn server_generate_writes_deployable_files() {
                 "deploy",
                 "--dry-run",
                 "-f",
-                "depap-server.yaml,depap-server.prod.yaml,.depap-server.secrets.yaml",
+                "compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml",
             ],
             &[],
         )
@@ -1346,7 +1350,7 @@ fn server_generate_writes_deployable_files() {
             &[],
         )
         .success();
-    let prod = fs::read_to_string(server.env.work.path().join("depap-server.prod.yaml")).unwrap();
+    let prod = fs::read_to_string(server.env.work.path().join("compost-server.prod.yaml")).unwrap();
     assert!(prod.contains("shared: {}"), "{prod}");
 }
 
@@ -1358,11 +1362,11 @@ fn app_generate_reads_the_compose_file() {
         "services: {web: {build: .}, worker: {image: x}}\n",
     )
     .unwrap();
-    // Works without `depap init`.
-    env.depap(&["app", "generate"])
+    // Works without `compost init`.
+    env.compost(&["app", "generate"])
         .code(2)
         .stderr(contains("cannot read compose file docker-compose.yaml"));
-    env.depap(&[
+    env.compost(&[
         "app",
         "generate",
         "--compose-file",
@@ -1371,9 +1375,9 @@ fn app_generate_reads_the_compose_file() {
         "shop",
     ])
     .success()
-    .stdout(contains("Wrote depap.yaml"))
-    .stdout(contains("Wrote .depap.secrets.example.yaml"));
-    let config = fs::read_to_string(env.work.path().join("depap.yaml")).unwrap();
+    .stdout(contains("Wrote compost.yaml"))
+    .stdout(contains("Wrote .compost.secrets.example.yaml"));
+    let config = fs::read_to_string(env.work.path().join("compost.yaml")).unwrap();
     for expected in [
         "name: shop",
         "compose_file: compose.yml",
@@ -1385,10 +1389,11 @@ fn app_generate_reads_the_compose_file() {
             "missing {expected:?} in\n{config}"
         );
     }
-    let secrets = fs::read_to_string(env.work.path().join(".depap.secrets.example.yaml")).unwrap();
+    let secrets =
+        fs::read_to_string(env.work.path().join(".compost.secrets.example.yaml")).unwrap();
     assert!(secrets.contains("name: shop\nprefix: staging"), "{secrets}");
 
-    env.depap(&["app", "generate", "--compose-file", "compose.yml"])
+    env.compost(&["app", "generate", "--compose-file", "compose.yml"])
         .code(2)
         .stderr(contains("add --force"));
 }
@@ -1396,18 +1401,18 @@ fn app_generate_reads_the_compose_file() {
 #[test]
 fn config_set_show_unset() {
     let env = Env::initialized_with_server();
-    env.depap(&["config", "show"])
+    env.compost(&["config", "show"])
         .success()
         .stdout(contains("deploy.apply = false (default)"));
-    env.depap(&["config", "set", "deploy.apply", "maybe"])
+    env.compost(&["config", "set", "deploy.apply", "maybe"])
         .code(2)
         .stderr(contains("not a boolean"));
-    env.depap(&["config", "set", "deploy.nothing", "true"])
+    env.compost(&["config", "set", "deploy.nothing", "true"])
         .code(2)
         .stderr(contains("unknown setting"));
-    env.depap(&["config", "set", "deploy.apply", "true"])
+    env.compost(&["config", "set", "deploy.apply", "true"])
         .success();
-    env.depap(&[
+    env.compost(&[
         "config",
         "set",
         "deploy.apply",
@@ -1417,13 +1422,13 @@ fn config_set_show_unset() {
     ])
     .success()
     .stdout(contains("deploy.apply = false for prod1"));
-    env.depap(&["config", "show"])
+    env.compost(&["config", "show"])
         .success()
         .stdout(contains("deploy.apply = true\n"))
         .stdout(contains("deploy.apply = false  (server prod1)"));
 
     // Redefining the server keeps its settings.
-    env.depap(&[
+    env.compost(&[
         "server",
         "define",
         "prod1",
@@ -1432,16 +1437,16 @@ fn config_set_show_unset() {
         "--force",
     ])
     .success();
-    env.depap(&["config", "show"])
+    env.compost(&["config", "show"])
         .success()
         .stdout(contains("(server prod1)"));
 
-    env.depap(&["config", "unset", "deploy.apply", "--for-server", "prod1"])
+    env.compost(&["config", "unset", "deploy.apply", "--for-server", "prod1"])
         .success();
-    env.depap(&["config", "show"])
+    env.compost(&["config", "show"])
         .success()
         .stdout(contains("prod1").not());
-    env.depap(&["server", "deploy", "--apply", "--no-apply"])
+    env.compost(&["server", "deploy", "--apply", "--no-apply"])
         .code(2)
         .stderr(contains("cannot be used with"));
 }
@@ -1449,7 +1454,7 @@ fn config_set_show_unset() {
 #[test]
 fn deploy_applies_by_default_when_configured() {
     let server = LocalServer::new();
-    server.write_work_file("depap-server.yaml", SERVER_CONFIG);
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
     server
         .run(&["config", "set", "deploy.apply", "true"], &[])
         .success();
@@ -1488,14 +1493,14 @@ fn stored_secrets_are_used_by_app_deploy() {
     use std::os::unix::fs::PermissionsExt;
 
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
     server.write_work_file("app/Dockerfile", "FROM scratch\n");
     server.write_work_file(
-        "app/.depap.secrets.yaml",
+        "app/.compost.secrets.yaml",
         &format!(
             "name: myapp\n{}",
             APP_OVERLAY.replace("prefix: staging\n", "")
@@ -1512,7 +1517,7 @@ fn stored_secrets_are_used_by_app_deploy() {
             &[
                 "secret",
                 "deploy",
-                "app/.depap.secrets.yaml",
+                "app/.compost.secrets.yaml",
                 "--prefix",
                 "staging",
             ],
@@ -1542,7 +1547,7 @@ fn stored_secrets_are_used_by_app_deploy() {
                 "deploy",
                 "--apply",
                 "-f",
-                "app/depap.yaml",
+                "app/compost.yaml",
                 "--prefix",
                 "staging",
             ],
@@ -1552,7 +1557,7 @@ fn stored_secrets_are_used_by_app_deploy() {
         .stdout(contains("using stored secrets"))
         .stdout(contains("caddy-main: staging.example.com"))
         .stdout(contains("uploaded 2 files"));
-    let override_yaml = server.read_server_file("apps/myapp/staging/compose/depap.override.yaml");
+    let override_yaml = server.read_server_file("apps/myapp/staging/compose/compost.override.yaml");
     assert!(
         override_yaml.contains("APP_MODE: staging"),
         "{override_yaml}"
@@ -1567,7 +1572,7 @@ fn stored_secrets_are_used_by_app_deploy() {
                 "deploy",
                 "--dry-run",
                 "-f",
-                "app/depap.yaml",
+                "app/compost.yaml",
                 "--prefix",
                 "review",
             ],
@@ -1600,18 +1605,18 @@ fn stored_secrets_are_used_by_app_deploy() {
 #[test]
 fn app_backup_and_restore_keep_stored_secrets() {
     let server = server_with_shared_apps();
-    server.write_work_file("app/depap.yaml", APP_CONFIG);
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
     server.write_work_file(
         "app/docker-compose.yaml",
         "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
     );
     server.write_work_file(
-        "app/.depap.secrets.yaml",
+        "app/.compost.secrets.yaml",
         &format!("name: myapp\n{APP_OVERLAY}"),
     );
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     server
-        .run(&["secret", "deploy", "app/.depap.secrets.yaml"], &[])
+        .run(&["secret", "deploy", "app/.compost.secrets.yaml"], &[])
         .success();
     server
         .run(
@@ -1620,7 +1625,7 @@ fn app_backup_and_restore_keep_stored_secrets() {
                 "deploy",
                 "--apply",
                 "-f",
-                "app/depap.yaml",
+                "app/compost.yaml",
                 "--prefix",
                 "staging",
             ],
@@ -1658,7 +1663,7 @@ fn app_backup_and_restore_keep_stored_secrets() {
         .stdout(contains("Restored the stored secrets of myapp-staging"));
     assert!(fs::read_to_string(&stored).unwrap().contains("pa$$word"));
     // The link record was removed, so the password comes from the secrets.
-    let override_yaml = server.read_server_file("apps/myapp/staging/compose/depap.override.yaml");
+    let override_yaml = server.read_server_file("apps/myapp/staging/compose/compost.override.yaml");
     assert!(
         override_yaml.contains("DATABASE_PASSWORD: pa$$$$word"),
         "{override_yaml}"

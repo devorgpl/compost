@@ -1,4 +1,4 @@
-//! `depap server …` commands (spec §10.3, §10.4, §10.6, §10.7).
+//! `compost server …` commands (spec §10.3, §10.4, §10.6, §10.7).
 
 use std::path::PathBuf;
 
@@ -6,18 +6,18 @@ use anyhow::Result;
 use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
-use crate::config::local::{ConnectorConfig, DepapHome, ServerEntry};
+use crate::config::local::{CompostHome, ConnectorConfig, ServerEntry};
 use crate::config::server::BackupTarget;
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector;
-use crate::error::{DepapError, config_err};
+use crate::error::{CompostError, config_err};
 use crate::server::backup::{self, BackupOptions, RestoreOptions};
 use crate::server::deploy::{self, Options};
 use crate::server::links;
 use crate::server::state::{self, Status};
 
-const SERVER_FILE: &str = "depap-server.yaml";
-const SERVER_SECRETS_FILE: &str = ".depap-server.secrets.yaml";
+const SERVER_FILE: &str = "compost-server.yaml";
+const SERVER_SECRETS_FILE: &str = ".compost-server.secrets.yaml";
 
 #[derive(Debug, Args)]
 pub struct DefineArgs {
@@ -27,7 +27,7 @@ pub struct DefineArgs {
     #[arg(long, required_unless_present = "local", conflicts_with = "local")]
     pub address: Option<String>,
     /// SSH user
-    #[arg(long, default_value = "depapuser", conflicts_with = "local")]
+    #[arg(long, default_value = "compostuser", conflicts_with = "local")]
     pub user: String,
     /// SSH port
     #[arg(long, conflicts_with = "local")]
@@ -35,7 +35,7 @@ pub struct DefineArgs {
     /// SSH private key (default: ssh config, agent, ~/.ssh/id_*)
     #[arg(long, conflicts_with = "local")]
     pub identity_file: Option<String>,
-    /// depap directory on the server (default ~/.depap-server)
+    /// compost directory on the server (default ~/.compost-server)
     #[arg(long)]
     pub server_home: Option<String>,
     /// Manage this machine instead of a remote server
@@ -53,30 +53,30 @@ pub struct ServerBackupArgs {
     pub shared: Vec<String>,
     #[command(flatten)]
     pub output: BackupOutputArgs,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct ServerRestoreArgs {
-    /// Archive written by `depap server backup` (with `--source server`: a file in the server's backup folder)
+    /// Archive written by `compost server backup` (with `--source server`: a file in the server's backup folder)
     pub archive: String,
     /// Only this shared app (repeatable or comma-separated)
     #[arg(long, value_delimiter = ',')]
     pub shared: Vec<String>,
-    /// Where the archive is (default: `backup.target` of depap-server.yaml, else local)
+    /// Where the archive is (default: `backup.target` of compost-server.yaml, else local)
     #[arg(long, value_enum)]
     pub source: Option<BackupTarget>,
     /// Do not ask for confirmation
     #[arg(long)]
     pub yes: bool,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
 
-pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
+pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
     check_name("server name", &args.name)?;
     let mut servers = home.servers()?;
 
@@ -104,7 +104,7 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
             )));
         }
         Some(existing) => {
-            // Settings made with `depap config` survive a redefinition.
+            // Settings made with `compost config` survive a redefinition.
             let deploy = std::mem::take(&mut existing.deploy);
             *existing = ServerEntry {
                 deploy,
@@ -122,10 +122,10 @@ pub fn define(home: &DepapHome, args: DefineArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn list(home: &DepapHome) -> Result<()> {
+pub fn list(home: &CompostHome) -> Result<()> {
     let servers = home.servers()?;
     if servers.servers.is_empty() {
-        out!("No servers defined. Add one with `depap server define`.");
+        out!("No servers defined. Add one with `compost server define`.");
         return Ok(());
     }
 
@@ -152,7 +152,7 @@ pub fn list(home: &DepapHome) -> Result<()> {
     Ok(())
 }
 
-pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
+pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, verbose)?;
@@ -171,7 +171,7 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
     let detail = report.detail.as_deref().unwrap_or_default();
     match report.status {
         Status::Unreachable | Status::NoDocker | Status::Foreign => {
-            return Err(DepapError::ServerNotReady(format!("{summary}\n{detail}")).into());
+            return Err(CompostError::ServerNotReady(format!("{summary}\n{detail}")).into());
         }
         Status::Uninitialized | Status::Degraded | Status::Ok => {}
     }
@@ -201,7 +201,7 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
     }
 
     if report.status == Status::Degraded {
-        return Err(DepapError::Unhealthy(format!(
+        return Err(CompostError::Unhealthy(format!(
             "{}: some shared applications are not running",
             server.name
         ))
@@ -211,7 +211,7 @@ pub fn state(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()
 }
 
 pub fn deploy(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     args: DeployArgs,
     verbose: bool,
@@ -248,8 +248,8 @@ pub fn deploy(
     Ok(())
 }
 
-/// `depap connector list` (spec §10.11).
-pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> Result<()> {
+/// `compost connector list` (spec §10.11).
+pub fn connector_list(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, verbose)?;
@@ -261,7 +261,7 @@ pub fn connector_list(home: &DepapHome, server: Option<&str>, verbose: bool) -> 
 }
 
 pub fn backup(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     args: ServerBackupArgs,
     verbose: bool,
@@ -286,7 +286,7 @@ pub fn backup(
 }
 
 pub fn restore(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     args: ServerRestoreArgs,
     verbose: bool,
@@ -311,9 +311,9 @@ pub fn restore(
     state(home, Some(&server.name), verbose)
 }
 
-/// `depap backup list`
+/// `compost backup list`
 pub fn backup_list(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     source: Option<BackupTarget>,
     verbose: bool,
@@ -329,7 +329,7 @@ pub fn backup_list(
     )
 }
 
-/// `depap-server.yaml` plus the secrets file when it exists (spec §7).
+/// `compost-server.yaml` plus the secrets file when it exists (spec §7).
 fn default_files() -> Result<Vec<PathBuf>> {
     let main = PathBuf::from(SERVER_FILE);
     if !main.exists() {

@@ -1,11 +1,11 @@
-//! `depap app state` (spec §10.9).
+//! `compost app state` (spec §10.9).
 
 use anyhow::Result;
 
 use super::instance::{self, Instance, Selector};
 use crate::config::app::ComposeFile;
 use crate::connector::Connector;
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::server::compose;
 use crate::server::state::{self as server_state, Status};
 use crate::server::state_file::StateFile;
@@ -25,7 +25,7 @@ pub fn state(
     if print(&ctx, &instance)? {
         Ok(())
     } else {
-        Err(DepapError::Unhealthy(format!(
+        Err(CompostError::Unhealthy(format!(
             "{}: some services are not running",
             instance.app.instance()
         ))
@@ -123,11 +123,11 @@ pub fn initialized_server<'a>(
     let report = server_state::check(connector, server_home, manager_key)?;
     match (report.status, report.home) {
         (Status::Ok | Status::Degraded, Some(home)) => Ok(ServerCtx { connector, home }),
-        (Status::Uninitialized, _) => Err(DepapError::ServerNotReady(
-            "depap has not deployed anything on this server".into(),
+        (Status::Uninitialized, _) => Err(CompostError::ServerNotReady(
+            "compost has not deployed anything on this server".into(),
         )
         .into()),
-        (status, _) => Err(DepapError::ServerNotReady(format!(
+        (status, _) => Err(CompostError::ServerNotReady(format!(
             "server is {status}: {}",
             report.detail.unwrap_or_default()
         ))
@@ -136,5 +136,5 @@ pub fn initialized_server<'a>(
 }
 
 pub fn not_deployed(name: &str, prefix: &str) -> anyhow::Error {
-    DepapError::ServerNotReady(format!("{name}-{prefix} is not deployed on this server")).into()
+    CompostError::ServerNotReady(format!("{name}-{prefix} is not deployed on this server")).into()
 }

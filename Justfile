@@ -1,27 +1,27 @@
-# depap development commands. Run `just` to see this list.
+# compost development commands. Run `just` to see this list.
 
-# Local depap home for `just try`, so experiments don't touch ~/.depap
-sandbox := justfile_directory() / "target/depap-home"
+# Local compost home for `just try`, so experiments don't touch ~/.compost
+sandbox := justfile_directory() / "target/compost-home"
 
 # List available recipes
 default:
     @just --list
 
-# Build a debug binary (target/debug/depap)
+# Build a debug binary (target/debug/compost)
 build:
     cargo build
 
-# Build an optimized binary (target/release/depap)
+# Build an optimized binary (target/release/compost)
 release:
     cargo build --release
 
-# Run depap with your real ~/.depap, e.g. `just run server list`
+# Run compost with your real ~/.compost, e.g. `just run server list`
 run *args:
     cargo run --quiet -- {{args}}
 
-# Run depap with a throwaway home in target/, e.g. `just try init`
+# Run compost with a throwaway home in target/, e.g. `just try init`
 try *args:
-    DEPAP_HOME={{sandbox}} cargo run --quiet -- {{args}}
+    COMPOST_HOME={{sandbox}} cargo run --quiet -- {{args}}
 
 # Delete the `just try` home
 try-reset:
@@ -47,7 +47,7 @@ lint:
 # Everything that should pass before committing
 ci: lint test
 
-# Install depap into ~/.cargo/bin
+# Install compost into ~/.cargo/bin
 install:
     cargo install --path .
 

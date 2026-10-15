@@ -1,4 +1,4 @@
-//! `depap secret …`: deployment overlays with secrets, kept on the server.
+//! `compost secret …`: deployment overlays with secrets, kept on the server.
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,19 +8,19 @@ use clap::Subcommand;
 
 use crate::app::secrets;
 use crate::config::check_name;
-use crate::config::local::DepapHome;
+use crate::config::local::CompostHome;
 use crate::connector;
 
 #[derive(Debug, Subcommand)]
 pub enum SecretCommand {
-    /// Store an instance's overlay (e.g. .depap.secrets.yaml) for `app deploy`
+    /// Store an instance's overlay (e.g. .compost.secrets.yaml) for `app deploy`
     Deploy {
         /// Overlay with the app's `name`, e.g. domains and database passwords
         file: PathBuf,
         /// Instance prefix (overrides the one in the file; default `main`)
         #[arg(long)]
         prefix: Option<String>,
-        /// Remove a lock left behind by an interrupted depap command
+        /// Remove a lock left behind by an interrupted compost command
         #[arg(long)]
         force_unlock: bool,
     },
@@ -34,14 +34,14 @@ pub enum SecretCommand {
         /// Instance prefix
         #[arg(long, default_value = "main")]
         prefix: String,
-        /// Remove a lock left behind by an interrupted depap command
+        /// Remove a lock left behind by an interrupted compost command
         #[arg(long)]
         force_unlock: bool,
     },
 }
 
 pub fn run(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     command: SecretCommand,
     verbose: bool,

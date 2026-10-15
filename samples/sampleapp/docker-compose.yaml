@@ -1,4 +1,4 @@
-# A plain compose file: depap adds networks and variables in its own override
+# A plain compose file: compost adds networks and variables in its own override
 # file on the server and never changes this one.
 services:
   web:
@@ -19,7 +19,7 @@ services:
     build: ./backend
     command: ["python", "migrate.py"]
 
-# Named volumes listed under `backup.volumes` in depap.yaml are saved by
-# `depap app backup`.
+# Named volumes listed under `backup.volumes` in compost.yaml are saved by
+# `compost app backup`.
 volumes:
   visits:

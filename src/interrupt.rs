@@ -2,7 +2,7 @@
 //! server lock, instead of dying with the lock still held.
 //!
 //! The first Ctrl-C also stops the command that is running (ssh, docker), since
-//! the terminal sends it to every process of the foreground job. depap then
+//! the terminal sends it to every process of the foreground job. compost then
 //! refuses to start new commands, the error travels up, and cleanup code (like
 //! `Lock`'s drop) runs. A second Ctrl-C exits at once.
 
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::Result;
 
-use crate::error::DepapError;
+use crate::error::CompostError;
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// Number of active cleanup guards; commands may run while it is above zero.
@@ -32,7 +32,7 @@ pub fn install() -> Result<()> {
 /// Fails once Ctrl-C was pressed, unless cleanup is running.
 pub fn check() -> Result<()> {
     if INTERRUPTED.load(Ordering::SeqCst) && CLEANUPS.load(Ordering::SeqCst) == 0 {
-        return Err(DepapError::Interrupted.into());
+        return Err(CompostError::Interrupted.into());
     }
     Ok(())
 }

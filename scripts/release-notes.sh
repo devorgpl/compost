@@ -3,7 +3,7 @@
 # `v*` tag, plus install instructions. Version bumps (`Version <x>`, and the
 # older `Next version`) are left out.
 #
-#   scripts/release-notes.sh v0.2.0 [https://gitea.example.com/owner/depap]
+#   scripts/release-notes.sh v0.2.0 [https://gitea.example.com/owner/compost]
 #
 # With the repository URL, the notes also link the full diff and use real
 # download URLs.
@@ -33,21 +33,21 @@ cat <<EOF
 
 ## Install
 
-depap is a single portable binary (static, runs on any Linux). Pick the archive for your system:
+compost is a single portable binary (static, runs on any Linux). Pick the archive for your system:
 
 | System | Archive |
 |---|---|
-| Linux x86_64 | \`depap-$tag-x86_64-unknown-linux-musl.tar.gz\` |
-| Linux arm64 | \`depap-$tag-aarch64-unknown-linux-musl.tar.gz\` |
+| Linux x86_64 | \`compost-$tag-x86_64-unknown-linux-musl.tar.gz\` |
+| Linux arm64 | \`compost-$tag-aarch64-unknown-linux-musl.tar.gz\` |
 
 On macOS, build from source: \`cargo install --locked --git ${repo_url:-<repository URL>} --tag $tag\`.
 
 \`\`\`sh
 target=x86_64-unknown-linux-musl
-curl -fsSLO $download/depap-$tag-\$target.tar.gz
+curl -fsSLO $download/compost-$tag-\$target.tar.gz
 curl -fsSLO $download/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf depap-$tag-\$target.tar.gz
-install -m 755 depap-$tag-\$target/depap ~/.local/bin/depap
+tar -xzf compost-$tag-\$target.tar.gz
+install -m 755 compost-$tag-\$target/compost ~/.local/bin/compost
 \`\`\`
 EOF

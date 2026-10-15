@@ -7,17 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::config::app::AppConfig;
 use crate::config::server::ServerConfig;
 use crate::connector::shell_quote;
-use crate::error::{DepapError, config_err};
+use crate::error::{CompostError, config_err};
 use crate::server::state_file::StateFile;
 use crate::shared::{ServerCtx, SharedAppConfig};
 
-pub const OVERRIDE_FILE: &str = "compose/depap.override.yaml";
+pub const OVERRIDE_FILE: &str = "compose/compost.override.yaml";
 /// The effective app config, secrets removed.
-pub const CONFIG_FILE: &str = "depap.yaml";
+pub const CONFIG_FILE: &str = "compost.yaml";
 /// The shared apps the instance's links use.
-pub const LINKS_FILE: &str = "depap-env.yaml";
+pub const LINKS_FILE: &str = "compost-env.yaml";
 
-/// `apps/<app>/<prefix>`, relative to DEPAP_SERVER_HOME.
+/// `apps/<app>/<prefix>`, relative to COMPOST_SERVER_HOME.
 pub fn dir(name: &str, prefix: &str) -> String {
     format!("apps/{name}/{prefix}")
 }
@@ -73,8 +73,8 @@ pub fn resolve(ctx: &ServerCtx, selector: &Selector) -> Result<(String, String)>
         .filter(|r| format!("{}-{}", r.name, r.prefix) == *instance)
         .collect();
     match matches.as_slice() {
-        [] => Err(DepapError::ServerNotReady(format!(
-            "{instance} is not deployed on this server (see `depap app list`)"
+        [] => Err(CompostError::ServerNotReady(format!(
+            "{instance} is not deployed on this server (see `compost app list`)"
         ))
         .into()),
         [record] => Ok((record.name.clone(), record.prefix.clone())),
@@ -119,7 +119,7 @@ pub fn server_config(ctx: &ServerCtx) -> Result<ServerConfig> {
     }
 }
 
-/// `docker compose` for the instance, with the user's file and depap's override.
+/// `docker compose` for the instance, with the user's file and compost's override.
 pub fn compose_command(ctx: &ServerCtx, app: &AppConfig) -> String {
     format!(
         "cd {} && docker compose -p {} --project-directory sources -f {} -f {OVERRIDE_FILE}",

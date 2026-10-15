@@ -1,16 +1,16 @@
-//! `depap config …`: preferences in DEPAP_HOME, globally or per server.
+//! `compost config …`: preferences in COMPOST_HOME, globally or per server.
 
 use anyhow::Result;
 use clap::Subcommand;
 
-use crate::config::local::{DepapHome, DeploySettings};
+use crate::config::local::{CompostHome, DeploySettings};
 use crate::error::config_err;
 
 const KEYS: &[&str] = &["deploy.apply"];
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// Set a preference, e.g. `depap config set deploy.apply true`
+    /// Set a preference, e.g. `compost config set deploy.apply true`
     Set {
         key: String,
         value: String,
@@ -29,7 +29,7 @@ pub enum ConfigCommand {
     Show,
 }
 
-pub fn run(home: &DepapHome, command: ConfigCommand) -> Result<()> {
+pub fn run(home: &CompostHome, command: ConfigCommand) -> Result<()> {
     match command {
         ConfigCommand::Set {
             key,
@@ -67,7 +67,7 @@ fn parse_bool(key: &str, value: &str) -> Result<bool> {
 }
 
 /// Set (`Some`) or remove (`None`) `deploy.apply`, globally or for one server.
-fn update(home: &DepapHome, key: &str, server: Option<&str>, value: Option<bool>) -> Result<()> {
+fn update(home: &CompostHome, key: &str, server: Option<&str>, value: Option<bool>) -> Result<()> {
     check_key(key)?;
     home.require_manager()?;
     let scope = match server {
@@ -96,7 +96,7 @@ fn update(home: &DepapHome, key: &str, server: Option<&str>, value: Option<bool>
     Ok(())
 }
 
-fn show(home: &DepapHome) -> Result<()> {
+fn show(home: &CompostHome) -> Result<()> {
     let settings = home.settings()?;
     out!(
         "deploy.apply = {}",

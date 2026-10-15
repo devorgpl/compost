@@ -1,6 +1,6 @@
 """Sample backend: counts visits in Postgres.
 
-DATABASE_URL comes from depap's database link (see depap.yaml), APP_MODE
+DATABASE_URL comes from compost's database link (see compost.yaml), APP_MODE
 from app_services[].environment.
 """
 

@@ -1,4 +1,4 @@
-//! `depap server deploy` (spec §10.7).
+//! `compost server deploy` (spec §10.7).
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -10,7 +10,7 @@ use super::state_file::{DeployStatus, StateFile};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
 use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::shared::{self, Rendered, ServerCtx, SharedAppConfig};
 
 pub struct Options {
@@ -42,7 +42,7 @@ pub fn deploy(
         report.status,
         Status::Unreachable | Status::NoDocker | Status::Foreign
     ) {
-        return Err(DepapError::ServerNotReady(format!(
+        return Err(CompostError::ServerNotReady(format!(
             "server is {}: {}",
             report.status,
             report.detail.unwrap_or_default()
@@ -133,7 +133,7 @@ pub fn deploy(
                 out!("failed");
                 state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Failed, &plan.hash);
                 state_file.save(&ctx)?;
-                return Err(DepapError::ServerNotReady(format!(
+                return Err(CompostError::ServerNotReady(format!(
                     "{} {} did not start: {err:#}",
                     plan.kind, plan.app.name
                 ))

@@ -14,18 +14,18 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 use crate::backup::Format;
-use crate::config::local::{DepapHome, ServerEntry};
+use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "depap",
+    name = "compost",
     version,
     about = "Manage docker-based server deployments"
 )]
 pub struct Cli {
-    /// Target server (default: DEPAP_SERVER, then the current context)
-    #[arg(short, long, global = true, env = "DEPAP_SERVER")]
+    /// Target server (default: COMPOST_SERVER, then the current context)
+    #[arg(short, long, global = true, env = "COMPOST_SERVER")]
     pub server: Option<String>,
 
     /// Print every command run on the server
@@ -38,7 +38,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create the local depap home with a new (or the given) manager key
+    /// Create the local compost home with a new (or the given) manager key
     Init(init::InitArgs),
     /// Define, inspect and deploy servers
     #[command(subcommand)]
@@ -66,7 +66,7 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
-    /// Write starter depap-server.yaml, depap-server.prod.yaml and a secrets example
+    /// Write starter compost-server.yaml, compost-server.prod.yaml and a secrets example
     Generate(generate::ServerGenerateArgs),
     /// Add or replace a server in the local configuration
     Define(server::DefineArgs),
@@ -74,7 +74,7 @@ pub enum ServerCommand {
     List,
     /// Check and display server state
     State,
-    /// Deploy shared applications from depap-server.yaml
+    /// Deploy shared applications from compost-server.yaml
     Deploy(DeployArgs),
     /// Back up shared applications (data, configuration and secrets)
     Backup(server::ServerBackupArgs),
@@ -86,7 +86,7 @@ pub enum ServerCommand {
 pub enum BackupCommand {
     /// List the archives in the server's backup folder
     List {
-        /// Where backups are (default: `backup.target` of depap-server.yaml)
+        /// Where backups are (default: `backup.target` of compost-server.yaml)
         #[arg(long, value_enum)]
         source: Option<BackupTarget>,
     },
@@ -101,7 +101,7 @@ pub enum ConnectorCommand {
 /// Arguments shared by `server deploy` and `app deploy`.
 #[derive(Debug, Args)]
 pub struct DeployArgs {
-    /// Also start or restart services (default: `deploy.apply`, see `depap config`)
+    /// Also start or restart services (default: `deploy.apply`, see `compost config`)
     #[arg(long, conflicts_with = "no_apply")]
     pub apply: bool,
     /// Only upload files, even when `deploy.apply` is set
@@ -113,14 +113,14 @@ pub struct DeployArgs {
     /// Validate and show what would happen without changing the server
     #[arg(long)]
     pub dry_run: bool,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
 
 impl DeployArgs {
     /// `--apply`/`--no-apply`, else the configured default.
-    pub fn apply(&self, home: &DepapHome, server: &ServerEntry) -> Result<bool> {
+    pub fn apply(&self, home: &CompostHome, server: &ServerEntry) -> Result<bool> {
         if self.apply || self.no_apply {
             return Ok(self.apply);
         }
@@ -131,19 +131,19 @@ impl DeployArgs {
 /// Where and how a backup is written.
 #[derive(Debug, Args)]
 pub struct BackupOutputArgs {
-    /// `depap` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
-    #[arg(long, value_enum, default_value_t = Format::Depap)]
+    /// `compost` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
+    #[arg(long, value_enum, default_value_t = Format::Compost)]
     pub format: Format,
     /// Output file or folder (with `--target server`: a file name in the server's backup folder)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
-    /// Where to write (default: `backup.target` of depap-server.yaml, else local)
+    /// Where to write (default: `backup.target` of compost-server.yaml, else local)
     #[arg(long, value_enum)]
     pub target: Option<BackupTarget>,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
-    let home = DepapHome::locate()?;
+    let home = CompostHome::locate()?;
     let server = cli.server.as_deref();
     match cli.command {
         Command::Init(args) => init::run(&home, args),

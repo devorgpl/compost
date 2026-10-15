@@ -1,21 +1,21 @@
 #!/bin/sh
-# Install the portable depap binary from a Gitea release.
+# Install the portable compost binary from a Gitea release.
 #
-#   curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/depap/raw/branch/master/scripts/install.sh | sh
+#   curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
 #   ... | sh -s -- --version v0.1.0 --to /usr/local/bin
 #
 # Options:
 #   --url URL        Gitea server (default: https://gitrepo.dev.org.pl)
 #   --repo OWNER/NAME
-#                    repository (default: dev.org.pl/depap)
+#                    repository (default: dev.org.pl/compost)
 #   --version TAG    e.g. v0.1.0 (default: the latest release)
 #   --to DIR         install directory (default: ~/.local/bin)
 #
 # Downloads the archive for this system, checks it against SHA256SUMS and
-# copies the single `depap` binary. Nothing else is installed.
+# copies the single `compost` binary. Nothing else is installed.
 set -eu
 
-url="https://gitrepo.dev.org.pl" repo="dev.org.pl/depap" version="" to="$HOME/.local/bin"
+url="https://gitrepo.dev.org.pl" repo="dev.org.pl/compost" version="" to="$HOME/.local/bin"
 while [ $# -gt 0 ]; do
     case "$1" in
     --url) url="${2%/}"; shift 2 ;;
@@ -34,10 +34,10 @@ case "$(uname -s)-$(uname -m)" in
 Linux-x86_64) target=x86_64-unknown-linux-musl ;;
 Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-musl ;;
 Darwin-*)
-    echo "no prebuilt depap for macOS; build it with: cargo install --locked --git $url/$repo" >&2
+    echo "no prebuilt compost for macOS; build it with: cargo install --locked --git $url/$repo" >&2
     exit 1
     ;;
-*) echo "no depap build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
+*) echo "no compost build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
 esac
 
 if [ -z "$version" ]; then
@@ -46,7 +46,7 @@ if [ -z "$version" ]; then
     [ -n "$version" ] || { echo "cannot find the latest release of $repo" >&2; exit 1; }
 fi
 
-name="depap-$version-$target"
+name="compost-$version-$target"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading $name"
@@ -66,10 +66,10 @@ fi
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 mkdir -p "$to"
-cp "$tmp/$name/depap" "$to/depap"
-chmod 755 "$to/depap"
-echo "Installed $("$to/depap" --version) to $to/depap"
+cp "$tmp/$name/compost" "$to/compost"
+chmod 755 "$to/compost"
+echo "Installed $("$to/compost" --version) to $to/compost"
 case ":$PATH:" in
 *":$to:"*) ;;
-*) echo "Add $to to your PATH to run it as \`depap\`." ;;
+*) echo "Add $to to your PATH to run it as \`compost\`." ;;
 esac

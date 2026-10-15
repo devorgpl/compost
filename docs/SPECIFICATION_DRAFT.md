@@ -1,12 +1,12 @@
 # About
-Depap (Dependency and Deployment for application), previously known as Dockernetes is a CLI (depap) and WebUI (depap-ui) to manage docker-based server deployment.
+Compost (compose + host), previously known as Depap and Dockernetes, is a CLI (compost) and WebUI (compost-ui) to manage docker-based server deployment.
 
 # System parts
 :
 ## Server
 User can define one or more servers to manage. Access to server is based on ssh connection or operate on localhost.
 
-On the server depap can install and manage:
+On the server compost can install and manage:
 - shared applications
 - user applications
 
@@ -44,14 +44,14 @@ Application to collect metrics.
 ## User applications
 User creates docker-compose file with all services that application needs.
 
-User creates depap.yaml file describing how this application should be deployed.
+User creates compost.yaml file describing how this application should be deployed.
 
-User creates .depap-deploy.yaml file with exact deployment values.
+User creates .compost-deploy.yaml file with exact deployment values.
 
 # Configuration
 
 ## Server
-All shared applications are described in depap-server.yaml.
+All shared applications are described in compost-server.yaml.
 ```
 shared:
   ingress:
@@ -68,7 +68,7 @@ shared:
         ssl-enabled: true
 ```
 
-Additional configuration and secrets can be defined in .depap-server-deployment.yaml
+Additional configuration and secrets can be defined in .compost-server-deployment.yaml
 ```
 shared:
   database:
@@ -84,7 +84,7 @@ backup:
 ```
 
 ## User application
-in depap.yaml user can define a structure how an application should be deployed
+in compost.yaml user can define a structure how an application should be deployed
 ```
 services:
   ingress:
@@ -115,7 +115,7 @@ app-services:
     service: backend-app
 ```
 
-in .depap-deploy.yaml user can define specific deployment values and secrets. This file can be placed outside the user application repository.
+in .compost-deploy.yaml user can define specific deployment values and secrets. This file can be placed outside the user application repository.
 ```
 services:
   ingress:
@@ -131,14 +131,14 @@ services:
 
 ## connect/disconnect
 On connect (with server name as a param)
-Uses ~/.depap/servers.yaml to check if it's on list
-Creates ~/.depap/current_context file with current server name 
+Uses ~/.compost/servers.yaml to check if it's on list
+Creates ~/.compost/current_context file with current server name 
 From now there is no need to add --server_name parameter to run commands
 
 On disconnect removes current_context file.
 
 ## init
-Initializes depap.
+Initializes compost.
 
 ## server
 ### server define
@@ -160,18 +160,18 @@ Display connector tree (shared_app->shared_app_name->connectors[]) with their st
 - shared app exists and it's state
 - connected app exists and it's state
 
-# Depap implementation details
+# Compost implementation details
 Written in Rust. It can work as:
 - as a standalone binary
 - as a server with WebUI and satelites
 - as a docker image server with WebUI and satelites.
 - satelite can work as Docker image with mounted socket to docker on host.
 
-Configuration for server is stored in DEPAP_SERVER_HOME, it's ~/.depap-server/ folder by default (but can be in /etc/depap-server and then ~/.depap-server/depap_home.env points to it).
+Configuration for server is stored in COMPOST_SERVER_HOME, it's ~/.compost-server/ folder by default (but can be in /etc/compost-server and then ~/.compost-server/compost_home.env points to it).
 
 ## Shared applications extensions
 Shared applications have predefined templates and scripts with possible overrides for different type/versions.
-Definitions are part of depapp installation.
+Definitions are part of compost installation.
 Each shared application defines:
 - templates
 - folder structure inside shared/<shared-app-type>/<shared-app-name> and responsibilities (as tags, needed for example to do backup/restore or cleanup/reset)
@@ -197,25 +197,25 @@ Parent server can use SSH connector as other option (with SSH key defined).
 
 # Use cases
 ## Initialize
-1. User runs `depap init`
-2. It creates an entry in DEPAP_HOME (~/.depap) in file depap-manager.yaml
+1. User runs `compost init`
+2. It creates an entry in COMPOST_HOME (~/.compost) in file compost-manager.yaml
 - manager_key=generated uuid
 3. If it exists, display information and exit
 ## Define and get server (CLI)
 Requires #Initialize step
-1. User runs `depap server define --server_name <server_name> --server_address <server_address> --user depapuser`
-2. It creates an entry in DEPAP_HOME (~/.depap) in file servers.yaml
+1. User runs `compost server define --server_name <server_name> --server_address <server_address> --user compostuser`
+2. It creates an entry in COMPOST_HOME (~/.compost) in file servers.yaml
 - with server name and address
-- server connector (SSH as default with SSH key in ~/.ssh/id_rsa and username depapuser)
-- DEPAP_SERVER_HOME (path on remote server, default ~/.depap-server)
-3. User runs `depap server state --server_name <server_name>`
-4. It checks if server is reachable and if configuration depapp-server.yaml is there and if manager_key is there and equals local manager_key 
-5. It reads remote depapp-server.yaml file and checks if all defined services are there and running
+- server connector (SSH as default with SSH key in ~/.ssh/id_rsa and username compostuser)
+- COMPOST_SERVER_HOME (path on remote server, default ~/.compost-server)
+3. User runs `compost server state --server_name <server_name>`
+4. It checks if server is reachable and if configuration compost-server.yaml is there and if manager_key is there and equals local manager_key 
+5. It reads remote compost-server.yaml file and checks if all defined services are there and running
 6. It diplays all services and their status
 
 ## Ingress and Postgres on server
 Requires #Define and get server step
-1. User defines services in depapp-server.yaml file in working directory
+1. User defines services in compost-server.yaml file in working directory
 ```
 shared:
   ingress:
@@ -231,7 +231,7 @@ shared:
       configuration:
         ssl-enabled: true
 ```
-and .depapp-server-secrets.yaml
+and .compost-server-secrets.yaml
 ```
 shared:
   database:
@@ -240,21 +240,21 @@ shared:
         # password for root-user (postgres)
         root-password: asdfasdf
 ```
-2. User runs `depap server deploy --server_name <server_name>`
+2. User runs `compost server deploy --server_name <server_name>`
 3. It runs "state" steps and if it's not OK then exit
-4. Finds built-in snippets for shared services defined in depapp-server.yaml file
-5. It creates remote structure in DEPAP_SERVER_HOME
+4. Finds built-in snippets for shared services defined in compost-server.yaml file
+5. It creates remote structure in COMPOST_SERVER_HOME
 - shared/ingress/caddy-main; with generated docker-compose in services folder; with generated configuration in conf folder;
 - shared/database/postgres16; with generated docker-compose in services folder; with generated configuration in conf folder; with secrets in secrets folder;
 - connectors/database/postgres16; with generated root-connector.yaml that contains network_name, service_name, service_port, root_db, root_user, root_password that match posetgres16 values.
-6. It creates entries in depapp-server.yaml file in DEPAP_SERVER_HOME; sets "state" for each service as "candidate"
-7. User runs `depap server deploy --apply --server_name <server_name>`
+6. It creates entries in compost-server.yaml file in COMPOST_SERVER_HOME; sets "state" for each service as "candidate"
+7. User runs `compost server deploy --apply --server_name <server_name>`
 8. It runs all standard "deploy" steps
 9. It starts all services defined and mark their state as "deployed"
 10. It runs "state" again to check if everything is ok
 
 ## Static web application
-1. User defines depap.yaml
+1. User defines compost.yaml
 ```
 name: mystaticweb
 deployment:
@@ -276,7 +276,7 @@ app-services:
   - name: webapp
     service: front-webapp # docker compose service name
 ```
-and .depapp-staging.yaml
+and .compost-staging.yaml
 ```
 # by default prefix is taken from app name
 prefix: "staging"
@@ -285,12 +285,12 @@ services:
     - name: ui-front
       domains: ["staging.domain.tld", "www.staging.domain.tld"]
 ```
-2. User runs `depap app deploy --apply --server_name <server_name> -f depap.yaml -f .depap.yaml`
+2. User runs `compost app deploy --apply --server_name <server_name> -f compost.yaml -f .compost.yaml`
 3. It runs "server state" steps and if it's not OK then exit
-4. It creates remote structure in DEPAP_SERVER_HOME
+4. It creates remote structure in COMPOST_SERVER_HOME
 - apps/<app_name>/<app_prefix>/sources; with copy of all files from current directory
 - apps/<app_name>/<app_prefix>/compose; with a copy of docker-compose file
-- apps/<app_name>/<app_prefix>/depap.yaml; effective content of depap.yaml
+- apps/<app_name>/<app_prefix>/compost.yaml; effective content of compost.yaml
 5. Finds installed "ingress" service and asks for:
 - apply_application; It'll modify docker-compose file to be part of the same docker network as ingress instance (or create separate with additional rules if possible); 
 6. docker compose build && docker compose up -d
@@ -298,7 +298,7 @@ services:
 - after_apply_application; create file with revproxy rules (real app service name is <prefix>-front-webapp);It'll restart ingress service to apply new revproxy rules
 
 ## Web application with API
-1. User defines depap.yaml
+1. User defines compost.yaml
 ```
 name: mystaticweb
 deployment:
@@ -353,7 +353,7 @@ app-services:
       APP_MODE: "production"
       APP_FEATURE_USERS: true
 ```
-and .depapp-staging.yaml
+and .compost-staging.yaml
 ```
 # by default prefix is taken from app name
 prefix: "staging"
@@ -374,16 +374,16 @@ app-services:
     environment:
       APP_MODE: "staging"
 ```
-2. User runs `depap app deploy --apply --server_name <server_name> -f depap.yaml -f .depap.yaml`
+2. User runs `compost app deploy --apply --server_name <server_name> -f compost.yaml -f .compost.yaml`
 3. It runs "server state" steps and if it's not OK then exit
-4. It creates remote structure in DEPAP_SERVER_HOME
+4. It creates remote structure in COMPOST_SERVER_HOME
 - apps/<app_name>/<app_prefix>/sources; with copy of all files from current directory
 - apps/<app_name>/<app_prefix>/compose; with a copy of docker-compose file
-- apps/<app_name>/<app_prefix>/depap.yaml; effective content of depap.yaml
+- apps/<app_name>/<app_prefix>/compost.yaml; effective content of compost.yaml
 5. Finds installed "ingress" service and asks for:
 - apply_application; It'll modify docker-compose file to be part of the same docker network as ingress instance (or create separate with additional rules if possible);
 6. Finds installed "postgres" with version greater than 16 service and asks for apply_application;
-- pin exact version in apps/<app_name>/<app_prefix>/depap-env.yaml
+- pin exact version in apps/<app_name>/<app_prefix>/compost-env.yaml
 - It'll check if connection exist, if not then create it (in connectors/database/postgres16/<app_prefix>-<link_name>.yaml)
 - based on connection details database would be created if not exists
 - It'll set environment variables for database connection based on mappings from database link and store them in app's .env file in compose folder

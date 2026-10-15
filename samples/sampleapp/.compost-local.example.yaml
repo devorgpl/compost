@@ -1,8 +1,8 @@
-# Values for trying the sample on this machine. No secrets (depap generates
-# the database password), so it also works as is. Copy to .depap-local.yaml
+# Values for trying the sample on this machine. No secrets (compost generates
+# the database password), so it also works as is. Copy to .compost-local.yaml
 # and deploy with:
 #
-#   depap app deploy --apply -f depap.yaml,.depap-local.yaml
+#   compost app deploy --apply -f compost.yaml,.compost-local.yaml
 #   curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits
 prefix: local
 

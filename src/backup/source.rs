@@ -1,4 +1,4 @@
-//! Reading a depap archive for restore. It is unpacked where it is: in a
+//! Reading a compost archive for restore. It is unpacked where it is: in a
 //! local temporary folder, or next to the archive on the server.
 
 use std::fs::{self, File};
@@ -29,7 +29,7 @@ impl<'c> Archive<'c> {
     pub fn open_local(connector: &'c dyn Connector, path: &Path) -> Result<Self> {
         let file = File::open(path).map_err(|e| config_err(format!("{}: {e}", path.display())))?;
         let dir = tempfile::Builder::new()
-            .prefix("depap-restore-")
+            .prefix("compost-restore-")
             .tempdir()?;
         // `unpack` refuses entries that would land outside `dir`.
         tar::Archive::new(GzDecoder::new(BufReader::new(file)))
@@ -181,7 +181,7 @@ impl Drop for Archive<'_> {
 
 fn not_an_archive(path: &str, reason: &str) -> anyhow::Error {
     config_err(format!(
-        "{path} is not a depap archive ({reason}); only backups in the depap format can be restored"
+        "{path} is not a compost archive ({reason}); only backups in the compost format can be restored"
     ))
 }
 
@@ -204,7 +204,7 @@ mod tests {
             )
             .unwrap();
         backup
-            .file("apps/a/p/depap.yaml", Role::Meta, b"name: a\n")
+            .file("apps/a/p/compost.yaml", Role::Meta, b"name: a\n")
             .unwrap();
         backup
     }
@@ -212,10 +212,13 @@ mod tests {
     #[test]
     fn local_round_trip() {
         let out = TempDir::new().unwrap();
-        let path = backup(Format::Depap, Output::Local(Some(out.path().to_path_buf())))
-            .finish("a-p-1")
-            .unwrap();
-        assert!(path.ends_with("a-p-1.depap.tar.gz"), "{path}");
+        let path = backup(
+            Format::Compost,
+            Output::Local(Some(out.path().to_path_buf())),
+        )
+        .finish("a-p-1")
+        .unwrap();
+        assert!(path.ends_with("a-p-1.compost.tar.gz"), "{path}");
         let mode = fs::metadata(&path).unwrap().permissions();
         assert_eq!(
             std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
@@ -224,7 +227,7 @@ mod tests {
 
         let archive = Archive::open_local(&LOCAL, Path::new(&path)).unwrap();
         assert_eq!(archive.manifest.items.len(), 2);
-        assert_eq!(archive.read("apps/a/p/depap.yaml").unwrap(), "name: a\n");
+        assert_eq!(archive.read("apps/a/p/compost.yaml").unwrap(), "name: a\n");
         let sink = out.path().join("fed");
         let script = format!("cat > {}", shell_quote(sink.to_str().unwrap()));
         archive
@@ -242,17 +245,17 @@ mod tests {
             dir: dir.clone(),
             name: None,
         };
-        let path = backup(Format::Depap, output).finish("a-p-1").unwrap();
-        assert_eq!(path, format!("{dir}/a-p-1.depap.tar.gz (on the server)"));
+        let path = backup(Format::Compost, output).finish("a-p-1").unwrap();
+        assert_eq!(path, format!("{dir}/a-p-1.compost.tar.gz (on the server)"));
         // Only the archive is left, no staging folder.
         let left: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(left, ["a-p-1.depap.tar.gz"]);
+        assert_eq!(left, ["a-p-1.compost.tar.gz"]);
 
-        let archive = Archive::open_server(&LOCAL, &format!("{dir}/a-p-1.depap.tar.gz")).unwrap();
-        assert_eq!(archive.read("apps/a/p/depap.yaml").unwrap(), "name: a\n");
+        let archive = Archive::open_server(&LOCAL, &format!("{dir}/a-p-1.compost.tar.gz")).unwrap();
+        assert_eq!(archive.read("apps/a/p/compost.yaml").unwrap(), "name: a\n");
         let sink = home.path().join("fed");
         let script = format!("cat > {}", shell_quote(sink.to_str().unwrap()));
         archive
@@ -277,7 +280,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "SELECT 1;");
 
         let err = Archive::open_local(&LOCAL, Path::new(&path)).err().unwrap();
-        assert!(err.to_string().contains("not a depap archive"), "{err}");
+        assert!(err.to_string().contains("not a compost archive"), "{err}");
     }
 
     #[test]
@@ -285,7 +288,7 @@ mod tests {
         let out = TempDir::new().unwrap();
         let target = out.path().join("x.tar.gz");
         fs::write(&target, "keep").unwrap();
-        let err = backup(Format::Depap, Output::Local(Some(target.clone())))
+        let err = backup(Format::Compost, Output::Local(Some(target.clone())))
             .finish("a")
             .unwrap_err();
         assert!(format!("{err:#}").contains("cannot create"), "{err:#}");

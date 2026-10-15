@@ -1,4 +1,4 @@
-//! Application configuration: `depap.yaml` + deployment overlays (spec §6).
+//! Application configuration: `compost.yaml` + deployment overlays (spec §6).
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -94,7 +94,7 @@ pub struct AppService {
     pub environment: BTreeMap<String, Value>,
 }
 
-/// What depap needs to know about the user's compose file.
+/// What compost needs to know about the user's compose file.
 #[derive(Debug, Default)]
 pub struct ComposeFile {
     pub services: BTreeMap<String, ComposeService>,
@@ -124,7 +124,7 @@ impl ComposeService {
 pub struct LoadedApp {
     pub config: AppConfig,
     pub compose: ComposeFile,
-    /// Directory containing the first config file (normally depap.yaml).
+    /// Directory containing the first config file (normally compost.yaml).
     pub base_dir: PathBuf,
 }
 
@@ -154,7 +154,7 @@ impl AppConfig {
             config.prefix = prefix.to_string();
         }
 
-        // `depap.yaml` has the parent "", which means the current directory.
+        // `compost.yaml` has the parent "", which means the current directory.
         let base_dir = files
             .first()
             .and_then(|f| f.parent())
@@ -367,10 +367,10 @@ services:
     fn samples_are_valid() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/sampleapp");
         for (overlay, prefix) in [
-            (".depap-staging.example.yaml", "staging"),
-            (".depap-local.example.yaml", "local"),
+            (".compost-staging.example.yaml", "staging"),
+            (".compost-local.example.yaml", "local"),
         ] {
-            let files = [dir.join("depap.yaml"), dir.join(overlay)];
+            let files = [dir.join("compost.yaml"), dir.join(overlay)];
             let loaded =
                 AppConfig::load(&files, None).unwrap_or_else(|e| panic!("{overlay}: {e:#}"));
             assert_eq!(loaded.config.instance(), format!("sampleapp-{prefix}"));
@@ -382,8 +382,8 @@ services:
     fn prefix_override() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/sampleapp");
         let files = [
-            dir.join("depap.yaml"),
-            dir.join(".depap-staging.example.yaml"),
+            dir.join("compost.yaml"),
+            dir.join(".compost-staging.example.yaml"),
         ];
         let loaded = AppConfig::load(&files, Some("review")).unwrap();
         assert_eq!(loaded.config.instance(), "sampleapp-review");
@@ -409,14 +409,14 @@ services:
         };
 
         let loaded =
-            AppConfig::load_with(&[dir.join("depap.yaml")], Some(stored.clone()), None).unwrap();
+            AppConfig::load_with(&[dir.join("compost.yaml")], Some(stored.clone()), None).unwrap();
         assert_eq!(loaded.config.instance(), "sampleapp-staging");
         assert_eq!(domains(&loaded), "stored.example.com");
 
         // A local overlay wins over the stored values.
         let files = [
-            dir.join("depap.yaml"),
-            dir.join(".depap-local.example.yaml"),
+            dir.join("compost.yaml"),
+            dir.join(".compost-local.example.yaml"),
         ];
         let loaded = AppConfig::load_with(&files, Some(stored), None).unwrap();
         assert_eq!(loaded.config.instance(), "sampleapp-local");

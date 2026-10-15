@@ -106,9 +106,9 @@ mod tests {
         let ssh = Ssh {
             address: "10.0.0.1".into(),
             port: 2222,
-            user: "depapuser".into(),
+            user: "compostuser".into(),
             identity_file: Some("~/.ssh/id_ed25519".into()),
-            control_path: Some("/home/u/.depap/ssh/%C".into()),
+            control_path: Some("/home/u/.compost/ssh/%C".into()),
             verbose: false,
         };
         assert_eq!(
@@ -125,11 +125,11 @@ mod tests {
                 "-o",
                 "ControlMaster=auto",
                 "-o",
-                "ControlPath=/home/u/.depap/ssh/%C",
+                "ControlPath=/home/u/.compost/ssh/%C",
                 "-o",
                 "ControlPersist=60",
                 "--",
-                "depapuser@10.0.0.1",
+                "compostuser@10.0.0.1",
                 r"sh -c 'echo '\''hi'\'''",
             ]
         );
@@ -138,8 +138,8 @@ mod tests {
     #[test]
     fn no_connection_sharing_for_long_paths() {
         assert_eq!(
-            control_path(Path::new("/home/u/.depap/ssh")).as_deref(),
-            Some("/home/u/.depap/ssh/%C")
+            control_path(Path::new("/home/u/.compost/ssh")).as_deref(),
+            Some("/home/u/.compost/ssh/%C")
         );
         assert_eq!(control_path(&Path::new("/tmp").join("x".repeat(80))), None);
     }

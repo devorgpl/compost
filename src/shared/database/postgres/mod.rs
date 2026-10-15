@@ -8,7 +8,7 @@ use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint};
 use super::{DatabaseType, KIND};
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::shared::{
     AppCtx, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx,
     SharedAppConfig, connectors_dir, generate_password, project_name, render_template, shared_dir,
@@ -36,7 +36,7 @@ impl DatabaseType for Postgres {
             prod: None,
             secrets: Some(include_str!("templates/generate/secrets.yaml")),
             notes: &[
-                "postgres: set `root_password` in .depap-server.secrets.yaml (copy the example). Optional: without it depap generates one on the first deploy; it cannot be changed later.",
+                "postgres: set `root_password` in .compost-server.secrets.yaml (copy the example). Optional: without it compost generates one on the first deploy; it cannot be changed later.",
             ],
         }
     }
@@ -124,7 +124,7 @@ impl DatabaseType for Postgres {
             .with_context(|| format!("cannot open database `{}`", record.db_name))?;
         if objects.trim() != "0" {
             if !replace {
-                return Err(DepapError::ServerNotReady(format!(
+                return Err(CompostError::ServerNotReady(format!(
                     "database `{}` is not empty; add --replace to drop and recreate it",
                     record.db_name
                 ))
@@ -457,7 +457,7 @@ mod tests {
 
             let compose = &rendered.files[0].contents;
             assert!(compose.contains("image: postgres:16"), "{compose}");
-            assert!(compose.contains("depap-db-postgres16:\n        aliases: [postgres16]"));
+            assert!(compose.contains("compost-db-postgres16:\n        aliases: [postgres16]"));
             let paths: Vec<_> = rendered
                 .files
                 .iter()

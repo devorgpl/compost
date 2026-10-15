@@ -25,10 +25,10 @@ const LINK_VALUES: [&str; 6] = [
 
 /// Docker network of one database; apps linked to it join this network.
 pub fn network_name(database: &str) -> String {
-    format!("depap-db-{database}")
+    format!("compost-db-{database}")
 }
 
-/// An entry under `services.database` in depap.yaml (spec §6.1).
+/// An entry under `services.database` in compost.yaml (spec §6.1).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseLink {

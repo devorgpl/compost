@@ -73,10 +73,10 @@ mod tests {
     fn resolve_path_expands_tilde() {
         let home = std::env::var("HOME").unwrap();
         assert_eq!(
-            LOCAL.resolve_path("~/.depap-server").unwrap(),
-            format!("{home}/.depap-server")
+            LOCAL.resolve_path("~/.compost-server").unwrap(),
+            format!("{home}/.compost-server")
         );
-        assert_eq!(LOCAL.resolve_path("/srv/depap").unwrap(), "/srv/depap");
+        assert_eq!(LOCAL.resolve_path("/srv/compost").unwrap(), "/srv/compost");
         assert_eq!(LOCAL.resolve_path("~other/x").unwrap(), "~other/x");
     }
 }

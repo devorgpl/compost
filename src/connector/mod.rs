@@ -1,4 +1,4 @@
-//! How depap runs commands on a server: locally or over SSH (spec §10.1, §14.2).
+//! How compost runs commands on a server: locally or over SSH (spec §10.1, §14.2).
 //!
 //! A connector only has to say which local process runs a script
 //! ([`Connector::command`]). Everything else (checked execution, streaming,
@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 use crate::config::local::{
-    ConnectorConfig, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DepapHome, ServerEntry,
+    CompostHome, ConnectorConfig, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, ServerEntry,
 };
 
 /// Exit status used by `read_file` to signal "file does not exist".
@@ -35,7 +35,7 @@ impl Output {
 }
 
 pub trait Connector {
-    /// Where commands run, for messages, e.g. `ssh depapuser@10.0.0.1:22`.
+    /// Where commands run, for messages, e.g. `ssh compostuser@10.0.0.1:22`.
     fn target(&self) -> String;
 
     /// The local process that runs a POSIX `sh` script on the server.
@@ -169,7 +169,7 @@ pub trait Connector {
 }
 
 /// The connector configured for a server in servers.yaml.
-pub fn open(server: &ServerEntry, home: &DepapHome, verbose: bool) -> Result<Box<dyn Connector>> {
+pub fn open(server: &ServerEntry, home: &CompostHome, verbose: bool) -> Result<Box<dyn Connector>> {
     Ok(match &server.connector {
         ConnectorConfig::Local => Box::new(local::Local { verbose }),
         ConnectorConfig::Ssh {

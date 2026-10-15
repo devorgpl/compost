@@ -1,7 +1,7 @@
 # Overlay for trying the samples on this machine (a `--local` server):
 # plain HTTP on port 18080, so it does not need ports 80/443 or real domains.
 #
-#   depap server deploy --apply -f depap-server.yaml,depap-server.local.yaml
+#   compost server deploy --apply -f compost-server.yaml,compost-server.local.yaml
 shared:
   ingress:
     - name: caddy-main

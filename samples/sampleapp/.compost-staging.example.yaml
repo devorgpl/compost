@@ -1,16 +1,16 @@
 # Values for the `staging` instance, including secrets. Copy to
-# .depap-staging.yaml (never commit the copy) and deploy with:
+# .compost-staging.yaml (never commit the copy) and deploy with:
 #
-#   depap app deploy --apply -f depap.yaml,.depap-staging.yaml
+#   compost app deploy --apply -f compost.yaml,.compost-staging.yaml
 #
-# Files named .depap-*.yaml are never uploaded with the sources.
+# Files named .compost-*.yaml are never uploaded with the sources.
 prefix: staging
 
 services:
   database:
     - name: main-db
       # Optional. Defaults: sampleapp_staging_main_db for both, and a
-      # generated password that depap keeps on the server.
+      # generated password that compost keeps on the server.
       db_name: sampleapp_staging
       db_user: sampleapp
       db_password: change-me-to-a-long-random-string

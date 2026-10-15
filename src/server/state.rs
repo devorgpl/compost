@@ -39,7 +39,7 @@ pub struct Report {
     pub detail: Option<String>,
     /// e.g. `docker 29.7.2, compose 2.40.0`
     pub docker: Option<String>,
-    /// DEPAP_SERVER_HOME as an absolute path.
+    /// COMPOST_SERVER_HOME as an absolute path.
     pub home: Option<String>,
     pub shared: Vec<SharedAppState>,
 }
@@ -105,7 +105,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
         Some(key) if key.trim() != manager_key => {
             report.status = Status::Foreign;
             report.detail = Some(format!(
-                "the server is managed by another depap installation (manager key {})",
+                "the server is managed by another compost installation (manager key {})",
                 key.trim()
             ));
             return Ok(report);

@@ -8,7 +8,7 @@ use ignore::WalkBuilder;
 use crate::config::app::Deployment;
 
 /// Patterns in this file (gitignore syntax) are not uploaded.
-const IGNORE_FILE: &str = ".depapignore";
+const IGNORE_FILE: &str = ".compostignore";
 
 /// Paths relative to `base_dir`, sorted. Without `attach_sources`/`build`
 /// only the compose file is uploaded.
@@ -43,9 +43,9 @@ pub fn collect(
         }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy();
-        // `.depap-staging.yaml`, `.depap.secrets.yaml`, …
-        let is_overlay =
-            (name.starts_with(".depap-") || name.starts_with(".depap.")) && name.ends_with(".yaml");
+        // `.compost-staging.yaml`, `.compost.secrets.yaml`, …
+        let is_overlay = (name.starts_with(".compost-") || name.starts_with(".compost."))
+            && name.ends_with(".yaml");
         if is_overlay || path.canonicalize().is_ok_and(|p| excluded.contains(&p)) {
             continue;
         }
@@ -84,32 +84,32 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let base = dir.path();
         for file in [
-            "depap.yaml",
+            "compost.yaml",
             "docker-compose.yaml",
             "src/main.rs",
             "dist/app.js",
             ".git/config",
-            ".depap-staging.yaml",
-            ".depap.secrets.yaml",
+            ".compost-staging.yaml",
+            ".compost.secrets.yaml",
             "secrets/prod.yaml",
             "node_modules/x.js",
         ] {
             write(base, file);
         }
-        fs::write(base.join(".depapignore"), "node_modules/\n").unwrap();
+        fs::write(base.join(".compostignore"), "node_modules/\n").unwrap();
         fs::write(base.join(".gitignore"), "dist/\n").unwrap();
 
         let deployment = Deployment {
             build: true,
             ..Deployment::default()
         };
-        let config_files = [base.join("depap.yaml"), base.join("secrets/prod.yaml")];
+        let config_files = [base.join("compost.yaml"), base.join("secrets/prod.yaml")];
         let files = collect(base, &deployment, &config_files).unwrap();
         let files: Vec<_> = files.iter().map(|f| f.to_str().unwrap()).collect();
         assert_eq!(
             files,
             [
-                ".depapignore",
+                ".compostignore",
                 ".gitignore",
                 "dist/app.js",
                 "docker-compose.yaml",

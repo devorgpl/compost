@@ -52,7 +52,9 @@ impl<'c> Backup<'c> {
     ) -> Result<Self> {
         let staging = match output {
             Output::Local(output) => Staging::Local {
-                dir: tempfile::Builder::new().prefix("depap-backup-").tempdir()?,
+                dir: tempfile::Builder::new()
+                    .prefix("compost-backup-")
+                    .tempdir()?,
                 output,
             },
             Output::Server {
@@ -161,10 +163,10 @@ impl<'c> Backup<'c> {
             (_, []) => bail!("nothing to back up"),
             (Format::Raw, [single]) => (format!("{stem}-{}", base_name(single)), None),
             (Format::Raw, _) => (format!("{stem}.tar.gz"), Some(items)),
-            (Format::Depap, _) => {
+            (Format::Compost, _) => {
                 let mut entries = vec![MANIFEST_FILE.to_string()];
                 entries.extend(items);
-                (format!("{stem}.depap.tar.gz"), Some(entries))
+                (format!("{stem}.compost.tar.gz"), Some(entries))
             }
         };
         let manifest = serde_yaml_ng::to_string(&self.manifest)?;

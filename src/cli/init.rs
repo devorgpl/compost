@@ -1,16 +1,16 @@
-//! `depap init` (spec §10.2).
+//! `compost init` (spec §10.2).
 
 use anyhow::Result;
 use clap::Args;
 use uuid::Uuid;
 
-use crate::config::local::{DepapHome, Manager, Servers};
+use crate::config::local::{CompostHome, Manager, Servers};
 use crate::error::config_err;
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
     /// Use this manager key (a UUID) instead of a new one, e.g. to manage the
-    /// servers of another depap installation from this machine
+    /// servers of another compost installation from this machine
     #[arg(long)]
     pub key: Option<String>,
     /// Replace the manager key of an initialized home
@@ -18,7 +18,7 @@ pub struct InitArgs {
     pub force: bool,
 }
 
-pub fn run(home: &DepapHome, args: InitArgs) -> Result<()> {
+pub fn run(home: &CompostHome, args: InitArgs) -> Result<()> {
     // Normalized, since servers compare the key as text.
     let key = match &args.key {
         Some(key) => Some(

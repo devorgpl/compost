@@ -1,11 +1,11 @@
-//! Server lock: only one mutating depap command per server at a time (spec §10.1).
+//! Server lock: only one mutating compost command per server at a time (spec §10.1).
 
 use std::time::SystemTime;
 
 use anyhow::Result;
 
 use crate::connector::{Connector, shell_quote};
-use crate::error::DepapError;
+use crate::error::CompostError;
 
 const LOCK_DIR: &str = "lock";
 /// Exit status of the lock script when the lock is already taken.
@@ -35,8 +35,8 @@ impl<'a> Lock<'a> {
                 let holder = connector
                     .read_file(&format!("{path}/holder"))?
                     .unwrap_or_else(|| "unknown".to_string());
-                Err(DepapError::ServerNotReady(format!(
-                    "the server is locked by another depap command ({})\n\
+                Err(CompostError::ServerNotReady(format!(
+                    "the server is locked by another compost command ({})\n\
                      If no other command is running, retry with --force-unlock.",
                     holder.trim()
                 ))
@@ -92,7 +92,8 @@ mod tests {
         let lock = Lock::acquire(&LOCAL, home, false).unwrap();
         let err = Lock::acquire(&LOCAL, home, false).err().unwrap();
         assert!(
-            err.to_string().contains("locked by another depap command"),
+            err.to_string()
+                .contains("locked by another compost command"),
             "{err}"
         );
 

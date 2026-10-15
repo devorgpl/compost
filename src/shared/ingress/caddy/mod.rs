@@ -59,7 +59,7 @@ impl IngressType for Caddy {
             prod: Some(include_str!("templates/generate/prod.yaml")),
             secrets: None,
             notes: &[
-                "caddy: point the domains of your apps to the server and set `acme_email` in depap-server.prod.yaml.",
+                "caddy: point the domains of your apps to the server and set `acme_email` in compost-server.prod.yaml.",
                 "caddy: locally, apps answer on http://<domain>:18080/; `*.localhost` domains need no DNS.",
             ],
         }
@@ -356,7 +356,7 @@ mod tests {
             "runs as the deploy user: {compose}"
         );
         assert!(compose.contains(r#""443:443/udp""#), "{compose}");
-        assert!(compose.contains("networks: [depap-ingress]"), "{compose}");
+        assert!(compose.contains("networks: [compost-ingress]"), "{compose}");
         assert!(
             compose.ends_with("external: true\n"),
             "keeps the final newline: {compose:?}"

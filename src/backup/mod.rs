@@ -18,19 +18,19 @@ use crate::config::server::{BackupSettings, BackupTarget};
 use crate::error::config_err;
 use crate::shared::ServerCtx;
 
-/// Default archive folder of the `server` target, relative to DEPAP_SERVER_HOME.
+/// Default archive folder of the `server` target, relative to COMPOST_SERVER_HOME.
 const DEFAULT_SERVER_PATH: &str = "backups";
 
-/// `depap`: archive with a manifest, restorable by depap. `raw`: the plain
-/// files (one file as is, several as a tar.gz), for use outside depap.
+/// `compost`: archive with a manifest, restorable by compost. `raw`: the plain
+/// files (one file as is, several as a tar.gz), for use outside compost.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum Format {
     #[default]
-    Depap,
+    Compost,
     Raw,
 }
 
-/// Configuration and secrets (`Meta`) are part of depap archives only; `raw`
+/// Configuration and secrets (`Meta`) are part of compost archives only; `raw`
 /// output holds the data alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {

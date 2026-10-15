@@ -1,5 +1,5 @@
 # Real secret files; only the *.example.yaml templates are committed.
-.depap-server.secrets.yaml
-.depap-*.yaml
-!.depap-*.example.yaml
-.depap.secrets.yaml
+.compost-server.secrets.yaml
+.compost-*.yaml
+!.compost-*.example.yaml
+.compost.secrets.yaml

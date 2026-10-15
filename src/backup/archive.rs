@@ -1,4 +1,4 @@
-//! `manifest.yaml`: the first entry of every depap archive.
+//! `manifest.yaml`: the first entry of every compost archive.
 
 use std::time::SystemTime;
 
@@ -12,7 +12,7 @@ pub struct Manifest {
     /// Version of the archive layout.
     pub format: u32,
     pub scope: Scope,
-    pub depap_version: String,
+    pub compost_version: String,
     pub created_at: String,
     /// Name of the server the backup was taken from.
     pub server: String,
@@ -78,7 +78,7 @@ impl Manifest {
         Self {
             format: FORMAT_VERSION,
             scope,
-            depap_version: env!("CARGO_PKG_VERSION").to_string(),
+            compost_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: humantime::format_rfc3339_seconds(SystemTime::now()).to_string(),
             server: server.to_string(),
             instances: Vec::new(),
@@ -103,7 +103,7 @@ impl Manifest {
     pub fn check_format(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.format == FORMAT_VERSION,
-            "archive format {} is not supported by this depap (supports {FORMAT_VERSION}); upgrade depap",
+            "archive format {} is not supported by this compost (supports {FORMAT_VERSION}); upgrade compost",
             self.format
         );
         Ok(())

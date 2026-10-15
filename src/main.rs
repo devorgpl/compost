@@ -1,4 +1,4 @@
-/// Like `println!`, but a closed stdout (e.g. `depap connector list | head`)
+/// Like `println!`, but a closed stdout (e.g. `compost connector list | head`)
 /// is ignored instead of panicking, so the command still finishes its work.
 macro_rules! out {
     ($($arg:tt)*) => {{
@@ -41,8 +41,8 @@ fn main() -> ExitCode {
         Err(err) => {
             eprintln!("error: {err:#}");
             let code = err
-                .downcast_ref::<error::DepapError>()
-                .map_or(1, error::DepapError::exit_code);
+                .downcast_ref::<error::CompostError>()
+                .map_or(1, error::CompostError::exit_code);
             ExitCode::from(code)
         }
     }

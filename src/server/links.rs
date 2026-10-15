@@ -1,4 +1,4 @@
-//! `depap connector list` (spec §10.11): shared apps and the app links to them.
+//! `compost connector list` (spec §10.11): shared apps and the app links to them.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -7,7 +7,7 @@ use super::state::{self as server_state, Report, Status};
 use super::state_file::StateFile;
 use crate::app::instance;
 use crate::connector::Connector;
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::shared::{self, AppCtx, ServerCtx, SharedAppConfig, connectors_dir};
 
 /// Fields every link record starts with, whatever its kind.
@@ -23,11 +23,11 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
     let home = match (report.status, &report.home) {
         (Status::Ok | Status::Degraded, Some(home)) => home.clone(),
         (Status::Uninitialized, _) => {
-            out!("No shared applications: depap has not deployed anything on this server.");
+            out!("No shared applications: compost has not deployed anything on this server.");
             return Ok(());
         }
         (status, _) => {
-            return Err(DepapError::ServerNotReady(format!(
+            return Err(CompostError::ServerNotReady(format!(
                 "server is {status}: {}",
                 report.detail.clone().unwrap_or_default()
             ))

@@ -1,4 +1,4 @@
-//! Server configuration: `depap-server.yaml` + `.depap-server.secrets.yaml` (spec §5).
+//! Server configuration: `compost-server.yaml` + `.compost-server.secrets.yaml` (spec §5).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -29,7 +29,7 @@ pub struct BackupSettings {
     #[serde(default)]
     pub target: BackupTarget,
     /// Archive folder of the `server` target: absolute, or relative to
-    /// DEPAP_SERVER_HOME. Default `backups`.
+    /// COMPOST_SERVER_HOME. Default `backups`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_path: Option<String>,
     /// Settings of the `s3` target (not implemented yet).
@@ -174,12 +174,12 @@ shared:
     #[test]
     fn samples_are_valid() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/server");
-        let secrets = dir.join(".depap-server.secrets.example.yaml");
-        let real = ServerConfig::load(&[dir.join("depap-server.yaml"), secrets]).unwrap();
+        let secrets = dir.join(".compost-server.secrets.example.yaml");
+        let real = ServerConfig::load(&[dir.join("compost-server.yaml"), secrets]).unwrap();
         assert_eq!(real.shared_apps().count(), 2);
         let local = ServerConfig::load(&[
-            dir.join("depap-server.yaml"),
-            dir.join("depap-server.local.yaml"),
+            dir.join("compost-server.yaml"),
+            dir.join("compost-server.local.yaml"),
         ])
         .unwrap();
         let caddy = &local.shared["ingress"][0].configuration;

@@ -1,3 +1,0 @@
-# Not uploaded to the server (gitignore syntax). .git and .depap-*.yaml are
-# always left out.
-__pycache__/

@@ -1,8 +1,8 @@
 # Shared applications of the server (spec §5). Safe to commit: secrets go in
-# .depap-server.secrets.yaml (see .depap-server.secrets.example.yaml).
+# .compost-server.secrets.yaml (see .compost-server.secrets.example.yaml).
 #
-#   depap server deploy            # upload files only
-#   depap server deploy --apply    # and start the services
+#   compost server deploy            # upload files only
+#   compost server deploy --apply    # and start the services
 shared:
   ingress:
     - name: caddy-main

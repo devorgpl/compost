@@ -1,4 +1,4 @@
-//! `depap app backup` (spec §10.13): link data, sources, volumes and images
+//! `compost app backup` (spec §10.13): link data, sources, volumes and images
 //! of one or every instance.
 
 use std::path::PathBuf;
@@ -175,7 +175,7 @@ pub fn check_link_filters(instances: &[Instance], filters: &[String]) -> Result<
             .any(|link| link_selected(one, &link.kind, &link.entry));
         if !found {
             return Err(config_err(format!(
-                "--link {filter}: no such link (use <entry> or <kind>:<entry>, see `depap app state`)"
+                "--link {filter}: no such link (use <entry> or <kind>:<entry>, see `compost app state`)"
             )));
         }
     }
@@ -208,7 +208,7 @@ fn backup_instance(
     // The overlay from `secret deploy`, which the effective config lacks.
     // Configuration, so not part of raw output.
     let stored = match options.format {
-        Format::Depap => ctx.read(&secrets::path(&app.name, &app.prefix))?,
+        Format::Compost => ctx.read(&secrets::path(&app.name, &app.prefix))?,
         Format::Raw => None,
     };
     if let Some(text) = stored {

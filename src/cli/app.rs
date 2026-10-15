@@ -1,4 +1,4 @@
-//! `depap app …` commands (spec §10.8–§10.10, §10.12).
+//! `compost app …` commands (spec §10.8–§10.10, §10.12).
 
 use std::path::PathBuf;
 
@@ -11,17 +11,17 @@ use crate::app::backup::{self, Component, Which};
 use crate::app::instance::Selector;
 use crate::app::{deploy, list, remove, restore, secrets, state};
 use crate::config::app::{AppConfig, default_prefix};
-use crate::config::local::{DepapHome, ServerEntry};
+use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
 use crate::config::{check_name, merge};
 use crate::connector;
 use crate::error::config_err;
 
-const APP_FILE: &str = "depap.yaml";
+const APP_FILE: &str = "compost.yaml";
 
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
-    /// Write a starter depap.yaml and .depap.secrets.example.yaml from the compose file
+    /// Write a starter compost.yaml and .compost.secrets.example.yaml from the compose file
     Generate(super::generate::AppGenerateArgs),
     /// List the application instances deployed on the server
     List,
@@ -33,7 +33,7 @@ pub enum AppCommand {
     Remove(RemoveArgs),
     /// Back up an application instance (or all of them)
     Backup(AppBackupArgs),
-    /// Restore an application instance from a depap backup
+    /// Restore an application instance from a compost backup
     Restore(AppRestoreArgs),
 }
 
@@ -81,7 +81,7 @@ pub struct RemoveArgs {
     /// Do not ask for confirmation
     #[arg(long)]
     pub yes: bool,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
@@ -104,14 +104,14 @@ pub struct AppBackupArgs {
     /// Stop the services while volumes are copied, for a consistent copy
     #[arg(long)]
     pub stop: bool,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct AppRestoreArgs {
-    /// Archive written by `depap app backup` (with `--source server`: a file in the server's backup folder)
+    /// Archive written by `compost app backup` (with `--source server`: a file in the server's backup folder)
     pub archive: String,
     /// Instance in the archive, e.g. `myapp-staging` (needed when it has several)
     #[arg(long, conflicts_with = "all")]
@@ -132,7 +132,7 @@ pub struct AppRestoreArgs {
     /// Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
     #[arg(long)]
     pub link: Vec<String>,
-    /// Where the archive is (default: `backup.target` of depap-server.yaml, else local)
+    /// Where the archive is (default: `backup.target` of compost-server.yaml, else local)
     #[arg(long, value_enum)]
     pub source: Option<BackupTarget>,
     /// Overwrite databases and volumes that already hold data
@@ -141,7 +141,7 @@ pub struct AppRestoreArgs {
     /// Do not ask for confirmation
     #[arg(long)]
     pub yes: bool,
-    /// Remove a lock left behind by an interrupted depap command
+    /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
 }
@@ -155,12 +155,12 @@ struct InstanceId {
 }
 
 pub fn run(
-    home: &DepapHome,
+    home: &CompostHome,
     server: Option<&str>,
     command: AppCommand,
     verbose: bool,
 ) -> Result<()> {
-    // Works without `depap init` or a server.
+    // Works without `compost init` or a server.
     if let AppCommand::Generate(args) = command {
         return super::generate::app(args);
     }
@@ -285,7 +285,7 @@ fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, Strin
     Ok((id.name, prefix))
 }
 
-/// The given files, or `depap.yaml` in the current directory.
+/// The given files, or `compost.yaml` in the current directory.
 fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     if !files.is_empty() {
         return Ok(files.to_vec());
@@ -293,14 +293,14 @@ fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let default = PathBuf::from(APP_FILE);
     if !default.exists() {
         return Err(config_err(format!(
-            "{APP_FILE} not found in the current directory (pass files with -f, an instance from `depap app list`, or --app and --prefix)"
+            "{APP_FILE} not found in the current directory (pass files with -f, an instance from `compost app list`, or --app and --prefix)"
         )));
     }
     Ok(vec![default])
 }
 
 fn deploy(
-    home: &DepapHome,
+    home: &CompostHome,
     manager_key: &str,
     server: &ServerEntry,
     args: AppDeployArgs,

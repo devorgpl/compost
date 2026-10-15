@@ -1,5 +1,5 @@
 # How sampleapp is deployed (spec §6.1). Safe to commit: domains and secrets
-# go in a deployment overlay (see .depap-staging.example.yaml).
+# go in a deployment overlay (see .compost-staging.example.yaml).
 name: sampleapp
 deployment:
   compose_file: docker-compose.yaml
@@ -39,6 +39,6 @@ app_services:
   - name: migrate
     service: migrate
 
-# Saved by `depap app backup` besides database dumps and sources.
+# Saved by `compost app backup` besides database dumps and sources.
 backup:
   volumes: [visits]

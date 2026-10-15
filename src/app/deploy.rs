@@ -1,4 +1,4 @@
-//! `depap app deploy` (spec §10.8).
+//! `compost app deploy` (spec §10.8).
 
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ use super::sources;
 use crate::config::app::{LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
-use crate::error::DepapError;
+use crate::error::CompostError;
 use crate::server::SERVER_CONFIG_FILE;
 use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
@@ -59,7 +59,7 @@ pub fn deploy(
         Status::Ok | Status::Degraded => {}
         Status::Uninitialized => {
             return Err(not_ready(
-                "the server has no shared applications yet; run `depap server deploy --apply` first",
+                "the server has no shared applications yet; run `compost server deploy --apply` first",
             ));
         }
         status => {
@@ -186,7 +186,7 @@ fn resolve_links<'a>(
 ) -> Result<Vec<Link<'a>>> {
     let text = ctx
         .read(SERVER_CONFIG_FILE)?
-        .context("the server has no depap-server.yaml; run `depap server deploy` first")?;
+        .context("the server has no compost-server.yaml; run `compost server deploy` first")?;
     let server_config = ServerConfig::parse(&text)?;
 
     let mut links = Vec::new();
@@ -292,5 +292,5 @@ fn apply(
 }
 
 fn not_ready(message: &str) -> anyhow::Error {
-    DepapError::ServerNotReady(message.to_string()).into()
+    CompostError::ServerNotReady(message.to_string()).into()
 }
