@@ -87,8 +87,8 @@ shared:
 | `image` | `caddy:<version>-alpine` | |
 | `configuration.http_port` | `80` | Host port |
 | `configuration.https_port` | `443` | Host port, TCP and UDP |
-| `configuration.tls` | `auto` | `auto`: certificates from Let's Encrypt · `internal`: Caddy's own CA, for testing · `off`: plain HTTP |
-| `configuration.acme_email` | – | Contact for the ACME account |
+| `configuration.tls` | `auto` | How sites get certificates: `auto`, `internal` or `off`, see [TLS](#tls) |
+| `configuration.acme_email` | – | Contact for the ACME account. Only with `tls: auto` |
 | `configuration.networks` | `[]` | Existing Docker networks Caddy joins too, so `sites` can reach containers compost doesn't manage. Never created: `server deploy` fails if one is missing |
 | `configuration.sites[]` | `[]` | Sites written by hand: `name`, `domains`, and `config`, the inside of a Caddyfile site block |
 | `configuration.access_log` | `false` | Log every request, as JSON, to Caddy's output. With [`monitoring`](#monitoring-shared-apps), the log goes to OpenObserve. An app's site gets it on the app's next `app deploy` |
@@ -104,6 +104,18 @@ shared:
 ```
 
 `sites` are for services compost doesn't deploy, typically while [migrating](Migration.md). A domain belongs to a site or to an app, not both: `app deploy` refuses a domain a site serves, and `server deploy` refuses a site for a domain an app serves.
+
+#### TLS
+
+`configuration.tls` applies to every domain Caddy serves, apps' and `sites` alike:
+
+| Value | Certificates | Ports |
+|---|---|---|
+| `auto` | From Let's Encrypt, renewed by Caddy. Every domain needs public DNS pointing to the server and port 80 or 443 reachable from the internet before the first deploy. HTTP redirects to HTTPS | `http_port` and `https_port` |
+| `internal` | Signed by Caddy's own local CA. Browsers warn unless they trust its root certificate, `data/caddy/pki/authorities/local/root.crt` in the Caddy folder. For test servers and domains without public DNS | `http_port` and `https_port` |
+| `off` | None: sites are served over plain HTTP. For a local machine, or behind another proxy that terminates TLS | `http_port` only; `https_port` is not published |
+
+`acme_email` is the contact Let's Encrypt uses for expiry warnings; compost refuses the config when it is set with any `tls` other than `auto`. Certificates are kept in `data/` (see [Files and folders](Files-and-Folders.md)) and are part of `server backup`, so a restored server doesn't request them again.
 
 With [`monitoring`](#monitoring-shared-apps), Caddy also serves its Prometheus metrics (requests, durations, sizes per host) on port 9180 inside its container, not published on the host, and the collector scrapes them. This needs Caddy 2.8 or newer; the default image is.
 

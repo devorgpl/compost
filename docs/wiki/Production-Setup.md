@@ -40,7 +40,7 @@ This writes:
 | File | Content | Commit? |
 |---|---|---|
 | `compost-server.yaml` | The shared apps, set up for this machine (Caddy on port 18080, no TLS) | yes |
-| `compost-server.prod.yaml` | What a real server changes: ports 80/443, `tls: auto`, `acme_email` | yes |
+| `compost-server.prod.yaml` | What a real server changes: ports 80/443, [`tls: auto`](Servers-and-Shared-Apps.md#tls), `acme_email` | yes |
 | `.compost-server.secrets.example.yaml` | The secret keys with placeholders | yes, as an example |
 
 Set `acme_email` in `compost-server.prod.yaml`. Then copy the secrets example and set real passwords, or remove keys you want compost to generate:
@@ -116,7 +116,7 @@ See [Backup and restore](Backup-and-Restore.md), also for moving to a new server
 
 ## Checklist
 
-- [ ] DNS for every domain points to the server before the first deploy with `tls: auto`.
+- [ ] DNS for every domain points to the server before the first deploy with `tls: auto` (see [TLS](Servers-and-Shared-Apps.md#tls)).
 - [ ] `.compost-server.secrets.yaml` and `.compost-<env>.yaml` are in `.gitignore`.
 - [ ] `~/.compost/compost-manager.yaml` is backed up: without the key you can't manage the server (or use `init --key` with the value from the server's `~/.compost-server/manager_key`).
 - [ ] Backups run and you have tried a restore.
