@@ -75,6 +75,10 @@ pub fn deploy(
 
     // 2. Render everything before changing anything on the server.
     let mut state_file = StateFile::load(&ctx)?;
+    let previous = match ctx.read(SERVER_CONFIG_FILE)? {
+        Some(text) => ServerConfig::parse(&text).ok(),
+        None => None,
+    };
     let mut plans = render_all(&ctx, config, &state_file)?;
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
@@ -123,15 +127,33 @@ pub fn deploy(
         let change = if plan.changed { "updated" } else { "unchanged" };
         out!("  {:<9} {:<16} {change}", plan.kind_name(), plan.app.name);
     }
-    for record in &state_file.shared {
-        let configured = plans
-            .iter()
-            .any(|p| p.kind_name() == record.kind && p.app.name == record.name);
-        if !configured {
+    let orphans: Vec<(String, String)> = state_file
+        .shared
+        .iter()
+        .filter(|record| {
+            !plans
+                .iter()
+                .any(|p| p.kind_name() == record.kind && p.app.name == record.name)
+        })
+        .map(|record| (record.kind.clone(), record.name.clone()))
+        .collect();
+    for (kind, name) in orphans {
+        let was_external = previous.as_ref().is_some_and(|config| {
+            config
+                .shared
+                .get(&kind)
+                .is_some_and(|apps| apps.iter().any(|a| a.name == name && a.is_external()))
+        });
+        if was_external && forget_external(&ctx, &kind, &name)? {
+            state_file.remove_shared(&kind, &name);
+            out!("  {kind:<9} {name:<16} removed: external, compost only forgets it");
+        } else if was_external {
             out!(
-                "  {:<9} {:<16} orphaned: not in the configuration any more, left as it is",
-                record.kind,
-                record.name
+                "  {kind:<9} {name:<16} orphaned: apps still link to it; deploy them without it first"
+            );
+        } else {
+            out!(
+                "  {kind:<9} {name:<16} orphaned: not in the configuration any more, left as it is"
             );
         }
     }
@@ -278,6 +300,23 @@ fn check_existing_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<
         }
     }
     Ok(())
+}
+
+/// Delete the records of an external shared app that was removed from the
+/// config, unless apps still link to it. Returns whether it was forgotten.
+fn forget_external(ctx: &ServerCtx, kind: &str, name: &str) -> Result<bool> {
+    let dir = shared::connectors_dir(kind, name);
+    let links = ctx
+        .connector
+        .list_dir(&ctx.path(&dir))?
+        .into_iter()
+        .any(|file| !file.starts_with("root-"));
+    if links {
+        return Ok(false);
+    }
+    ctx.connector
+        .exec(&format!("rm -rf -- {}", shell_quote(&ctx.path(&dir))))?;
+    Ok(true)
 }
 
 /// `shared/<kind>/<name>/compose.yaml`.

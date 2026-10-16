@@ -117,6 +117,10 @@ impl StateFile {
         }
     }
 
+    pub fn remove_shared(&mut self, kind: &str, name: &str) {
+        self.shared.retain(|r| !(r.kind == kind && r.name == name));
+    }
+
     pub fn app(&self, name: &str, prefix: &str) -> Option<&AppRecord> {
         self.apps
             .iter()

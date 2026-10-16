@@ -629,6 +629,22 @@ fn external_database_is_linked_and_backed_up_but_never_run() {
         .stderr(contains(
             "warning: database `shop` on legacy-db is kept: it is external",
         ));
+
+    // Removed from the config, an external database is forgotten once no app uses it.
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &env)
+        .success()
+        .stdout(contains(
+            "legacy-db        removed: external, compost only forgets it",
+        ));
+    assert!(
+        !server
+            .server_home
+            .join("connectors/database/legacy-db")
+            .exists()
+    );
+    assert!(!server.read_server_file("state.yaml").contains("legacy-db"));
 }
 
 #[test]
