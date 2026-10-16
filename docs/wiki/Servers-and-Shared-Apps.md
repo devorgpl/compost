@@ -54,7 +54,7 @@ compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
 3. renders each shared app's files and uploads them, generating missing passwords;
 4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`.
 
-Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated.
+Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
 Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`.
 
@@ -87,6 +87,20 @@ shared:
 | `configuration.https_port` | `443` | Host port, TCP and UDP |
 | `configuration.tls` | `auto` | `auto`: certificates from Let's Encrypt · `internal`: Caddy's own CA, for testing · `off`: plain HTTP |
 | `configuration.acme_email` | – | Contact for the ACME account |
+| `configuration.networks` | `[]` | Existing Docker networks Caddy joins too, so `sites` can reach containers compost doesn't manage. Never created: `server deploy` fails if one is missing |
+| `configuration.sites[]` | `[]` | Sites written by hand: `name`, `domains`, and `config`, the inside of a Caddyfile site block |
+
+```yaml
+      configuration:
+        networks: [shop_default]
+        sites:
+          - name: shop
+            domains: [shop.example.com]
+            config: |
+              reverse_proxy backend:5000
+```
+
+`sites` are for services compost doesn't deploy, typically while [migrating](Migration.md). A domain belongs to a site or to an app, not both: `app deploy` refuses a domain a site serves, and `server deploy` refuses a site for a domain an app serves.
 
 Caddy runs as the server user, so its files can be backed up and removed without root. Hosts and paths no app uses get a 404. When an app is deployed, Caddy is reloaded, not restarted; a site that fails `caddy validate` is rolled back and fails the deploy.
 
@@ -138,6 +152,50 @@ shared:
 | `configuration.database.instance` | – | The database to use, when several match |
 
 Its data lives in that database: back them up and restore them together. Apps reach it on network `compost-oidc-<name>` at `http://<name>:8080`. Keycloak gets 180 s to start. See [Applications](Applications.md#oidc-links) for linking apps to it.
+
+## External databases
+
+A database compost doesn't run (an existing Postgres container, or a hosted one such as AWS RDS) can be added with `external`. Apps then link to it like to any database, and `app backup` dumps it.
+
+```yaml
+shared:
+  database:
+    - name: shop-db                    # an existing container on this server
+      type: postgres
+      version: 16                      # its major version
+      external:
+        host: db                       # service or container name
+        network: shop_default          # existing network to reach it on
+    - name: rds-main                   # AWS RDS
+      type: postgres
+      version: 16
+      external:
+        host: main.abc123.eu-central-1.rds.amazonaws.com
+        sslmode: require
+      configuration:                   # optional; root_password in the secrets file
+        root_user: postgres
+        root_password: …
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `external.host` | required | Host name or address, as the app's containers see it |
+| `external.port` | `5432` | |
+| `external.network` | – | Existing Docker network the database is on; linked services join it. Without it, containers reach the host like any other address |
+| `external.sslmode` | – | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; added to `db_url` and used by compost's own clients |
+| `external.allow_purge` | `false` | Let `--purge database` drop databases there (needs root credentials) |
+| `configuration.root_user` | `postgres` | Superuser, if compost may create databases there |
+| `configuration.root_password` | – | Its password; secret |
+
+What compost does with it:
+- **Runs nothing.** `server deploy` only checks that `network` exists and stores how to reach it. `server state` checks that it answers (`external, accepting connections`); if it doesn't, the state is `DEGRADED`.
+- **Links pin it.** A link uses an external database only with `instance: <name>`, so adding one never changes which database other apps get.
+- **Without root credentials**, links name an existing database, user and password (`db_name`, `db_user`, `db_password`), and compost creates nothing. **With them**, compost creates databases and users as on its own Postgres.
+- **Backups** run `pg_dump` and `psql` in a temporary `postgres:<version>-alpine` container on the server. The credentials go into an env file readable only by the server user, deleted after the run, never onto a command line. `server backup` leaves external databases out: `app backup` saves the apps' databases.
+- **Never destroys data by accident.** `--purge database` keeps databases there, with a warning, unless root credentials are set and `allow_purge: true`.
+- Removed from `compost-server.yaml` while no app links to it, it is forgotten by the next `server deploy`.
+
+Database names and users must be lowercase letters, digits and `_` (as compost's own); rename others before linking.
 
 ## Inspecting links
 

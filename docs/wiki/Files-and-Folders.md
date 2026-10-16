@@ -25,7 +25,7 @@ myapp/
 └── …
 ```
 
-Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns.
+Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns. With `deployment.source_dir`, the uploaded folder is that one instead, and `compost.yaml` can live in a separate deployment repository ([Applications](Applications.md#sources-in-another-folder)).
 
 ## In an infrastructure folder
 
@@ -47,6 +47,7 @@ infra/
 ├── compost-server.yaml               effective server config, without secrets
 ├── state.yaml                        status of shared apps and instances
 ├── lock/                             exists while a command changes the server
+├── tmp/                              short-lived files, e.g. client credentials for external databases
 ├── backups/                          archives of the `server` backup target
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy`
 ├── shared/
@@ -54,6 +55,7 @@ infra/
 │   │   ├── compose.yaml
 │   │   ├── conf/Caddyfile
 │   │   ├── conf/sites/<instance>-<entry>.caddy
+│   │   ├── conf/custom/<site>.caddy  `sites` of compost-server.yaml
 │   │   ├── data/                     certificates
 │   │   └── config/
 │   ├── database/postgres18/
@@ -67,9 +69,10 @@ infra/
 ├── connectors/                       link records, one per instance and entry
 │   ├── ingress/caddy-main/<instance>-<entry>.yaml
 │   ├── database/postgres18/root-connector.yaml, <instance>-<entry>.yaml
+│   │                                 (for an external database: how to reach it, and root credentials)
 │   └── oidc/keycloak/root-connector.yaml, <instance>-<entry>.yaml
 └── apps/<app>/<prefix>/
-    ├── sources/                      uploaded files
+    ├── sources/                      uploaded files; .compost/ holds the compose_overrides
     ├── compose/compost.override.yaml networks and variables added to your services
     ├── compost.yaml                  effective app config, without secrets
     └── compost-env.yaml              shared apps this instance uses; links still to remove

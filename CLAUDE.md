@@ -13,8 +13,9 @@ When a change is visible to users (a command, option, config key, default, outpu
 
   | Area | Page |
   |---|---|
-  | `compost.yaml`, overlays, links (ingress, database, oidc), `app *` | `Applications.md`, `Configuration.md` |
-  | `compost-server.yaml`, shared app types, `server *`, `connector list` | `Servers-and-Shared-Apps.md`, `Configuration.md` |
+  | `compost.yaml`, overlays, links (ingress, database, oidc), `source_dir`, `compose_overrides`, `app *` | `Applications.md`, `Configuration.md` |
+  | `compost-server.yaml`, shared app types, Caddy `networks`/`sites`, external databases, `server *`, `connector list` | `Servers-and-Shared-Apps.md`, `Configuration.md` |
+  | Anything that moving existing servers and apps to compost relies on | `Migration.md` (its procedure was run for real; keep it runnable) |
   | `secret *`, generated passwords | `Secrets.md` |
   | `app/server backup/restore`, `backup list` | `Backup-and-Restore.md` |
   | Files in `~/.compost`, the app repo or `~/.compost-server`, Docker names | `Files-and-Folders.md` |

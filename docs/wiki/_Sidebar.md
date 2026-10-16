@@ -5,6 +5,7 @@ Start
 - [Quick start](Quick-Start.md)
 - [Production setup](Production-Setup.md)
 - [Examples](Examples.md)
+- [Migrating to compost](Migration.md)
 
 Use
 - [Applications](Applications.md)

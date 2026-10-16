@@ -119,6 +119,89 @@ compost app list
 
 Or on two servers: `-s staging-server` and `-s prod-server`.
 
+## An app you don't own, from a deployment repository
+
+Deploy a third-party app pinned to a release, without adding files to its repository:
+
+```
+deploy/
+├── wiki/
+│   ├── compost.yaml
+│   ├── compose.prod.yaml
+│   └── .compost-prod.yaml       not committed
+└── upstream/wiki/               git submodule, checked out at a release tag
+```
+
+```yaml
+# deploy/wiki/compost.yaml
+name: wiki
+deployment:
+  source_dir: ../upstream/wiki
+  compose_overrides: [compose.prod.yaml]
+services:
+  database:
+    - name: main
+      type: postgres
+      version: ">=16"
+      targets: [app]
+      environment:
+        DB_URL: db_url
+  ingress:
+    - name: site
+      routes:
+        - {name: web, target: app, port: 3000}
+app_services:
+  - {name: app, service: app}
+```
+
+```yaml
+# deploy/wiki/compose.prod.yaml: the upstream file brings its own database; compost's is used instead
+services:
+  db: {profiles: [off]}
+  app:
+    depends_on: !reset {}
+    deploy:
+      resources: {limits: {memory: 1g}}
+```
+
+```sh
+cd deploy/wiki
+git -C ../upstream/wiki checkout v2.5.0
+compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+```
+
+## An app on AWS RDS
+
+The database is hosted; compost creates the app's database and user there with the RDS master user, and backs it up like its own:
+
+```yaml
+# compost-server.yaml
+shared:
+  database:
+    - name: rds-main
+      type: postgres
+      version: 16
+      external:
+        host: main.abc123.eu-central-1.rds.amazonaws.com
+        sslmode: require
+      configuration:
+        root_user: postgres            # the master user; root_password in .compost-server.secrets.yaml
+```
+
+```yaml
+# compost.yaml
+services:
+  database:
+    - name: main
+      type: postgres
+      instance: rds-main               # external databases are always pinned
+      targets: [backend]
+      environment:
+        DATABASE_URL: db_url           # …?sslmode=require
+```
+
+The server must reach RDS (security group, VPC). `compost server state` shows `external, accepting connections` when it does.
+
 ## Log in with Keycloak
 
 With Keycloak in `compost-server.yaml` (see [Servers and shared apps](Servers-and-Shared-Apps.md#keycloak-oidc)), add an OIDC link to the sample app:

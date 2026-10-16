@@ -35,7 +35,9 @@ Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.s
 name: myapp                            # required
 deployment:
   type: docker-compose                 # the only type
-  compose_file: docker-compose.yaml    # default
+  source_dir: .                        # folder uploaded and holding the compose file; relative to compost.yaml
+  compose_file: docker-compose.yaml    # default; relative to source_dir
+  compose_overrides: []                # more compose files applied after it; relative to compost.yaml
   build: false                         # true: `docker compose build` on the server; false: `pull`
   attach_sources: false                # upload the whole folder; forced true by build: true
 services:
@@ -72,11 +74,11 @@ backup:
 | `name` | required | Entry name |
 | `type` | required | `postgres` |
 | `version` | `"*"` | Requirement on the major version, e.g. `">=16"` |
-| `instance` | – | Pin a shared app by name |
+| `instance` | – | Pin a shared app by name; required for an external database |
 | `targets` | `[]` | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `db_host`, `db_port`, `db_name`, `db_user`, `db_password`, `db_url` |
 | `db_name`, `db_user` | `<app>_<prefix>_<entry>` | Overlay. `^[a-z_][a-z0-9_]{0,62}$` |
-| `db_password` | generated | Overlay, secret |
+| `db_password` | generated | Overlay, secret. Required for an external database without root credentials |
 
 ### `services.oidc[]`
 
@@ -125,6 +127,7 @@ shared:
     - {name: caddy-main, type: caddy, version: 2, configuration: {…}}
   database:
     - {name: postgres18, type: postgres, version: 18, image: postgres:18-alpine}
+    - {name: shop-db, type: postgres, version: 16, external: {host: db, network: shop_default}}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
 backup:
@@ -132,7 +135,7 @@ backup:
   server_path: backups                 # folder of the server target
 ```
 
-Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types). At most one ingress per server.
+Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server.
 
 ## servers.yaml
 

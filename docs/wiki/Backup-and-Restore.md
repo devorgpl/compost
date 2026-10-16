@@ -62,6 +62,8 @@ backup:
   volumes: [uploads]       # top-level `volumes:` keys of the compose file
 ```
 
+Links to an [external database](Servers-and-Shared-Apps.md#external-databases) are dumped too, from a temporary `postgres` client container on the server, with the link's own credentials.
+
 ## App restore
 
 ```sh
@@ -79,7 +81,21 @@ The copy needs other domains (one domain, one instance), and its databases follo
 
 **Without sources** (`--include links,volumes`), it loads data into the deployed instance: it lists what will be replaced, asks unless `--yes`, stops the services, loads, and starts them again.
 
-Databases and volumes that already hold data are only replaced with `--replace` (exit 3 otherwise).
+Databases and volumes that already hold data are only replaced with `--replace` (exit 3 otherwise). A link's database is created first if it doesn't exist yet, e.g. after `app deploy --no-apply` of a link that moved to another database.
+
+## Moving an app's data to another database
+
+Back up, point the link at the other database, render the deploy without starting it, load the data, deploy:
+
+```sh
+compost app backup myapp-prod -o before.compost.tar.gz
+# compost.yaml: change `instance` of the database link (e.g. from an external database to compost's)
+compost app deploy --no-apply -f compost.yaml,.compost-prod.yaml
+compost app restore before.compost.tar.gz --include links,volumes --yes
+compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+```
+
+The old database is left as it was. Volumes move the same way when their name changes, e.g. after removing an `external` volume from a compose override. See [Migration](Migration.md#phase-4-data-into-compost).
 
 ## Server backup and restore
 
@@ -88,7 +104,7 @@ compost server backup [--shared <name>]… [--format …] [-o …] [--target …
 compost server restore <archive> [--shared <name>]… [--source …] [--yes]
 ```
 
-A server backup holds the stored `compost-server.yaml`, all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates and config. It holds secrets.
+A server backup holds the stored `compost-server.yaml`, all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates, config and `sites`. It holds secrets. External databases are left out; `app backup` saves the apps' data on them.
 
 `server restore` is for a server that doesn't have these shared apps yet (exit 3 if one is deployed). It puts back the records and files, deploys the shared apps, loads their data and then deploys Keycloak, which finds its data in the restored database.
 

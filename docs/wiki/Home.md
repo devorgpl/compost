@@ -17,6 +17,7 @@ compost app deploy --apply -f compost.yaml,.compost-staging.yaml   # your app, w
 - **Instances:** the same app runs as `staging`, `prod` or a review copy, each with its own domains and data.
 - **Secrets:** passwords live in files you don't commit, or are stored on the server; generated ones are kept between deploys.
 - **Backup and restore:** apps and shared services, to this machine or to a folder on the server, also to make copies or move to a new server.
+- **Gradual migration:** Caddy serves existing containers, apps link to existing or hosted databases (e.g. AWS RDS), and `compost.yaml` can live apart from apps you don't own. See [Migrating to compost](Migration.md).
 
 Your compose file is never changed. compost adds networks and variables in an override file on the server.
 
@@ -41,6 +42,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
 | [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
+| [Migrating to compost](Migration.md) | | |
 
 ## Requirements
 

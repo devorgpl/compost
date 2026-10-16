@@ -59,6 +59,22 @@ app_services:
 
 Compose services not listed are deployed as they are, but links can't target them. compost never changes your compose file: it writes an override file on the server that adds networks and variables.
 
+## Sources in another folder
+
+`compost.yaml` doesn't have to live in the app's repository. In a separate deployment repository, `source_dir` points to the app's folder: that folder is uploaded (with `build: true` or `attach_sources: true`) and holds the compose file.
+
+```yaml
+name: shop
+deployment:
+  source_dir: ../upstream/shop          # relative to compost.yaml
+  compose_file: docker-compose.yaml     # relative to source_dir
+  compose_overrides: [compose.prod.yaml]   # relative to compost.yaml
+```
+
+`compose_overrides` are compose files applied after the app's own, as with `docker compose -f … -f …`. With them you can change an app you can't or don't want to edit: turn off services (`profiles: [off]`), reuse existing volumes (`external: true` with `name:`), change images or resources. Relative paths inside them refer to `source_dir`. They are uploaded with the sources as `.compost/compose-override-<n>.yaml`, so backups and restores include them.
+
+`compost app generate --compose-file ../upstream/shop/docker-compose.yaml` sets `source_dir` for you. See [Migration](Migration.md#where-compostyaml-lives) for a full layout.
+
 ## Ingress links
 
 An ingress entry routes domains to services. Domains usually differ per instance, so they go in the overlay.
@@ -108,6 +124,17 @@ services:
 | `db_url` | `postgres://user:password@postgres18:5432/dbname` |
 
 In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them.
+
+**Existing databases.** To link to a database compost doesn't run, register it as an [external database](Servers-and-Shared-Apps.md#external-databases) and pin it with `instance`. Unless compost has root credentials for it, give the existing `db_name`, `db_user` and `db_password`. compost then only passes them to the services:
+
+```yaml
+    - name: main
+      type: postgres
+      instance: shop-db
+      db_name: shop
+      db_user: shop
+      db_password: …           # in the overlay
+```
 
 ## OIDC links
 
@@ -195,7 +222,7 @@ Both read what the deploy stored on the server, so they don't need the app's rep
 compost app remove myapp-staging [--volumes] [--purge database,oidc] [--yes]
 ```
 
-Removes the routes and link records, then `docker compose down` and the instance's folder. Databases and realms stay unless their kind is in `--purge`; `--volumes` also removes the compose volumes. It asks for confirmation unless `--yes`. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
+Removes the routes and link records, then `docker compose down` and the instance's folder. Databases and realms stay unless their kind is in `--purge` (databases on an external server stay anyway, see [External databases](Servers-and-Shared-Apps.md#external-databases)); `--volumes` also removes the compose volumes, except external ones. It asks for confirmation unless `--yes`. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
 
 ## Validation errors
 
