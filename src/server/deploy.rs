@@ -33,6 +33,11 @@ struct Plan<'a> {
     hash: String,
     /// Rendered files differ from the last deploy (or it is new).
     changed: bool,
+    /// It was deployed and running after the last deploy.
+    was_deployed: bool,
+    /// Its compose files changed, so a reload is not enough. Known once the
+    /// files are written.
+    compose_changed: bool,
     /// Links to other shared apps, if it has any.
     consumer: Option<Consumer>,
 }
@@ -91,9 +96,11 @@ pub fn deploy(
     }
 
     // 4. Write networks and files.
+    check_existing_networks(connector, &plans)?;
     create_networks(connector, &plans)?;
     for plan in &mut plans {
-        write_files(&ctx, &plan.rendered)?;
+        let compose_path = compose_path(plan);
+        plan.compose_changed = write_files(&ctx, &plan.rendered, &compose_path)?;
         if let Some(consumer) = &plan.consumer {
             let override_changed = prepare_links(&ctx, plan, consumer).map_err(|e| {
                 CompostError::ServerNotReady(format!(
@@ -103,6 +110,7 @@ pub fn deploy(
                 ))
             })?;
             plan.changed |= override_changed;
+            plan.compose_changed |= override_changed;
         }
         if plan.changed {
             state_file.set_shared(
@@ -136,14 +144,16 @@ pub fn deploy(
     }
 
     // 5. Start. `docker compose up -d` leaves unchanged containers alone; containers
-    //    whose files changed are recreated, because compose cannot see those changes.
+    //    whose files changed are recreated, because compose cannot see those changes,
+    //    unless the shared app can reload changed configuration files itself.
     for plan in &plans {
         let kind = plan.kind_name();
         let deployed = state_file
             .shared(kind, &plan.app.name)
             .is_some_and(|r| r.status == DeployStatus::Deployed);
+        let recreate = !deployed && !reloaded(&ctx, plan)?;
 
-        match apply(&ctx, plan, !deployed) {
+        match apply(&ctx, plan, recreate) {
             Ok(()) => {
                 state_file.set_shared(kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
             }
@@ -174,9 +184,9 @@ fn render_all<'a>(
             .render(ctx, app)
             .with_context(|| format!("shared.{kind_name}[{}]", app.name))?;
         let hash = hash_rendered(&rendered);
-        let changed = state_file
-            .shared(kind.name(), &app.name)
-            .is_none_or(|record| record.config_hash != hash);
+        let record = state_file.shared(kind.name(), &app.name);
+        let changed = record.is_none_or(|record| record.config_hash != hash);
+        let was_deployed = record.is_some_and(|record| record.status == DeployStatus::Deployed);
         let consumer = config.consumer(kind_name, app)?;
         plans.push(Plan {
             kind,
@@ -184,6 +194,8 @@ fn render_all<'a>(
             rendered,
             hash,
             changed,
+            was_deployed,
+            compose_changed: true,
             consumer,
         });
     }
@@ -205,7 +217,13 @@ fn hash_rendered(rendered: &Rendered) -> String {
             hasher.update([0u8]);
         }
     }
-    for part in rendered.dirs.iter().chain(&rendered.networks) {
+    let lists = [
+        &rendered.dirs,
+        &rendered.networks,
+        &rendered.existing_networks,
+        &rendered.owned_dirs,
+    ];
+    for part in lists.into_iter().flatten() {
         hasher.update(part.as_bytes());
         hasher.update([0u8]);
     }
@@ -237,21 +255,95 @@ fn create_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<()> {
     Ok(())
 }
 
-fn write_files(ctx: &ServerCtx, rendered: &Rendered) -> Result<()> {
-    if !rendered.dirs.is_empty() {
-        let dirs: Vec<String> = rendered
-            .dirs
-            .iter()
-            .map(|d| shell_quote(&ctx.path(d)))
-            .collect();
+/// Networks of containers compost does not manage must exist: creating one
+/// would take it away from the compose project that should own it.
+fn check_existing_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<()> {
+    for plan in plans {
+        for network in &plan.rendered.existing_networks {
+            let exists = connector
+                .exec(&format!(
+                    "docker network inspect {} >/dev/null 2>&1 && echo yes || true",
+                    shell_quote(network)
+                ))?
+                .trim()
+                == "yes";
+            if !exists {
+                return Err(CompostError::ServerNotReady(format!(
+                    "{} {}: network `{network}` does not exist; compost only joins existing networks, it does not create them",
+                    plan.kind_name(),
+                    plan.app.name
+                ))
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `shared/<kind>/<name>/compose.yaml`.
+fn compose_path(plan: &Plan) -> String {
+    format!(
+        "{}/compose.yaml",
+        shared::shared_dir(plan.kind_name(), &plan.app.name)
+    )
+}
+
+/// Write the rendered files and delete files the shared app no longer has in
+/// its owned directories. Returns whether the compose file changed.
+fn write_files(ctx: &ServerCtx, rendered: &Rendered, compose_path: &str) -> Result<bool> {
+    let dirs: Vec<String> = rendered
+        .dirs
+        .iter()
+        .chain(&rendered.owned_dirs)
+        .map(|d| shell_quote(&ctx.path(d)))
+        .collect();
+    if !dirs.is_empty() {
         ctx.connector
             .exec(&format!("mkdir -p -- {}", dirs.join(" ")))?;
     }
+    let mut compose_changed = false;
     for file in &rendered.files {
+        let path = ctx.path(&file.path);
+        if file.path == compose_path {
+            compose_changed =
+                ctx.connector.read_file(&path)?.as_deref() != Some(file.contents.as_str());
+        }
         ctx.connector
-            .write_file(&ctx.path(&file.path), file.contents.as_bytes(), file.mode)?;
+            .write_file(&path, file.contents.as_bytes(), file.mode)?;
     }
-    Ok(())
+    for dir in &rendered.owned_dirs {
+        let keep: Vec<&str> = rendered
+            .files
+            .iter()
+            .filter_map(|file| file.path.strip_prefix(&format!("{dir}/")))
+            .collect();
+        for name in ctx.connector.list_dir(&ctx.path(dir))? {
+            if !keep.contains(&name.as_str()) {
+                let path = shell_quote(&ctx.path(&format!("{dir}/{name}")));
+                ctx.connector.exec(&format!("rm -f -- {path}"))?;
+            }
+        }
+    }
+    Ok(compose_changed)
+}
+
+/// A shared app that ran with the last deploy and whose compose files did not
+/// change can take changed configuration files with a reload, without a restart.
+fn reloaded(ctx: &ServerCtx, plan: &Plan) -> Result<bool> {
+    if !plan.changed || !plan.was_deployed || plan.compose_changed {
+        return Ok(false);
+    }
+    let reloaded = plan.kind.reload_shared(ctx, plan.app).map_err(|e| {
+        CompostError::ServerNotReady(format!("{} {}: {e:#}", plan.kind_name(), plan.app.name))
+    })?;
+    if reloaded {
+        out!(
+            "  reloaded {} {} without a restart",
+            plan.kind_name(),
+            plan.app.name
+        );
+    }
+    Ok(reloaded)
 }
 
 /// Run the links' `prepare_application` and write the compose override.
@@ -271,7 +363,7 @@ fn prepare_links(ctx: &ServerCtx, plan: &Plan, consumer: &Consumer) -> Result<bo
             .with_context(|| link.path())?;
     }
     let dir = shared::shared_dir(plan.kind_name(), &plan.app.name);
-    let compose_path = format!("{dir}/compose.yaml");
+    let compose_path = compose_path(plan);
     let compose = plan
         .rendered
         .files
@@ -345,6 +437,13 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
         ctx.home
     );
     out!("  networks: {}", all_networks(plans).join(", "));
+    let existing: Vec<&str> = plans
+        .iter()
+        .flat_map(|plan| plan.rendered.existing_networks.iter().map(String::as_str))
+        .collect();
+    if !existing.is_empty() {
+        out!("  existing networks joined: {}", existing.join(", "));
+    }
     for plan in plans {
         let change = if plan.changed {
             "would update"

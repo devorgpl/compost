@@ -167,8 +167,14 @@ pub struct Rendered {
     pub files: Vec<RenderedFile>,
     /// Directories to create (relative), e.g. data folders mounted into containers.
     pub dirs: Vec<String>,
-    /// External docker networks the shared app joins.
+    /// External docker networks the shared app joins; compost creates them.
     pub networks: Vec<String>,
+    /// Docker networks the shared app joins that must exist already, e.g.
+    /// networks of containers compost does not manage. Never created.
+    pub existing_networks: Vec<String>,
+    /// Directories (relative) whose files are exactly the rendered ones:
+    /// deploy deletes the other files in them.
+    pub owned_dirs: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -265,6 +271,13 @@ pub trait Kind: Sync {
     /// How long `server deploy` waits for a shared app of this kind to run.
     fn start_timeout(&self) -> Duration {
         Duration::from_secs(60)
+    }
+
+    /// Apply changed configuration files to the running shared app without
+    /// recreating it. Called when files other than its compose files changed.
+    /// `Ok(false)`: not supported or not running, so deploy recreates it.
+    fn reload_shared(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Result<bool> {
+        Ok(false)
     }
 
     // --- Links from applications (entries under `services.<kind>` in compost.yaml).

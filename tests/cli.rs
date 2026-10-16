@@ -108,7 +108,8 @@ fn define_list_connect_disconnect() {
 
 /// A `docker` stand-in, so tests do not need Docker. Every call is appended to
 /// $FAKE_DOCKER_LOG. Set FAKE_DOCKER_RUNNING=1 to report containers as running,
-/// FAKE_DOCKER_DOWN=1 to fail like a missing daemon.
+/// FAKE_DOCKER_DOWN=1 to fail like a missing daemon, FAKE_DOCKER_NETWORKS to the
+/// networks that exist.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
@@ -119,7 +120,9 @@ case "$*" in
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*) ;;
-  "network inspect "*) exit 1 ;;
+  "network inspect "*)
+    for network in $FAKE_DOCKER_NETWORKS; do [ "$*" = "network inspect $network" ] && exit 0; done
+    exit 1 ;;
   "network create "*) ;;
   "ps "*) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
   *) echo "fake docker: unexpected call" >&2; exit 1 ;;
@@ -341,6 +344,106 @@ fn server_deploy_then_apply() {
     let log = server.take_docker_log();
     assert!(log.contains("up -d --quiet-pull\n"), "{log}");
     assert!(!log.contains("--force-recreate"), "{log}");
+}
+
+#[test]
+fn caddy_joins_existing_networks_and_serves_sites() {
+    let server = LocalServer::new();
+    let config = |sites: &str| {
+        format!(
+            "shared:\n  ingress:\n    - name: caddy-main\n      type: caddy\n      configuration:\n        networks: [shop_default]\n        sites: [{sites}]\n"
+        )
+    };
+    let shop = "{name: shop, domains: [shop.example.com], config: 'reverse_proxy shop-web-1:80'}";
+    let blog = "{name: blog, domains: [blog.example.com], config: 'reverse_proxy blog:2368'}";
+    server.write_work_file("compost-server.yaml", &config(&format!("{shop}, {blog}")));
+
+    // A network compost does not manage is never created.
+    server
+        .run(&["server", "deploy", "--apply"], &[])
+        .code(3)
+        .stderr(contains(
+            "network `shop_default` does not exist; compost only joins existing networks",
+        ));
+    let log = server.take_docker_log();
+    assert!(!log.contains("network create shop_default"), "{log}");
+
+    let running = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_DOCKER_NETWORKS", "shop_default"),
+    ];
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    let compose = server.read_server_file("shared/ingress/caddy-main/compose.yaml");
+    assert!(
+        compose.contains("networks: [compost-ingress, shop_default]"),
+        "{compose}"
+    );
+    let site = server.read_server_file("shared/ingress/caddy-main/conf/custom/shop.caddy");
+    assert!(
+        site.contains("shop.example.com {\n\treverse_proxy shop-web-1:80\n}"),
+        "{site}"
+    );
+    server.take_docker_log();
+
+    // Only a site changes: Caddy reloads it and is not recreated, and the
+    // file of the removed site is deleted.
+    server.write_work_file("compost-server.yaml", &config(shop));
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("reloaded ingress caddy-main without a restart"));
+    let log = server.take_docker_log();
+    assert!(log.contains("exec -T caddy caddy reload"), "{log}");
+    assert!(!log.contains("--force-recreate"), "{log}");
+    assert!(
+        !server
+            .server_home
+            .join("shared/ingress/caddy-main/conf/custom/blog.caddy")
+            .exists()
+    );
+
+    // An app cannot take a domain of a site.
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services:\n  web:\n    image: nginx\n",
+    );
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nservices:\n  ingress:\n    - name: site\n      domains: [shop.example.com]\n      routes: [{name: web, target: web, port: 80}]\napp_services: [{name: web, service: web}]\n",
+    );
+    server
+        .run(&["app", "deploy", "--apply", "-f", "app/compost.yaml"], &running)
+        .code(3)
+        .stderr(contains(
+            "domain `shop.example.com` is served by site `shop` of caddy-main in compost-server.yaml",
+        ));
+
+    // Nor can a site take the domain of an app.
+    let app = fs::read_to_string(server.env.work.path().join("app/compost.yaml")).unwrap();
+    server.write_work_file(
+        "app/compost.yaml",
+        &app.replace("shop.example.com", "new.example.com"),
+    );
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success();
+    server.write_work_file(
+        "compost-server.yaml",
+        &config(&format!(
+            "{shop}, {{name: new, domains: [new.example.com], config: 'respond 200'}}"
+        )),
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .code(3)
+        .stderr(contains(
+            "sites[new]: domain `new.example.com` is already served by shop/main (site)",
+        ));
 }
 
 #[test]

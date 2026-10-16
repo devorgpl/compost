@@ -10,7 +10,7 @@ use crate::config::app::{AppConfig, link_name};
 use crate::config::check_name;
 use crate::connector::shell_quote;
 use crate::shared::{
-    self as shared, AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig,
+    self as shared, AppCtx, Contribution, ItemWriter, Resolution, Role, ServerCtx, SharedAppConfig,
     connectors_dir, is_domain,
 };
 
@@ -335,6 +335,29 @@ pub fn remove_application(ctx: &AppCtx, entry: &str) -> Result<()> {
     let path = shell_quote(&record_path(ctx, entry));
     ctx.server.connector.exec(&format!("rm -f -- {path}"))?;
     Ok(())
+}
+
+/// Domains of the link records of an ingress, each with the link serving it,
+/// e.g. `myapp/staging (ui-front)`.
+pub fn domains_in_use(ctx: &ServerCtx, ingress: &str) -> Result<Vec<(String, String)>> {
+    let dir = ctx.path(&connectors_dir(KIND, ingress));
+    let mut used = Vec::new();
+    for file in ctx.connector.list_dir(&dir)? {
+        if !file.ends_with(".yaml") {
+            continue;
+        }
+        let path = format!("{dir}/{file}");
+        let Some(text) = ctx.connector.read_file(&path)? else {
+            continue;
+        };
+        let record: IngressRecord =
+            serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?;
+        let owner = format!("{}/{} ({})", record.app, record.prefix, record.entry);
+        for domain in record.domains {
+            used.push((domain, owner.clone()));
+        }
+    }
+    Ok(used)
 }
 
 /// A domain may be served by only one link.

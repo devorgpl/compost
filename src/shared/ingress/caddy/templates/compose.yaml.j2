@@ -14,9 +14,12 @@ services:
     volumes:
       - ./conf/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./conf/sites:/etc/caddy/sites:ro
+      - ./conf/custom:/etc/caddy/custom:ro
       - ./data:/data
       - ./config:/config
-    networks: [{{ network }}]
+    networks: [{{ networks | join(", ") }}]
 networks:
+{%- for network in networks %}
   {{ network }}:
     external: true
+{%- endfor %}

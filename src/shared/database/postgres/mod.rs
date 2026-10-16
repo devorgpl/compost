@@ -295,7 +295,7 @@ impl DatabaseType for Postgres {
                 ),
             ],
             dirs: vec![format!("{dir}/data")],
-            networks: Vec::new(),
+            ..Default::default()
         })
     }
 }

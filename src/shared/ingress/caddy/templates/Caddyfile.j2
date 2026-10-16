@@ -9,3 +9,8 @@
 
 # One file per application instance, written by `compost app deploy`.
 import /etc/caddy/sites/*.caddy
+{%- if custom_sites %}
+
+# Sites from `configuration.sites` in compost-server.yaml.
+import /etc/caddy/custom/*.caddy
+{%- endif %}

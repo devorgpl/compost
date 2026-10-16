@@ -81,6 +81,11 @@ pub trait IngressType: Sync {
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
 
+    /// Apply changed configuration files without a restart (see [`Kind::reload_shared`]).
+    fn reload_shared(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Make the proxy route the link's domains to the app.
     fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()>;
 }
@@ -127,6 +132,10 @@ impl Kind for IngressKind {
         let mut rendered = find_type(&config.type_name)?.render(ctx, config)?;
         rendered.networks.push(base::NETWORK.to_string());
         Ok(rendered)
+    }
+
+    fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
+        find_type(&config.type_name)?.reload_shared(ctx, config)
     }
 
     fn apply_order(&self) -> i32 {

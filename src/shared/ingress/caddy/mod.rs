@@ -1,15 +1,19 @@
 //! Caddy ingress type (spec §5.3, §9.2).
 
-use anyhow::{Context, Result, ensure};
+use std::collections::HashSet;
+
+use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::Deserialize;
 
 use super::base::{self, IngressLink};
 use super::{IngressType, KIND};
+use crate::config::check_name;
 use crate::connector::shell_quote;
+use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx,
-    SharedAppConfig, project_name, render_template, shared_dir,
+    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role,
+    ServerCtx, SharedAppConfig, is_domain, project_name, render_template, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -23,6 +27,11 @@ struct CaddyConfig {
     https_port: u16,
     tls: Tls,
     acme_email: Option<String>,
+    /// Existing docker networks Caddy joins besides compost-ingress, so
+    /// `sites` can reach containers compost does not manage.
+    networks: Vec<String>,
+    /// Sites written by hand, e.g. for apps not moved to compost yet.
+    sites: Vec<Site>,
 }
 
 impl Default for CaddyConfig {
@@ -32,9 +41,24 @@ impl Default for CaddyConfig {
             https_port: 443,
             tls: Tls::Auto,
             acme_email: None,
+            networks: Vec::new(),
+            sites: Vec::new(),
         }
     }
 }
+
+/// An entry of `configuration.sites`: Caddyfile directives served for its domains.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Site {
+    name: String,
+    domains: Vec<String>,
+    /// The body of the site block, e.g. `reverse_proxy shop-web-1:80`.
+    config: String,
+}
+
+/// Folder of the site files of `sites`, owned by `server deploy`.
+const CUSTOM_DIR: &str = "conf/custom";
 
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -92,7 +116,77 @@ impl IngressType for Caddy {
                 "acme_email is only used with `tls: auto`"
             );
         }
+
+        let mut networks = HashSet::new();
+        for network in &caddy.networks {
+            ensure!(
+                is_network_name(network),
+                "networks: `{network}` is not a docker network name"
+            );
+            ensure!(
+                network != base::NETWORK,
+                "networks: {} is always joined; list only other networks",
+                base::NETWORK
+            );
+            ensure!(
+                networks.insert(network),
+                "networks: `{network}` is listed twice"
+            );
+        }
+        let mut names = HashSet::new();
+        let mut domains = HashSet::new();
+        for site in &caddy.sites {
+            check_name("site name", &site.name)?;
+            ensure!(
+                names.insert(&site.name),
+                "sites: `{}` is defined twice",
+                site.name
+            );
+            ensure!(
+                !site.domains.is_empty(),
+                "sites[{}]: at least one domain is required",
+                site.name
+            );
+            for domain in &site.domains {
+                ensure!(
+                    is_domain(domain),
+                    "sites[{}]: `{domain}` is not a valid domain name",
+                    site.name
+                );
+                ensure!(
+                    domains.insert(domain),
+                    "sites[{}]: domain `{domain}` is used by another site",
+                    site.name
+                );
+            }
+            ensure!(
+                !site.config.trim().is_empty(),
+                "sites[{}]: config is empty",
+                site.name
+            );
+        }
         Ok(())
+    }
+
+    /// Extends the generic preparation: a domain of a site in
+    /// compost-server.yaml cannot be used by an app as well.
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &IngressLink,
+        out: &mut Contribution,
+    ) -> Result<()> {
+        let caddy: CaddyConfig = ctx.shared.configuration()?;
+        for site in &caddy.sites {
+            if let Some(domain) = link.domains.iter().find(|d| site.domains.contains(d)) {
+                bail!(
+                    "domain `{domain}` is served by site `{}` of {} in compost-server.yaml; remove it there and run `compost server deploy` first",
+                    site.name,
+                    ctx.shared.name
+                );
+            }
+        }
+        base::prepare_application(ctx, link, out)
     }
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
@@ -123,6 +217,8 @@ impl IngressType for Caddy {
             "unexpected output of `id`: {ids}"
         );
 
+        let mut networks = vec![base::NETWORK.to_string()];
+        networks.extend(caddy.networks.iter().cloned());
         let compose = render_template(
             include_str!("templates/compose.yaml.j2"),
             context! {
@@ -131,25 +227,63 @@ impl IngressType for Caddy {
                 http_port => caddy.http_port,
                 https_port => caddy.https_port,
                 publish_https => caddy.tls != Tls::Off,
-                network => base::NETWORK,
+                networks,
             },
         )?;
-        let caddyfile =
-            render_template(include_str!("templates/Caddyfile.j2"), context! { options })?;
+        let caddyfile = render_template(
+            include_str!("templates/Caddyfile.j2"),
+            context! { options, custom_sites => !caddy.sites.is_empty() },
+        )?;
 
         let dir = shared_dir(KIND, &config.name);
+        let mut files = vec![
+            RenderedFile::new(format!("{dir}/compose.yaml"), compose),
+            RenderedFile::new(format!("{dir}/conf/Caddyfile"), caddyfile),
+            RenderedFile::new(
+                format!("{dir}/conf/sites/00-default.caddy"),
+                include_str!("templates/default-site.caddy").to_string(),
+            ),
+        ];
+        if !caddy.sites.is_empty() {
+            check_site_conflicts(ctx, config, &caddy.sites)?;
+        }
+        for site in &caddy.sites {
+            files.push(RenderedFile::new(
+                format!("{dir}/{CUSTOM_DIR}/{}.caddy", site.name),
+                render_site(config, &caddy, site)?,
+            ));
+        }
         Ok(Rendered {
-            files: vec![
-                RenderedFile::new(format!("{dir}/compose.yaml"), compose),
-                RenderedFile::new(format!("{dir}/conf/Caddyfile"), caddyfile),
-                RenderedFile::new(
-                    format!("{dir}/conf/sites/00-default.caddy"),
-                    include_str!("templates/default-site.caddy").to_string(),
-                ),
-            ],
+            files,
             dirs: vec![format!("{dir}/data"), format!("{dir}/config")],
-            networks: Vec::new(),
+            existing_networks: caddy.networks,
+            owned_dirs: vec![format!("{dir}/{CUSTOM_DIR}")],
+            ..Default::default()
         })
+    }
+
+    /// Validate the configuration files, then reload them without a restart.
+    fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
+        let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
+        let project = shell_quote(&project_name(KIND, &config.name));
+        let running = ctx.connector.exec(&format!(
+            "cd {dir} && docker compose -p {project} ps --status running -q caddy"
+        ))?;
+        if running.trim().is_empty() {
+            return Ok(false);
+        }
+        let caddy = |command: &str| {
+            format!(
+                "cd {dir} && docker compose -p {project} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile"
+            )
+        };
+        ctx.connector.exec(&caddy("validate")).context(
+            "Caddy rejected the configuration; it keeps running with the previous one until it restarts",
+        )?;
+        ctx.connector
+            .exec(&caddy("reload"))
+            .context("Caddy could not reload its configuration")?;
+        Ok(true)
     }
 
     /// Write the site file, let Caddy validate it, then reload without downtime.
@@ -267,6 +401,46 @@ const BACKUP_DIRS: [&str; 3] = ["data", "config", "conf"];
 const RESTORE_DIRS: [&str; 2] = ["data", "config"];
 const BACKUP_ITEM: &str = "caddy.tar";
 
+/// Letters, digits, `_`, `.` and `-`, starting with a letter or digit, as docker allows.
+fn is_network_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+}
+
+/// The site block of an entry of `sites`, with its config indented.
+fn render_site(config: &SharedAppConfig, caddy: &CaddyConfig, site: &Site) -> Result<String> {
+    let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
+    let addresses: Vec<String> = site
+        .domains
+        .iter()
+        .map(|d| format!("{scheme}{d}"))
+        .collect();
+    let lines: Vec<String> = site.config.trim_end().lines().map(str::to_string).collect();
+    render_template(
+        include_str!("templates/custom-site.caddy.j2"),
+        context! {
+            shared => config.name.as_str(),
+            addresses => addresses.join(", "),
+            lines,
+        },
+    )
+}
+
+/// A domain of `sites` must not be served by an app already.
+fn check_site_conflicts(ctx: &ServerCtx, config: &SharedAppConfig, sites: &[Site]) -> Result<()> {
+    for (domain, owner) in base::domains_in_use(ctx, &config.name)? {
+        if let Some(site) = sites.iter().find(|s| s.domains.contains(&domain)) {
+            return Err(CompostError::ServerNotReady(format!(
+                "sites[{}]: domain `{domain}` is already served by {owner}",
+                site.name
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// `conf/sites/<instance>-<entry>.caddy` in the Caddy folder.
 fn site_path(ctx: &AppCtx, entry: &str) -> String {
     let dir = shared_dir(KIND, &ctx.shared.name);
@@ -311,6 +485,46 @@ mod tests {
         let err = validate("{name: c, type: caddy, configuration: {tls: off, acme_email: a@b.c}}")
             .unwrap_err();
         assert_eq!(err.to_string(), "acme_email is only used with `tls: auto`");
+    }
+
+    #[test]
+    fn checks_networks_and_sites() {
+        validate(
+            "{name: c, type: caddy, configuration: {networks: [shop_default], sites: [{name: shop, domains: [shop.example.com], config: 'reverse_proxy web:80'}]}}",
+        )
+        .unwrap();
+        for (configuration, expected) in [
+            ("{networks: ['-x']}", "not a docker network name"),
+            ("{networks: [compost-ingress]}", "always joined"),
+            ("{networks: [a, a]}", "listed twice"),
+            (
+                "{sites: [{name: Shop, domains: [a.com], config: x}]}",
+                "invalid site name",
+            ),
+            (
+                "{sites: [{name: a, domains: [], config: x}]}",
+                "at least one domain",
+            ),
+            (
+                "{sites: [{name: a, domains: [a.com], config: x}, {name: b, domains: [a.com], config: x}]}",
+                "used by another site",
+            ),
+            (
+                "{sites: [{name: a, domains: [a.com], config: x}, {name: a, domains: [b.com], config: x}]}",
+                "defined twice",
+            ),
+            (
+                "{sites: [{name: a, domains: [a.com], config: ' '}]}",
+                "config is empty",
+            ),
+        ] {
+            let err = validate(&format!(
+                "{{name: c, type: caddy, configuration: {configuration}}}"
+            ))
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains(expected), "{configuration}: {err}");
+        }
     }
 
     #[test]
@@ -376,6 +590,36 @@ mod tests {
                 "shared/ingress/caddy-main/config"
             ]
         );
+    }
+
+    #[test]
+    fn renders_networks_and_sites() {
+        let rendered = render(
+            "{name: c, type: caddy, configuration: {tls: off, networks: [shop_default], sites: [{name: shop, domains: [shop.example.com, www.shop.example.com], config: \"reverse_proxy shop-web-1:80\\n\\nheader {\\n  -Server\\n}\\n\"}]}}",
+        );
+        let compose = file(&rendered, "compose.yaml");
+        assert!(
+            compose.contains("networks: [compost-ingress, shop_default]"),
+            "{compose}"
+        );
+        assert!(
+            compose.contains("  shop_default:\n    external: true\n"),
+            "{compose}"
+        );
+        assert_eq!(rendered.existing_networks, ["shop_default"]);
+        assert_eq!(rendered.owned_dirs, ["shared/ingress/c/conf/custom"]);
+        assert!(file(&rendered, "conf/Caddyfile").contains("import /etc/caddy/custom/*.caddy"));
+        let site = file(&rendered, "conf/custom/shop.caddy");
+        assert!(
+            site.ends_with(
+                "http://shop.example.com, http://www.shop.example.com {\n\treverse_proxy shop-web-1:80\n\n\theader {\n\t  -Server\n\t}\n}\n"
+            ),
+            "{site:?}"
+        );
+
+        let rendered = render("{name: c, type: caddy}");
+        assert!(!file(&rendered, "conf/Caddyfile").contains("custom"));
+        assert!(rendered.existing_networks.is_empty());
     }
 
     #[test]

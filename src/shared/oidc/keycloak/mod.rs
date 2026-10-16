@@ -175,7 +175,7 @@ impl OidcType for Keycloak {
                 ),
             ],
             dirs: Vec::new(),
-            networks: Vec::new(),
+            ..Default::default()
         })
     }
 
