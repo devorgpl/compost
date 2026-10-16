@@ -176,7 +176,7 @@ Postgres is not published on a host port in 0.1. Only containers on its network 
 | `configuration.admin_password` | secret | generated | Like postgres `root_password`: only used on the first start, changing it later is an error |
 | `configuration.database.instance` | string | – | Pin the database when several match |
 
-Keycloak uses other shared apps (§9.1, shared links): a database of type `postgres` with version `>=18` (database `compost_oidc_<name>_db`, created like an app's), and the server's ingress, which routes the domain of `url` to it. Without a matching database or an ingress the config is invalid (exit 2). Its data lives in that database: back up and restore Keycloak together with it. Containers on `compost-oidc-<name>` reach it at `http://<name>:8080`.
+Keycloak uses other shared apps (§9.1, shared links): a database of type `postgres` with version `>=18` (database `compost_oidc_<name>_db`, created like an app's), and the server's ingress, which routes the domain of `url` to it. Without a matching database or an ingress the config is invalid (exit 2). Its data lives in that database: back up and restore Keycloak together with it. Apps on `compost-oidc-<name>` reach it at `http://<name>:8080`.
 
 ## 6. User application configuration
 
@@ -228,6 +228,38 @@ Database link values available in `environment` mappings:
 | `db_user` | `myapp_staging_system_data` |
 | `db_password` | (generated or from the overlay) |
 | `db_url` | `postgres://user:password@postgres16:5432/dbname` (user and password percent-encoded) |
+
+OIDC links (`services.oidc`) create a realm, a client and optionally users in an identity provider:
+```yaml
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      version: ">=26"                  # default "*"
+      instance: keycloak               # optional pin
+      realm: myapp                     # default <app>-<prefix>; created if missing
+      client_id: web                   # default <app>-<prefix>-<entry name>
+      public_client: false             # true: no client secret (e.g. a single-page app)
+      redirect_uris: ["https://staging.domain.tld/*"]   # required, usually in the overlay
+      web_origins: []
+      client_secret: …                 # secret; default generated on first deploy, then reused
+      users:                           # secret (the whole list); created if missing, passwords set on every deploy
+        - {username: alice, email: alice@domain.tld, first_name: Alice, last_name: Doe, password: …}
+      targets: [backend]
+      environment:
+        OIDC_ISSUER: oidc_issuer
+        OIDC_CLIENT_SECRET: oidc_client_secret
+```
+
+| Value | Example |
+|---|---|
+| `oidc_issuer` | `https://auth.domain.tld/realms/myapp` |
+| `oidc_internal_url` | `http://keycloak:8080/realms/myapp` (back channel, on `compost-oidc-<name>`) |
+| `oidc_realm` | `myapp` |
+| `oidc_client_id` | `web` |
+| `oidc_client_secret` | (generated or from the overlay; empty for public clients) |
+
+`app remove --purge oidc` deletes the client and the link's users, and the realm when no other link record uses it.
 
 Compose services not listed in `app_services` are deployed unchanged and cannot be linked. App names starting with `compost-` are reserved (§9.1).
 
@@ -323,7 +355,8 @@ $COMPOST_SERVER_HOME/
 │   │   ├── root-connector.yaml       # (0600)
 │   │   └── <instance>-<entry>.yaml   # (0600); compost-oidc-keycloak-db.yaml for keycloak's database
 │   └── oidc/keycloak/
-│       └── root-connector.yaml       # (0600)
+│       ├── root-connector.yaml       # (0600)
+│       └── <instance>-<entry>.yaml   # (0600)
 └── apps/<app>/<prefix>/
     ├── sources/                      # uploaded files (whole dir, or only the compose file)
     ├── compose/
@@ -383,6 +416,16 @@ entry: system-data
 db_name: mystagingappdb
 db_user: myappuser
 db_password: …
+```
+OIDC link `<instance>-<entry>.yaml`:
+```yaml
+app: myapp
+prefix: staging
+entry: login
+realm: myapp-staging
+client_id: myapp-staging-login
+client_secret: …
+users: [alice]
 ```
 Ingress link `<instance>-<entry>.yaml`:
 ```yaml
@@ -1060,7 +1103,7 @@ src/
       postgres/ (mod.rs, templates/)
     oidc/
       mod.rs         # trait OidcType, impl Kind, type registry
-      base.rs        # generic OIDC behavior (defaults)
+      base.rs        # generic OIDC link behavior (defaults)
       keycloak/ (mod.rs, templates/)
 ```
 
@@ -1074,7 +1117,7 @@ src/
 |---|---|---|
 | 0.2 | `app logs`, `app restart`, `server deploy --prune`, `-o json` output, Postgres tags and host port publishing | `state.yaml`, `DatabaseType` |
 | 0.3 | Backup/restore (§10.13–§10.18, done), `s3` backup target, S3 link | `Kind` backup hooks, new `s3` kind (`Kind` + `S3Type`) |
-| 0.4 | OIDC (Keycloak) link: realms, clients, users (Keycloak shared app done) | New `oidc` kind (`Kind` + `OidcType`), shared links |
+| 0.4 | OIDC (Keycloak) link: realms, clients, users (done) | New `oidc` kind (`Kind` + `OidcType`), shared links |
 | 0.5 | Logs (OpenObserve) and metrics | Hooks that add to the compose override |
 | 0.6 | Rollback (keep N previous `apps/…` revisions), per-instance networks | Atomic directory swap |
 | 1.0 | `compost-server` mode: API + WebUI; satellites that register with a parent server | `Connector` trait gets a `satellite` implementation |

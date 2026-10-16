@@ -1,18 +1,19 @@
-//! OIDC kind: identity providers.
+//! OIDC kind: identity providers that apps link to for login.
 
 mod base;
 mod keycloak;
 
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, Kind, Rendered, Resolution, ServerCtx, SharedAppConfig,
-    SharedLinks,
+    AppCtx, Contribution, Generated, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
+    SharedAppConfig, SharedLinks, parse_link,
 };
 use crate::config::app::AppConfig;
+use base::{Endpoint, OidcLink, OidcRecord};
 
 pub const KIND: &str = "oidc";
 
@@ -34,6 +35,31 @@ pub trait OidcType: Sync {
         base::validate_config(config)
     }
 
+    fn validate_link(&self, link: &OidcLink, app: &AppConfig) -> Result<()> {
+        base::validate_link(link, app)
+    }
+
+    fn prepare_application(
+        &self,
+        ctx: &AppCtx,
+        link: &OidcLink,
+        out: &mut Contribution,
+    ) -> Result<()> {
+        base::prepare_application(ctx, link, &self.endpoint(ctx.shared)?, out)
+    }
+
+    /// Delete the link record; with `purge`, delete the client and users first,
+    /// and the realm when no other link uses it.
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
+        if purge {
+            if let Some(record) = base::read_record(ctx, entry)? {
+                let delete_realm = !base::realm_used_elsewhere(ctx, entry, &record.realm)?;
+                self.purge(ctx, &record, delete_realm)?;
+            }
+        }
+        base::remove_application(ctx, entry)
+    }
+
     // Type-specific, no default.
 
     /// Starter configuration for `server generate`.
@@ -43,6 +69,15 @@ pub trait OidcType: Sync {
 
     /// The provider's own links, e.g. its database and its domain on the ingress.
     fn shared_links(&self, config: &SharedAppConfig) -> Result<Option<SharedLinks>>;
+
+    /// Public and internal base URLs of a provider.
+    fn endpoint(&self, config: &SharedAppConfig) -> Result<Endpoint>;
+
+    /// Create or update the realm, client and users, before the app starts.
+    fn before_apply_application(&self, ctx: &AppCtx, link: &OidcLink) -> Result<()>;
+
+    /// Delete what a link created (`app remove --purge oidc`).
+    fn purge(&self, ctx: &AppCtx, record: &OidcRecord, delete_realm: bool) -> Result<()>;
 }
 
 static TYPES: &[&dyn OidcType] = &[&keycloak::Keycloak];
@@ -92,46 +127,59 @@ impl Kind for OidcKind {
     }
 
     fn apply_order(&self) -> i32 {
-        15 // after databases, before ingress
+        15 // after databases, before ingress: the client must exist when the app starts
     }
 
-    // Apps cannot link to an OIDC provider yet.
+    fn link_secret_keys(&self) -> &'static [&'static str] {
+        &["client_secret", "users"]
+    }
 
-    fn validate_link(&self, _link: &Value, _app: &AppConfig) -> Result<()> {
-        bail!("links to oidc providers are not supported yet")
+    fn validate_link(&self, link: &Value, app: &AppConfig) -> Result<()> {
+        let link: OidcLink = parse_link(link)?;
+        find_type(&link.type_name)?.validate_link(&link, app)
     }
 
     fn resolve<'s>(
         &self,
-        _link: &Value,
-        _available: &'s [SharedAppConfig],
+        link: &Value,
+        available: &'s [SharedAppConfig],
     ) -> Result<Resolution<'s>> {
-        bail!("links to oidc providers are not supported yet")
+        base::resolve(&parse_link(link)?, available)
     }
 
     fn prepare_application(
         &self,
-        _ctx: &AppCtx,
-        _link: &Value,
-        _out: &mut Contribution,
+        ctx: &AppCtx,
+        link: &Value,
+        out: &mut Contribution,
     ) -> Result<()> {
-        Ok(())
+        find_type(&ctx.shared.type_name)?.prepare_application(ctx, &parse_link(link)?, out)
     }
 
-    fn before_apply_application(&self, _ctx: &AppCtx, _link: &Value) -> Result<()> {
-        Ok(())
+    fn before_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.before_apply_application(ctx, &parse_link(link)?)
     }
 
     fn after_apply_application(&self, _ctx: &AppCtx, _link: &Value) -> Result<()> {
         Ok(())
     }
 
-    fn describe_link(&self, _ctx: &AppCtx, _entry: &str) -> Result<String> {
-        Ok("no link record".to_string())
+    fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String> {
+        base::describe_link(ctx, entry)
     }
 
-    fn remove_application(&self, _ctx: &AppCtx, _entry: &str, _purge: bool) -> Result<()> {
-        Ok(())
+    fn supports_purge(&self) -> bool {
+        true
+    }
+
+    fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
+        find_type(&ctx.shared.type_name)?.remove_application(ctx, entry, purge)
+    }
+
+    /// The link record, for review. Realms, clients and users are in the
+    /// provider's database and are saved with it.
+    fn backup_link(&self, ctx: &AppCtx, entry: &str, out: &mut ItemWriter) -> Result<()> {
+        base::backup_link(ctx, entry, out).with_context(|| format!("oidc link `{entry}`"))
     }
 }
 

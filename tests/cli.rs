@@ -1791,6 +1791,97 @@ fn keycloak_uses_its_database_and_the_ingress() {
         .stdout(contains("keycloak  keycloak 26  running"));
 }
 
+const OIDC_APP_CONFIG: &str = "\
+name: myapp
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      targets: [backend]
+      redirect_uris: ['https://app.example.com/*']
+      users: [{username: alice, password: secret-pw}]
+      environment:
+        OIDC_ISSUER: oidc_issuer
+        OIDC_INTERNAL_URL: oidc_internal_url
+        OIDC_CLIENT_ID: oidc_client_id
+        OIDC_CLIENT_SECRET: oidc_client_secret
+app_services:
+  - name: backend
+    service: backend
+";
+
+#[test]
+fn oidc_link_creates_client_and_sets_variables() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+
+    server.write_work_file("app/compost.yaml", OIDC_APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {backend: {image: x}}\n",
+    );
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "oidc      login            keycloak: realm myapp-main, client myapp-main-login",
+        ));
+
+    let override_yaml = server.read_server_file("apps/myapp/main/compose/compost.override.yaml");
+    for expected in [
+        "OIDC_ISSUER: https://auth.example.com/realms/myapp-main",
+        "OIDC_INTERNAL_URL: http://keycloak:8080/realms/myapp-main",
+        "OIDC_CLIENT_ID: myapp-main-login",
+        "OIDC_CLIENT_SECRET: ",
+        "compost-oidc-keycloak: {}",
+    ] {
+        assert!(
+            override_yaml.contains(expected),
+            "missing {expected:?} in\n{override_yaml}"
+        );
+    }
+    let effective = server.read_server_file("apps/myapp/main/compost.yaml");
+    assert!(!effective.contains("secret-pw"), "{effective}");
+
+    let log = server.take_docker_log();
+    let script = log
+        .find("-p compost-oidc-keycloak exec -T keycloak bash -s")
+        .unwrap();
+    let started = log.find("-p myapp-main").unwrap();
+    assert!(script < started, "{log}");
+    assert!(
+        log.contains("kc create realms -s realm=\"$realm\""),
+        "{log}"
+    );
+    assert!(log.contains("\"clientId\":\"myapp-main-login\""), "{log}");
+    assert!(log.contains("\"value\":\"secret-pw\""), "{log}");
+
+    server
+        .run(
+            &["app", "remove", "myapp-main", "--purge", "oidc", "--yes"],
+            &running,
+        )
+        .success()
+        .stdout(contains("link oidc login to keycloak, and delete its data"));
+    let log = server.take_docker_log();
+    assert!(log.contains("kc delete \"clients/$id\""), "{log}");
+    assert!(log.contains("kc delete \"realms/$realm\""), "{log}");
+    assert!(
+        !server
+            .server_home
+            .join("connectors/oidc/keycloak/myapp-main-login.yaml")
+            .exists()
+    );
+}
+
 #[test]
 fn server_restore_starts_keycloak_after_loading_its_database() {
     let running = [("FAKE_DOCKER_RUNNING", "1")];

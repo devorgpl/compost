@@ -6,14 +6,16 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail, ensure};
 use minijinja::context;
 use serde::Deserialize;
+use serde_json::json;
 use serde_yaml_ng::Value;
 
-use super::base;
+use super::base::{self, Endpoint, OidcLink, OidcRecord};
 use super::{KIND, OidcType};
 use crate::config::app::AppService;
+use crate::connector::shell_quote;
 use crate::shared::{
-    Generated, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks, connectors_dir,
-    generate_password, is_domain, render_template, shared_dir,
+    AppCtx, Generated, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
+    connectors_dir, generate_password, is_domain, project_name, render_template, shared_dir,
 };
 
 pub struct Keycloak;
@@ -257,6 +259,35 @@ impl OidcType for Keycloak {
             ]),
         }))
     }
+
+    fn endpoint(&self, config: &SharedAppConfig) -> Result<Endpoint> {
+        let keycloak: KeycloakConfig = config.configuration()?;
+        Ok(Endpoint {
+            public_url: public_url(&keycloak)?.url,
+            internal_url: internal_url(&config.name),
+        })
+    }
+
+    fn before_apply_application(&self, ctx: &AppCtx, link: &OidcLink) -> Result<()> {
+        let record = base::record(ctx, link)?;
+        let script = provisioning_script(link, &record)?;
+        run_script(ctx, &script).map_err(|e| {
+            e.context(format!(
+                "creating client `{}` in realm `{}` failed",
+                record.client_id, record.realm
+            ))
+        })
+    }
+
+    fn purge(&self, ctx: &AppCtx, record: &OidcRecord, delete_realm: bool) -> Result<()> {
+        let script = purge_script(record, delete_realm)?;
+        run_script(ctx, &script).map_err(|e| {
+            e.context(format!(
+                "deleting client `{}` in realm `{}` failed",
+                record.client_id, record.realm
+            ))
+        })
+    }
 }
 
 /// The configured image, or the official one of the version.
@@ -287,6 +318,112 @@ fn read_variable(env_file: &str, name: &str) -> Option<String> {
         let value = line.strip_prefix(name)?.strip_prefix('=')?;
         Some(value.trim().trim_matches('\'').to_string())
     })
+}
+
+/// Names go into the script single-quoted; they were checked on deploy, but
+/// the record is a file on the server.
+fn check_record(record: &OidcRecord) -> Result<()> {
+    ensure!(
+        base::is_identifier(&record.realm)
+            && base::is_identifier(&record.client_id)
+            && record.users.iter().all(|u| base::is_username(u)),
+        "unexpected names in the link record"
+    );
+    Ok(())
+}
+
+/// Idempotent: creates the realm when missing, creates or updates the client,
+/// creates missing users and sets the passwords given.
+fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
+    check_record(record)?;
+    let mut client = json!({
+        "clientId": record.client_id,
+        "enabled": true,
+        "protocol": "openid-connect",
+        "publicClient": link.public_client,
+        "standardFlowEnabled": true,
+        "directAccessGrantsEnabled": false,
+        "redirectUris": link.redirect_uris,
+        "webOrigins": link.web_origins,
+    });
+    if let Some(secret) = &record.client_secret {
+        client["secret"] = json!(secret);
+    }
+    let users: Vec<_> = link
+        .users
+        .iter()
+        .map(|user| {
+            let mut json = json!({
+                "username": user.username,
+                "enabled": true,
+            });
+            if let Some(email) = &user.email {
+                json["email"] = json!(email);
+                json["emailVerified"] = json!(true);
+            }
+            if let Some(first) = &user.first_name {
+                json["firstName"] = json!(first);
+            }
+            if let Some(last) = &user.last_name {
+                json["lastName"] = json!(last);
+            }
+            let password_json = user.password.as_ref().map(|password| {
+                json!({"type": "password", "value": password, "temporary": false}).to_string()
+            });
+            context! {
+                username => user.username.as_str(),
+                json => json.to_string(),
+                password_json,
+            }
+        })
+        .collect();
+    render_template(
+        include_str!("templates/provision.sh.j2"),
+        context! {
+            purge => false,
+            realm => record.realm.as_str(),
+            client_id => record.client_id.as_str(),
+            client_json => client.to_string(),
+            users,
+        },
+    )
+}
+
+fn purge_script(record: &OidcRecord, delete_realm: bool) -> Result<String> {
+    check_record(record)?;
+    let users: Vec<_> = record
+        .users
+        .iter()
+        .map(|username| context! { username => username.as_str() })
+        .collect();
+    render_template(
+        include_str!("templates/provision.sh.j2"),
+        context! {
+            purge => true,
+            delete_realm,
+            realm => record.realm.as_str(),
+            client_id => record.client_id.as_str(),
+            users,
+        },
+    )
+}
+
+/// Run a script with bash inside the Keycloak container. Scripts hold
+/// secrets, so they go through stdin, never on the command line.
+fn run_script(ctx: &AppCtx, script: &str) -> Result<()> {
+    let command = format!(
+        "cd {} && docker compose -p {} exec -T {SERVICE} bash -s",
+        shell_quote(&ctx.server.path(&shared_dir(KIND, &ctx.shared.name))),
+        shell_quote(&project_name(KIND, &ctx.shared.name))
+    );
+    let output = ctx
+        .server
+        .connector
+        .run(&command, Some(script.as_bytes()))?;
+    if !output.success() {
+        bail!("{}", output.stderr.trim());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -444,5 +581,57 @@ mod tests {
             .unwrap_err();
             assert!(err.to_string().contains("differs"), "{err}");
         }
+    }
+
+    fn link(text: &str) -> OidcLink {
+        serde_yaml_ng::from_str(text).unwrap()
+    }
+
+    fn record(users: &[&str]) -> OidcRecord {
+        OidcRecord {
+            app: "a".into(),
+            prefix: "main".into(),
+            entry: "login".into(),
+            realm: "a-main".into(),
+            client_id: "a-main-login".into(),
+            client_secret: Some("s3cret".into()),
+            users: users.iter().map(|u| u.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn provisioning_script_keeps_secrets_in_here_documents() {
+        let link = link(
+            "{name: login, type: keycloak, targets: [x], redirect_uris: ['https://a.com/*'], users: [{username: alice, password: \"p'w$x\"}]}",
+        );
+        let script = provisioning_script(&link, &record(&["alice"])).unwrap();
+        assert!(script.contains("realm='a-main'"), "{script}");
+        assert!(
+            script.contains(r#""secret":"s3cret""#) && script.contains(r#""value":"p'w$x""#),
+            "{script}"
+        );
+        // Every line with a secret is inside a quoted here-document.
+        let mut in_document = false;
+        for line in script.lines() {
+            if line.contains("<<'COMPOST_JSON'") {
+                in_document = true;
+            } else if line == "COMPOST_JSON" {
+                in_document = false;
+            } else if line.contains("s3cret") || line.contains("p'w") {
+                assert!(in_document, "secret outside a here-document: {line}");
+            }
+        }
+        assert!(script.contains("-q username='alice' -q exact=true"));
+    }
+
+    #[test]
+    fn purge_script_deletes_realm_only_when_asked() {
+        let keep = purge_script(&record(&["alice"]), false).unwrap();
+        assert!(keep.contains("kc delete \"clients/$id\""), "{keep}");
+        assert!(keep.contains("username='alice'"), "{keep}");
+        assert!(!keep.contains("realms/$realm\" </dev/null; fi"), "{keep}");
+        let delete = purge_script(&record(&[]), true).unwrap();
+        assert!(delete.contains("kc delete \"realms/$realm\""), "{delete}");
+        assert!(!delete.contains("s3cret"), "{delete}");
     }
 }
