@@ -43,7 +43,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
 | [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
-| [Migrating to compost](Migration.md) | | |
+| [Migrating to compost](Migration.md) | | [AI agents](AI-Agents.md) |
 
 ## Requirements
 

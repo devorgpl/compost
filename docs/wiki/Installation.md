@@ -37,6 +37,8 @@ install -m 755 compost-vX.Y.Z-x86_64-unknown-linux-musl/compost ~/.local/bin/com
 compost --version
 ```
 
+Each release also has the documentation for AI agents: `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz` (see [AI agents](AI-Agents.md#from-a-release)).
+
 ## macOS
 
 There are no prebuilt macOS binaries yet. Build from source with [Rust](https://rustup.rs):
@@ -51,7 +53,7 @@ cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/compost --tag
 compost init
 ```
 
-This creates `~/.compost` with a new manager key (see [Files and folders](Files-and-Folders.md#on-your-machine)). Every other command except `server generate` and `app generate` needs it.
+This creates `~/.compost` with a new manager key (see [Files and folders](Files-and-Folders.md#on-your-machine)). Every other command except `server generate`, `app generate` and `agent` needs it.
 
 To manage servers that another machine already manages, use its key:
 

@@ -4,7 +4,7 @@ Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS
 
 compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers.
 
-**Documentation:** the [wiki](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md).
+**Documentation:** the [wiki](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md). For AI agents, [`docs/agents`](docs/agents) has `llms.txt`, `llms-full.txt` and a compost Agent Skill (`compost agent skill` installs it; see [AI agents](docs/wiki/AI-Agents.md)).
 
 ## Install
 
@@ -41,7 +41,7 @@ Needs Rust, plus [just](https://just.systems), `rustfmt` and `clippy`.
 just            # list recipes
 just ci         # formatting, clippy, tests, docs check: run before committing
 just try init   # run compost with a throwaway home in target/
-just docs       # regenerate docs/wiki/CLI-Reference.md after changing commands or options
+just docs       # regenerate CLI-Reference.md and docs/agents after changing commands, options or docs/wiki
 ```
 
 User-visible changes update the matching page in [`docs/wiki`](docs/wiki/Home.md) in the same commit.

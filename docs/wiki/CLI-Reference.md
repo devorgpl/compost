@@ -23,6 +23,7 @@ Commands:
   backup      Inspect backups
   secret      Store application secrets on the server for `app deploy`
   config      Set and show preferences, e.g. `deploy.apply`
+  agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -719,6 +720,52 @@ Show the preferences
 Usage: compost config show [OPTIONS]
 
 Options:
+  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose          Print every command run on the server
+  -h, --help             Print help
+```
+
+## `compost agent`
+
+```text
+Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
+
+Usage: compost agent [OPTIONS] <COMMAND>
+
+Commands:
+  llms   Print llms.txt: what compost is and an index of its documentation
+  skill  Install the compost Agent Skill, with the documentation of this version
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose          Print every command run on the server
+  -h, --help             Print help
+```
+
+## `compost agent llms`
+
+```text
+Print llms.txt: what compost is and an index of its documentation
+
+Usage: compost agent llms [OPTIONS]
+
+Options:
+      --full             Print llms-full.txt instead: the whole documentation of this version in one file
+  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose          Print every command run on the server
+  -h, --help             Print help
+```
+
+## `compost agent skill`
+
+```text
+Install the compost Agent Skill, with the documentation of this version
+
+Usage: compost agent skill [OPTIONS]
+
+Options:
+      --dir <DIR>        Skills folder; the skill goes in its `compost` subfolder, e.g. `~/.claude/skills` for all your projects or `.agents/skills` [default: .claude/skills]
   -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help

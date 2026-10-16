@@ -21,9 +21,13 @@ When a change is visible to users (a command, option, config key, default, outpu
   | Files in `~/.compost`, the app repo or `~/.compost-server`, Docker names | `Files-and-Folders.md` |
   | `config`, env vars, merge rules | `Configuration.md` |
   | Install, release artifacts | `Installation.md` |
+| `agent *`, `docs/agents` | `AI-Agents.md` |
   | A new feature worth a walkthrough | `Examples.md`, and `Home.md` if it changes what compost is |
 
-- A new page also goes in `_Sidebar.md` and the table in `Home.md`. Pages are flat (no folders), named `Words-With-Dashes.md`, and link to each other as `[Text](Page.md#heading)`; `just ci` checks those links.
+- `docs/agents` is the same documentation for AI agents, built into the binary (`compost agent`) and attached to releases. `just docs` generates `llms.txt`, `llms-full.txt` and the skill's `references/` from `docs/wiki`; never edit them by hand. Two files are written by hand:
+  - `llms-index.md`: one line per wiki page; `just ci` fails when a page is missing.
+  - `skills/compost/SKILL.md`: update it when a workflow, a command it names, or a default that matters for safety (e.g. what `--apply` or `--yes` does) changes.
+- A new page also goes in `_Sidebar.md`, the table in `Home.md` and `docs/agents/llms-index.md`. Pages are flat (no folders), named `Words-With-Dashes.md`, and link to each other as `[Text](Page.md#heading)`; `just ci` checks those links.
 - Pages don't name versions: use `vX.Y.Z` in examples.
 - Check what you write against the code, not `docs/design/`: the specs there are design history and are not updated.
 - `samples/README.md` and `samples/` are part of the docs: keep them working.

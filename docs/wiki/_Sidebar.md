@@ -17,3 +17,4 @@ Reference
 - [Configuration](Configuration.md)
 - [Files and folders](Files-and-Folders.md)
 - [CLI reference](CLI-Reference.md)
+- [AI agents](AI-Agents.md)

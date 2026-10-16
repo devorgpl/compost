@@ -1,5 +1,6 @@
 //! Command-line interface: argument definitions and dispatch to command modules.
 
+mod agent;
 mod app;
 mod config;
 mod context;
@@ -62,6 +63,9 @@ pub enum Command {
     /// Set and show preferences, e.g. `deploy.apply`
     #[command(subcommand)]
     Config(config::ConfigCommand),
+    /// Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
+    #[command(subcommand)]
+    Agent(agent::AgentCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -156,6 +160,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Command::Secret(command) => secret::run(&home, server, command, cli.verbose),
         Command::Config(command) => config::run(&home, command),
+        Command::Agent(command) => agent::run(command),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, cli.verbose),

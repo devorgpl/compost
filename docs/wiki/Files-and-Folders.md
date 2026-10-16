@@ -22,6 +22,7 @@ myapp/
 ├── .compost.secrets.example.yaml      example overlay from `app generate`; commit
 ├── .compost-staging.yaml              overlay with secrets; don't commit
 ├── .compostignore                     not uploaded (gitignore syntax)
+├── .claude/skills/compost/            Agent Skill from `compost agent skill`, if you install it there
 └── …
 ```
 

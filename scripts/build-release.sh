@@ -1,6 +1,8 @@
 #!/bin/sh
 # Build portable compost binaries for a release tag into dist/:
 #   dist/compost-<tag>-<target>.tar.gz   (compost binary + README.md)
+#   dist/compost-skill-<tag>.tar.gz      (the Agent Skill folder `compost`)
+#   dist/llms.txt, dist/llms-full.txt    (documentation for AI agents)
 #   dist/SHA256SUMS
 #
 #   scripts/build-release.sh v0.1.0
@@ -34,5 +36,9 @@ for target in $targets; do
     rm -r "dist/$name"
 done
 
-(cd dist && sha256sum ./*.tar.gz | sed 's| \./| |' >SHA256SUMS)
+# Documentation for AI agents, as generated in docs/agents by `just docs`.
+tar -C docs/agents/skills -czf "dist/compost-skill-$tag.tar.gz" compost
+cp docs/agents/llms.txt docs/agents/llms-full.txt dist/
+
+(cd dist && sha256sum ./*.tar.gz ./*.txt | sed 's| \./| |' >SHA256SUMS)
 cat dist/SHA256SUMS

@@ -53,7 +53,7 @@ jobs:
           GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: >
           scripts/gitea-release.sh "${{ github.ref_name }}" dist/RELEASE_NOTES.md
-          dist/*.tar.gz dist/SHA256SUMS
+          dist/*.tar.gz dist/*.txt dist/SHA256SUMS
 
       - name: Publish the documentation to the wiki
         if: ${{ !contains(github.ref_name, '-') }}

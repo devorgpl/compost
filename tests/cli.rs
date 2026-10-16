@@ -2683,3 +2683,63 @@ app_services:
         server.read_server_file("shared/monitoring/o2/collector/targets/myapp-main-telemetry.yaml");
     assert!(targets.contains("myapp-main-backend:9100"), "{targets}");
 }
+
+#[test]
+fn agent_prints_llms_txt_without_a_home() {
+    let env = Env::new();
+    env.compost(&["agent", "llms"])
+        .success()
+        .stdout(predicates::str::starts_with("# compost\n"))
+        .stdout(contains("/wiki/Configuration"));
+    env.compost(&["agent", "llms", "--full"])
+        .success()
+        .stdout(contains("<!-- Configuration.md -->"))
+        .stdout(contains("## `compost agent skill`"));
+}
+
+#[test]
+fn agent_skill_installs_and_updates_the_skill() {
+    let env = Env::new();
+    let skills = env.work.path().join("skills");
+    let skill = skills.join("compost");
+    env.compost(&["agent", "skill", "--dir", skills.to_str().unwrap()])
+        .success()
+        .stdout(contains("Installed the compost skill"));
+    assert!(
+        fs::read_to_string(skill.join("SKILL.md"))
+            .unwrap()
+            .contains("name: compost")
+    );
+    assert!(skill.join("references/CLI-Reference.md").is_file());
+
+    // A second run replaces references/, dropping files that are no longer there.
+    fs::write(skill.join("references/Old-Page.md"), "old").unwrap();
+    env.compost(&["agent", "skill", "--dir", skills.to_str().unwrap()])
+        .success();
+    assert!(!skill.join("references/Old-Page.md").exists());
+    assert!(skill.join("references/Home.md").is_file());
+
+    // The default folder is .claude/skills in the current folder.
+    env.compost(&["agent", "skill"]).success();
+    assert!(
+        env.work
+            .path()
+            .join(".claude/skills/compost/SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn agent_skill_keeps_another_skill_named_compost() {
+    let env = Env::new();
+    let skill = env.work.path().join("skills/compost");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(skill.join("SKILL.md"), "---\nname: other\n---\n").unwrap();
+    env.compost(&["agent", "skill", "--dir", "skills"])
+        .code(2)
+        .stderr(contains("is another skill"));
+    assert_eq!(
+        fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "---\nname: other\n---\n"
+    );
+}
