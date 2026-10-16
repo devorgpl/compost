@@ -447,6 +447,59 @@ fn caddy_joins_existing_networks_and_serves_sites() {
 }
 
 #[test]
+fn app_from_another_folder_with_compose_overrides() {
+    let server = LocalServer::new();
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+
+    server.write_work_file(
+        "upstream/docker-compose.yaml",
+        "services:\n  web:\n    build: .\n",
+    );
+    server.write_work_file("upstream/Dockerfile", "FROM nginx\n");
+    server.write_work_file(
+        "deploy/compose.migrate.yaml",
+        "volumes:\n  data:\n    external: true\n    name: old_data\n",
+    );
+    server.write_work_file(
+        "deploy/compost.yaml",
+        "name: shop\ndeployment:\n  source_dir: ../upstream\n  compose_overrides: [compose.migrate.yaml]\n  build: true\napp_services: [{name: web, service: web}]\n",
+    );
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "deploy/compost.yaml"],
+            &running,
+        )
+        .success();
+
+    let sources = server.server_home.join("apps/shop/main/sources");
+    assert!(sources.join("Dockerfile").exists());
+    assert!(
+        !sources.join("compost.yaml").exists(),
+        "only the upstream folder is uploaded"
+    );
+    assert!(
+        fs::read_to_string(sources.join(".compost/compose-override-1.yaml"))
+            .unwrap()
+            .contains("name: old_data")
+    );
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("-f sources/docker-compose.yaml -f sources/.compost/compose-override-1.yaml -f compose/compost.override.yaml build"),
+        "{log}"
+    );
+    let stored = server.read_server_file("apps/shop/main/compost.yaml");
+    assert!(!stored.contains("source_dir"), "{stored}");
+    assert!(
+        stored.contains(".compost/compose-override-1.yaml"),
+        "{stored}"
+    );
+}
+
+#[test]
 fn server_deploy_respects_lock() {
     let server = LocalServer::new();
     server.write_work_file("compost-server.yaml", SERVER_CONFIG);

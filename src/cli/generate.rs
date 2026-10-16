@@ -273,8 +273,8 @@ pub fn app(args: AppGenerateArgs) -> Result<()> {
     };
     check_name("app name", &name)?;
 
-    let compose_file = args.compose_file.to_string_lossy();
-    let (config, secrets) = app_files(&name, &compose_file, &compose);
+    let (source_dir, compose_file) = split_compose_path(&args.compose_file);
+    let (config, secrets) = app_files(&name, source_dir.as_deref(), &compose_file, &compose);
     write_all(
         &[(APP_FILE, &config), (APP_SECRETS_EXAMPLE, &secrets)],
         args.force,
@@ -286,6 +286,24 @@ pub fn app(args: AppGenerateArgs) -> Result<()> {
     out!("  3. compost secret deploy .compost.secrets.yaml --prefix staging");
     out!("  4. compost app deploy --apply --prefix staging");
     Ok(())
+}
+
+/// A compose file outside the current folder, e.g. in a checkout of the app's
+/// repository, makes its folder the `source_dir`: `../shop/compose.yaml` →
+/// (`../shop`, `compose.yaml`). Other paths are kept as `compose_file`.
+fn split_compose_path(path: &Path) -> (Option<String>, String) {
+    let outside = path.is_absolute()
+        || path
+            .components()
+            .next()
+            .is_some_and(|c| c == std::path::Component::ParentDir);
+    match (outside, path.parent(), path.file_name()) {
+        (true, Some(dir), Some(file)) => (
+            Some(dir.to_string_lossy().to_string()),
+            file.to_string_lossy().to_string(),
+        ),
+        _ => (None, path.to_string_lossy().to_string()),
+    }
 }
 
 /// The current directory's name as an app name, e.g. `My_App` → `my-app`.
@@ -325,7 +343,12 @@ fn sanitize_name(raw: &str) -> String {
 }
 
 /// `compost.yaml` and `.compost.secrets.example.yaml` for the compose services.
-fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, String) {
+fn app_files(
+    name: &str,
+    source_dir: Option<&str>,
+    compose_file: &str,
+    compose: &ComposeFile,
+) -> (String, String) {
     let (services, skipped): (Vec<&str>, Vec<&str>) = compose
         .services
         .keys()
@@ -340,6 +363,12 @@ fn app_files(name: &str, compose_file: &str, compose: &ComposeFile) -> (String, 
          name: {name}\n\
          deployment:\n"
     );
+    if let Some(dir) = source_dir {
+        let _ = writeln!(
+            config,
+            "  # The app's own folder: uploaded, and where compose_file is.\n  source_dir: {dir}"
+        );
+    }
     if compose_file != DEFAULT_COMPOSE_FILE {
         let _ = writeln!(config, "  compose_file: {compose_file}");
     }
@@ -457,6 +486,7 @@ mod tests {
 
     fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
         let path = dir.join(name);
+        fs::create_dir_all(dir).unwrap();
         fs::write(&path, text).unwrap();
         path
     }
@@ -531,7 +561,7 @@ mod tests {
         )
         .unwrap();
         let compose = ComposeFile::parse(&compose_text).unwrap();
-        let (config, secrets) = app_files("my-app", "docker-compose.yaml", &compose);
+        let (config, secrets) = app_files("my-app", None, "docker-compose.yaml", &compose);
         assert!(config.contains("build: true"), "{config}");
 
         let dir = tempfile::tempdir().unwrap();
@@ -563,10 +593,47 @@ mod tests {
     }
 
     #[test]
+    fn compose_file_outside_becomes_source_dir() {
+        let split = |path: &str| split_compose_path(Path::new(path));
+        assert_eq!(
+            split("../shop/compose.yaml"),
+            (Some("../shop".into()), "compose.yaml".into())
+        );
+        assert_eq!(
+            split("/srv/shop/docker-compose.yaml"),
+            (Some("/srv/shop".into()), "docker-compose.yaml".into())
+        );
+        assert_eq!(
+            split("deploy/compose.yaml"),
+            (None, "deploy/compose.yaml".into())
+        );
+        assert_eq!(
+            split("docker-compose.yaml"),
+            (None, "docker-compose.yaml".into())
+        );
+
+        // The generated config finds the compose file there.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("upstream"),
+            "docker-compose.yaml",
+            "services: {web: {image: nginx}}",
+        );
+        let compose = ComposeFile::parse("services: {web: {image: nginx}}").unwrap();
+        let (config, secrets) =
+            app_files("shop", Some("../upstream"), "docker-compose.yaml", &compose);
+        assert!(config.contains("  source_dir: ../upstream\n"), "{config}");
+        let compost = write(&dir.path().join("deploy"), "compost.yaml", &config);
+        let overlay = write(&dir.path().join("deploy"), "secrets.yaml", &secrets);
+        let loaded = AppConfig::load(&[compost, overlay], None).unwrap();
+        assert_eq!(loaded.source_dir, dir.path().join("deploy/../upstream"));
+    }
+
+    #[test]
     fn app_files_skip_invalid_service_names() {
         let compose =
             ComposeFile::parse("{services: {web: {image: x}, Bad_Name: {image: y}}}").unwrap();
-        let (config, _) = app_files("a", "compose.yaml", &compose);
+        let (config, _) = app_files("a", None, "compose.yaml", &compose);
         assert!(config.contains("compose_file: compose.yaml"));
         assert!(config.contains("build: false"));
         assert!(

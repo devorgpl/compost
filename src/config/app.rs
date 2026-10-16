@@ -14,6 +14,9 @@ use crate::shared;
 
 const DEFAULT_PREFIX: &str = "main";
 const DEFAULT_COMPOSE_FILE: &str = "docker-compose.yaml";
+const DEFAULT_SOURCE_DIR: &str = ".";
+/// Folder in the uploaded sources that holds copies of `compose_overrides`.
+pub const OVERRIDES_DIR: &str = ".compost";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -52,9 +55,24 @@ impl BackupConfig {
 pub struct Deployment {
     #[serde(rename = "type")]
     pub kind: DeploymentType,
+    /// Folder with the compose file and build contexts, relative to the first
+    /// config file. Other than `.` when compost.yaml lives elsewhere, e.g. in a
+    /// deployment repository.
+    #[serde(skip_serializing_if = "is_default_source_dir")]
+    pub source_dir: String,
+    /// Relative to `source_dir`.
     pub compose_file: String,
+    /// More compose files, applied after `compose_file`; relative to the first
+    /// config file. They are uploaded into the sources as
+    /// `.compost/compose-override-<n>.yaml`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compose_overrides: Vec<String>,
     pub build: bool,
     pub attach_sources: bool,
+}
+
+fn is_default_source_dir(dir: &str) -> bool {
+    dir == DEFAULT_SOURCE_DIR
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
@@ -68,7 +86,9 @@ impl Default for Deployment {
     fn default() -> Self {
         Self {
             kind: DeploymentType::DockerCompose,
+            source_dir: DEFAULT_SOURCE_DIR.to_string(),
             compose_file: DEFAULT_COMPOSE_FILE.to_string(),
+            compose_overrides: Vec::new(),
             build: false,
             attach_sources: false,
         }
@@ -80,6 +100,18 @@ impl Deployment {
     pub fn uploads_sources(&self) -> bool {
         self.build || self.attach_sources
     }
+
+    /// The compose files in the uploaded sources, in the order they apply.
+    pub fn compose_files(&self) -> Vec<String> {
+        let mut files = vec![self.compose_file.clone()];
+        files.extend(self.compose_overrides.iter().cloned());
+        files
+    }
+}
+
+/// Name of the `index`th of `compose_overrides` in the uploaded sources.
+fn uploaded_override(index: usize) -> String {
+    format!("{OVERRIDES_DIR}/compose-override-{}.yaml", index + 1)
 }
 
 /// A compose service that links can refer to by `name`.
@@ -120,12 +152,17 @@ impl ComposeService {
     }
 }
 
-/// A validated application with everything loaded from disk.
+/// A validated application with everything loaded from disk. Its config
+/// describes the uploaded sources: `source_dir` is `.` and
+/// `compose_overrides` are their names in the sources.
 pub struct LoadedApp {
     pub config: AppConfig,
+    /// All compose files merged.
     pub compose: ComposeFile,
-    /// Directory containing the first config file (normally compost.yaml).
-    pub base_dir: PathBuf,
+    /// The folder uploaded as the sources (`deployment.source_dir`).
+    pub source_dir: PathBuf,
+    /// Local `compose_overrides`, each with its name in the sources.
+    pub overrides: Vec<(PathBuf, String)>,
 }
 
 impl AppConfig {
@@ -160,13 +197,30 @@ impl AppConfig {
             .and_then(|f| f.parent())
             .filter(|dir| !dir.as_os_str().is_empty())
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let compose_path = base_dir.join(&config.deployment.compose_file);
-        let compose = ComposeFile::read(&compose_path)?;
+        let deployment = &mut config.deployment;
+        let source_dir = base_dir.join(&deployment.source_dir);
+        if !source_dir.is_dir() {
+            return Err(config_err(format!(
+                "deployment.source_dir: {} is not a folder",
+                source_dir.display()
+            )));
+        }
+        let mut paths = vec![source_dir.join(&deployment.compose_file)];
+        let mut overrides = Vec::new();
+        for (index, file) in deployment.compose_overrides.iter_mut().enumerate() {
+            let path = base_dir.join(&*file);
+            paths.push(path.clone());
+            *file = uploaded_override(index);
+            overrides.push((path, file.clone()));
+        }
+        deployment.source_dir = DEFAULT_SOURCE_DIR.to_string();
+        let compose = ComposeFile::read_all(&paths)?;
         config.validate(&compose)?;
         Ok(LoadedApp {
             config,
             compose,
-            base_dir,
+            source_dir,
+            overrides,
         })
     }
 
@@ -306,14 +360,39 @@ pub fn default_prefix() -> String {
 }
 
 impl ComposeFile {
+    /// Read compose files and merge them as `docker compose -f … -f …` does,
+    /// as far as compost needs.
+    pub fn read_all(paths: &[PathBuf]) -> Result<Self> {
+        let texts = paths
+            .iter()
+            .map(|path| {
+                fs::read_to_string(path).map_err(|e| {
+                    config_err(format!("cannot read compose file {}: {e}", path.display()))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        Self::parse_all(&texts).map_err(|e| {
+            let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            config_err(format!("{}: {e:#}", names.join(", ")))
+        })
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
-        let text = fs::read_to_string(path)
-            .map_err(|e| config_err(format!("cannot read compose file {}: {e}", path.display())))?;
-        Self::parse(&text).map_err(|e| config_err(format!("{}: {e:#}", path.display())))
+        Self::read_all(&[path.to_path_buf()])
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let value: Value = serde_yaml_ng::from_str(text)?;
+        Self::parse_all(&[text])
+    }
+
+    /// The first text is the main compose file; the others override it.
+    pub fn parse_all(texts: &[&str]) -> Result<Self> {
+        let mut value = Value::Null;
+        for text in texts {
+            let overlay: Value = serde_yaml_ng::from_str(text)?;
+            super::merge::merge(&mut value, overlay);
+        }
         let Some(Value::Mapping(services)) = value.get("services") else {
             anyhow::bail!("no `services` section");
         };
@@ -494,6 +573,72 @@ services:
 
         let err = error("{name: a, backup: {volumes: [data]}}");
         assert!(err.contains("`data` is not a named volume"), "{err}");
+    }
+
+    #[test]
+    fn compose_overrides_merge_into_the_compose_model() {
+        let compose = ComposeFile::parse_all(&[
+            "{services: {web: {image: x}, db: {image: y}}, volumes: {data: {}}}",
+            "{services: {web: {networks: [old_default]}, extra: {image: z}}, volumes: {data: {external: true, name: shop_data}}}",
+        ])
+        .unwrap();
+        assert!(compose.services["web"].has_networks);
+        assert!(!compose.services["db"].has_networks);
+        assert!(compose.services.contains_key("extra"));
+        let config: AppConfig = serde_yaml_ng::from_str("{name: a, prefix: p}").unwrap();
+        assert_eq!(config.docker_volume(&compose, "data"), "shop_data");
+    }
+
+    #[test]
+    fn sources_in_another_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |path: &str, text: &str| {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, text).unwrap();
+            path
+        };
+        write("upstream/compose.yaml", "services: {web: {image: nginx}}");
+        write(
+            "deploy/compose.migrate.yaml",
+            "{services: {web: {volumes: [data:/data]}}, volumes: {data: {external: true, name: old_data}}}",
+        );
+        let compost = write(
+            "deploy/compost.yaml",
+            "{name: shop, deployment: {source_dir: ../upstream, compose_file: compose.yaml, compose_overrides: [compose.migrate.yaml]}, app_services: [{name: web, service: web}], backup: {volumes: [data]}}",
+        );
+        let loaded = AppConfig::load(&[compost], None).unwrap();
+        assert_eq!(loaded.source_dir, dir.path().join("deploy/../upstream"));
+        assert_eq!(
+            loaded.overrides,
+            [(
+                dir.path().join("deploy/compose.migrate.yaml"),
+                ".compost/compose-override-1.yaml".to_string()
+            )]
+        );
+        // The config describes the uploaded sources, so a restore can load it from there.
+        let deployment = &loaded.config.deployment;
+        assert_eq!(deployment.source_dir, ".");
+        assert_eq!(
+            deployment.compose_files(),
+            ["compose.yaml", ".compost/compose-override-1.yaml"]
+        );
+        let stored = serde_yaml_ng::to_string(&loaded.config).unwrap();
+        assert!(!stored.contains("source_dir"), "{stored}");
+        assert_eq!(
+            loaded.config.docker_volume(&loaded.compose, "data"),
+            "old_data"
+        );
+
+        let missing = write(
+            "deploy/missing.yaml",
+            "{name: shop, deployment: {source_dir: ../nope}}",
+        );
+        let err = AppConfig::load(&[missing], None).err().unwrap();
+        assert!(
+            format!("{err:#}").contains("deployment.source_dir:"),
+            "{err:#}"
+        );
     }
 
     #[test]

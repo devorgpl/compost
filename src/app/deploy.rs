@@ -100,7 +100,7 @@ pub fn deploy(
     let links = resolve_links(&ctx, loaded, &report, &state_file)?;
     let pinned_links: Vec<PinnedLink> = links.iter().map(Link::pinned).collect();
     let dropped = dropped_links(&ctx, app, &pinned_links)?;
-    let files = sources::collect(&loaded.base_dir, &app.deployment, config_files)?;
+    let files = sources::collect(loaded, config_files)?;
 
     let project = app.instance();
     if options.dry_run {
@@ -129,7 +129,7 @@ pub fn deploy(
     // 2. Upload and render.
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
     let dir = instance::dir(&app.name, &app.prefix);
-    let archive = sources::pack(&loaded.base_dir, &files)?;
+    let archive = sources::pack(&files)?;
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;
     out!("  uploaded {} files", files.len());
 

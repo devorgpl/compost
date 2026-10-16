@@ -107,18 +107,19 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     Ok(healthy)
 }
 
-/// The compose file uploaded by deploy (empty if it cannot be read).
+/// The compose files uploaded by deploy, merged (empty if they cannot be read).
 pub fn stored_compose_file(ctx: &ServerCtx, instance: &Instance) -> Result<ComposeFile> {
     let app = &instance.app;
-    let path = format!(
-        "{}/sources/{}",
-        instance::dir(&app.name, &app.prefix),
-        app.deployment.compose_file
-    );
-    Ok(match ctx.read(&path)? {
-        Some(text) => ComposeFile::parse(&text).unwrap_or_default(),
-        None => ComposeFile::default(),
-    })
+    let dir = instance::dir(&app.name, &app.prefix);
+    let mut texts = Vec::new();
+    for file in app.deployment.compose_files() {
+        match ctx.read(&format!("{dir}/sources/{file}"))? {
+            Some(text) => texts.push(text),
+            None => return Ok(ComposeFile::default()),
+        }
+    }
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    Ok(ComposeFile::parse_all(&texts).unwrap_or_default())
 }
 
 /// The server must be reachable, ours, and initialized.

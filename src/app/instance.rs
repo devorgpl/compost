@@ -136,12 +136,17 @@ pub fn server_config(ctx: &ServerCtx) -> Result<ServerConfig> {
     }
 }
 
-/// `docker compose` for the instance, with the user's file and compost's override.
+/// `docker compose` for the instance, with the user's files and compost's override.
 pub fn compose_command(ctx: &ServerCtx, app: &AppConfig) -> String {
+    let files: String = app
+        .deployment
+        .compose_files()
+        .iter()
+        .map(|file| format!(" -f {}", shell_quote(&format!("sources/{file}"))))
+        .collect();
     format!(
-        "cd {} && docker compose -p {} --project-directory sources -f {} -f {OVERRIDE_FILE}",
+        "cd {} && docker compose -p {} --project-directory sources{files} -f {OVERRIDE_FILE}",
         shell_quote(&ctx.path(&dir(&app.name, &app.prefix))),
         shell_quote(&app.instance()),
-        shell_quote(&format!("sources/{}", app.deployment.compose_file)),
     )
 }

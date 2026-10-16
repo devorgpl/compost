@@ -5,15 +5,41 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 
-use crate::config::app::Deployment;
+use crate::config::app::{Deployment, LoadedApp, OVERRIDES_DIR};
 
 /// Patterns in this file (gitignore syntax) are not uploaded.
 const IGNORE_FILE: &str = ".compostignore";
 
-/// Paths relative to `base_dir`, sorted. Without `attach_sources`/`build`
+/// A local file and its path in the uploaded sources.
+pub struct Upload {
+    pub from: PathBuf,
+    pub name: PathBuf,
+}
+
+/// The files of the sources folder, then the compose overrides.
+pub fn collect(loaded: &LoadedApp, config_files: &[PathBuf]) -> Result<Vec<Upload>> {
+    let source_dir = &loaded.source_dir;
+    let mut uploads: Vec<Upload> =
+        source_files(source_dir, &loaded.config.deployment, config_files)?
+            .into_iter()
+            .map(|name| Upload {
+                from: source_dir.join(&name),
+                name,
+            })
+            .collect();
+    for (from, name) in &loaded.overrides {
+        uploads.push(Upload {
+            from: from.clone(),
+            name: PathBuf::from(name),
+        });
+    }
+    Ok(uploads)
+}
+
+/// Paths relative to `source_dir`, sorted. Without `attach_sources`/`build`
 /// only the compose file is uploaded.
-pub fn collect(
-    base_dir: &Path,
+fn source_files(
+    source_dir: &Path,
     deployment: &Deployment,
     config_files: &[PathBuf],
 ) -> Result<Vec<PathBuf>> {
@@ -28,10 +54,14 @@ pub fn collect(
         .collect();
 
     let mut files = Vec::new();
-    let walker = WalkBuilder::new(base_dir)
+    let walker = WalkBuilder::new(source_dir)
         .standard_filters(false) // no .gitignore: built files may be needed
         .add_custom_ignore_filename(IGNORE_FILE)
-        .filter_entry(|entry| entry.file_name() != ".git")
+        // `.compost/` holds the overrides, which are added from where they are.
+        .filter_entry(|entry| {
+            entry.file_name() != ".git"
+                && !(entry.depth() == 1 && entry.file_name() == OVERRIDES_DIR)
+        })
         .build();
     for entry in walker {
         let entry = entry?;
@@ -49,20 +79,20 @@ pub fn collect(
         if is_overlay || path.canonicalize().is_ok_and(|p| excluded.contains(&p)) {
             continue;
         }
-        files.push(path.strip_prefix(base_dir)?.to_path_buf());
+        files.push(path.strip_prefix(source_dir)?.to_path_buf());
     }
     files.sort();
     Ok(files)
 }
 
 /// An uncompressed tar archive of the given files.
-pub fn pack(base_dir: &Path, files: &[PathBuf]) -> Result<Vec<u8>> {
+pub fn pack(uploads: &[Upload]) -> Result<Vec<u8>> {
     let mut builder = tar::Builder::new(Vec::new());
     builder.follow_symlinks(false);
-    for file in files {
+    for upload in uploads {
         builder
-            .append_path_with_name(base_dir.join(file), file)
-            .with_context(|| format!("cannot pack {}", file.display()))?;
+            .append_path_with_name(&upload.from, &upload.name)
+            .with_context(|| format!("cannot pack {}", upload.from.display()))?;
     }
     Ok(builder.into_inner()?)
 }
@@ -91,6 +121,7 @@ mod tests {
             ".git/config",
             ".compost-staging.yaml",
             ".compost.secrets.yaml",
+            ".compost/compose-override-1.yaml",
             "secrets/prod.yaml",
             "node_modules/x.js",
         ] {
@@ -104,7 +135,7 @@ mod tests {
             ..Deployment::default()
         };
         let config_files = [base.join("compost.yaml"), base.join("secrets/prod.yaml")];
-        let files = collect(base, &deployment, &config_files).unwrap();
+        let files = source_files(base, &deployment, &config_files).unwrap();
         let files: Vec<_> = files.iter().map(|f| f.to_str().unwrap()).collect();
         assert_eq!(
             files,
@@ -120,7 +151,7 @@ mod tests {
 
     #[test]
     fn only_compose_file_without_sources() {
-        let files = collect(Path::new("."), &Deployment::default(), &[]).unwrap();
+        let files = source_files(Path::new("."), &Deployment::default(), &[]).unwrap();
         assert_eq!(files, [PathBuf::from("docker-compose.yaml")]);
     }
 }
