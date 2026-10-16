@@ -10,3 +10,7 @@ shared:
         https_port: 18443
         tls: "off"
         acme_email: null
+  oidc:
+    - name: keycloak
+      configuration:
+        url: http://auth.localhost:18080

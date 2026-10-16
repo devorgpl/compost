@@ -10,7 +10,7 @@ use crate::config::app::AppConfig;
 use crate::config::check_name;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir,
+    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir, is_domain,
 };
 
 /// Docker network shared by the ingress and every app service it routes to.
@@ -122,19 +122,6 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Letters, digits, `-` and `.`, optionally starting with `*.`.
-fn is_domain(domain: &str) -> bool {
-    let name = domain.strip_prefix("*.").unwrap_or(domain);
-    !name.is_empty()
-        && name.split('.').all(|label| {
-            !label.is_empty()
-                && !label.starts_with('-')
-                && label
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        })
 }
 
 /// The ingress of the server (there is at most one).

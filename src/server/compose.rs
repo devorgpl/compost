@@ -79,7 +79,16 @@ pub fn ps(connector: &dyn Connector, project: &str) -> Result<Vec<ContainerStatu
 /// Poll until every container is ready; a container that exits with an error
 /// fails at once.
 pub fn wait_until_ready(connector: &dyn Connector, project: &str) -> Result<Vec<ContainerStatus>> {
-    let deadline = Instant::now() + START_TIMEOUT;
+    wait_until_ready_within(connector, project, START_TIMEOUT)
+}
+
+/// Like [`wait_until_ready`], with another timeout.
+pub fn wait_until_ready_within(
+    connector: &dyn Connector,
+    project: &str,
+    timeout: Duration,
+) -> Result<Vec<ContainerStatus>> {
+    let deadline = Instant::now() + timeout;
     loop {
         let containers = ps(connector, project)?;
         if let Some(failed) = containers.iter().find(|c| c.failed()) {
@@ -96,7 +105,7 @@ pub fn wait_until_ready(connector: &dyn Connector, project: &str) -> Result<Vec<
         if Instant::now() >= deadline {
             bail!(
                 "not ready after {}s:\n{}",
-                START_TIMEOUT.as_secs(),
+                timeout.as_secs(),
                 summary(&containers)
             );
         }

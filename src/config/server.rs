@@ -7,9 +7,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
+use super::app::{AppConfig, link_name};
 use super::{check_name, merge};
 use crate::error::config_err;
-use crate::shared::{self, SharedAppConfig};
+use crate::shared::{self, Kind, Resolution, SharedAppConfig};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +21,27 @@ pub struct ServerConfig {
     pub shared: BTreeMap<String, Vec<SharedAppConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<BackupSettings>,
+}
+
+/// A shared app that links to other shared apps, deployed like an application.
+pub struct Consumer {
+    pub app: AppConfig,
+    pub links: Vec<ConsumerLink>,
+}
+
+/// One link of a [`Consumer`], resolved to a configured shared app.
+pub struct ConsumerLink {
+    pub kind: &'static dyn Kind,
+    pub name: String,
+    pub entry: Value,
+    pub shared: SharedAppConfig,
+}
+
+impl ConsumerLink {
+    /// e.g. `services.database[db]`, for error messages.
+    pub fn path(&self) -> String {
+        format!("services.{}[{}]", self.kind.name(), self.name)
+    }
 }
 
 /// Where `backup` writes archives and `restore` reads them by default.
@@ -107,6 +129,55 @@ impl ServerConfig {
             .flat_map(|(kind, apps)| apps.iter().map(move |app| (kind.as_str(), app)))
     }
 
+    /// The links of a shared app to other shared apps of this config, in
+    /// apply order; `None` when it has no links.
+    pub fn consumer(&self, kind_name: &str, app: &SharedAppConfig) -> Result<Option<Consumer>> {
+        let kind =
+            shared::find_kind(kind_name).with_context(|| format!("unknown kind `{kind_name}`"))?;
+        let Some(links) = kind.shared_links(app)? else {
+            return Ok(None);
+        };
+        let app = shared::consumer_app(kind_name, app, links);
+        let mut resolved = Vec::new();
+        for (link_kind_name, entry) in app.links() {
+            let link_kind = shared::find_kind(link_kind_name)
+                .with_context(|| format!("unknown kind `{link_kind_name}`"))?;
+            let name = link_name(entry).context("every link needs a name")?;
+            let path = format!("services.{link_kind_name}[{name}]");
+            link_kind
+                .validate_link(entry, &app)
+                .with_context(|| path.clone())?;
+            let available = self
+                .shared
+                .get(link_kind_name)
+                .map_or(&[][..], Vec::as_slice);
+            let shared = match link_kind
+                .resolve(entry, available)
+                .with_context(|| path.clone())?
+            {
+                Resolution::Use(shared) => shared,
+                Resolution::Skip(reason) => anyhow::bail!("{path}: {reason}"),
+            };
+            if link_kind.shared_links(shared)?.is_some() {
+                anyhow::bail!(
+                    "{path}: {link_kind_name} {} uses other shared apps itself, which is not supported",
+                    shared.name
+                );
+            }
+            resolved.push(ConsumerLink {
+                kind: link_kind,
+                name: name.to_string(),
+                entry: entry.clone(),
+                shared: shared.clone(),
+            });
+        }
+        resolved.sort_by_key(|link| link.kind.apply_order());
+        Ok(Some(Consumer {
+            app,
+            links: resolved,
+        }))
+    }
+
     /// Core checks, then delegation to each kind (spec §6.3, §9.1).
     fn validate(&self) -> Result<()> {
         let mut names = HashSet::new();
@@ -129,6 +200,11 @@ impl ServerConfig {
             }
             kind.validate_instances(apps)
                 .map_err(|e| config_err(format!("shared.{kind_name}: {e:#}")))?;
+        }
+        // Links between shared apps, once every shared app is valid on its own.
+        for (kind_name, app) in self.shared_apps() {
+            self.consumer(kind_name, app)
+                .map_err(|e| config_err(format!("shared.{kind_name}[{}]: {e:#}", app.name)))?;
         }
         if let Some(path) = self.backup.as_ref().and_then(|b| b.server_path.as_ref()) {
             if path.trim().is_empty() {
@@ -176,7 +252,7 @@ shared:
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/server");
         let secrets = dir.join(".compost-server.secrets.example.yaml");
         let real = ServerConfig::load(&[dir.join("compost-server.yaml"), secrets]).unwrap();
-        assert_eq!(real.shared_apps().count(), 2);
+        assert_eq!(real.shared_apps().count(), 3);
         let local = ServerConfig::load(&[
             dir.join("compost-server.yaml"),
             dir.join("compost-server.local.yaml"),
@@ -228,6 +304,40 @@ shared:
 ",
         );
         assert!(err.contains("name is used more than once"), "{err}");
+    }
+
+    #[test]
+    fn keycloak_picks_one_postgres_18() {
+        let config = |pin: &str| {
+            format!(
+                "
+shared:
+  ingress: [{{name: caddy-main, type: caddy}}]
+  database:
+    - {{name: pg18, type: postgres, version: 18}}
+    - {{name: pg19, type: postgres, version: 19}}
+  oidc:
+    - {{name: kc, type: keycloak, configuration: {{url: 'https://a.example.com'{pin}}}}}
+"
+            )
+        };
+        let err = error(&config(""));
+        assert!(
+            err.contains(
+                "shared.oidc[kc]: services.database[db]: several databases match (pg18, pg19)"
+            ),
+            "{err}"
+        );
+        let parsed = parse(&config(", database: {instance: pg19}")).unwrap();
+        let kc = &parsed.shared["oidc"][0];
+        let consumer = parsed.consumer("oidc", kc).unwrap().unwrap();
+        let used: Vec<_> = consumer
+            .links
+            .iter()
+            .map(|l| (l.kind.name(), l.shared.name.as_str()))
+            .collect();
+        assert_eq!(used, [("database", "pg19"), ("ingress", "caddy-main")]);
+        assert_eq!(consumer.app.instance(), "compost-oidc-kc");
     }
 
     #[test]

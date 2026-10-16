@@ -1,0 +1,7 @@
+    # Identity provider (OpenID Connect). Needs postgres 18 or newer and an ingress.
+    - name: keycloak
+      type: keycloak
+      version: 26
+      configuration:
+        # Public URL; its host is routed through the ingress.
+        url: http://auth.localhost:18080

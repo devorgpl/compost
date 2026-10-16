@@ -2,7 +2,7 @@
 
 | Folder | What |
 |---|---|
-| [`server/`](server) | Shared applications: Caddy (ingress) and Postgres (database) |
+| [`server/`](server) | Shared applications: Caddy (ingress), Postgres (database) and Keycloak (OIDC) |
 | [`sampleapp/`](sampleapp) | Web page + Python API + migration, linked to both |
 
 ```
@@ -35,6 +35,8 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml
 
 curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits   # {"hits": 1, "mode": "local"}
 # Browsers resolve *.localhost to this machine: open http://sampleapp.localhost:18080/
+# Keycloak: http://auth.localhost:18080/, user `admin`, password in
+# ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
 ```
 
 Look around:
@@ -50,7 +52,7 @@ Clean up:
 compost app remove --app sampleapp --prefix local --purge database --yes
 ```
 
-The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down` and `docker compose -p compost-database-postgres16 down`. Their files are in `~/.compost-server/shared/`.
+The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down`, `docker compose -p compost-database-postgres18 down` and `docker compose -p compost-oidc-keycloak down`. Their files are in `~/.compost-server/shared/`.
 
 ## Deploy to a real server
 
@@ -76,7 +78,7 @@ Caddy then gets certificates from Let's Encrypt for the domains, and https://sta
 ## What compost does with the sample
 
 - **Database:**
-  - creates user `sampleapp` and database `sampleapp_staging` in `postgres16`;
+  - creates user `sampleapp` and database `sampleapp_staging` in `postgres18`;
   - gives `backend` and `migrate` a `DATABASE_URL` and puts them on the database network.
 - **Startup:** runs `migrate` once. Compose starts `backend` only after it finished.
 - **Routing:** `/api/*` goes to the backend and everything else to `web`, both through Caddy.

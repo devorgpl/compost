@@ -1686,3 +1686,140 @@ fn app_backup_and_restore_keep_stored_secrets() {
         .success()
         .stdout(contains("stored secrets").not());
 }
+
+const OIDC_SERVER_CONFIG: &str = "\
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  database:
+    - {name: postgres16, type: postgres, version: 16}
+    - {name: postgres18, type: postgres, version: 18}
+  oidc:
+    - {name: keycloak, type: keycloak, configuration: {url: 'https://auth.example.com'}}
+";
+
+#[test]
+fn keycloak_needs_postgres_18_and_an_ingress() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  ingress: [{name: caddy-main, type: caddy}]\n  database: [{name: postgres16, type: postgres, version: 16}]\n  oidc: [{name: keycloak, type: keycloak, configuration: {url: 'https://auth.example.com'}}]\n",
+    );
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .code(2)
+        .stderr(contains(
+            "shared.oidc[keycloak]: services.database[db]: no running postgres database with version `>=18`",
+        ));
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  database: [{name: postgres18, type: postgres, version: 18}]\n  oidc: [{name: keycloak, type: keycloak, configuration: {url: 'https://auth.example.com'}}]\n",
+    );
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .code(2)
+        .stderr(contains("services.ingress[web]: no ingress is running"));
+}
+
+#[test]
+fn keycloak_uses_its_database_and_the_ingress() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .success()
+        .stdout(contains("uses database postgres18, ingress caddy-main"));
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("oidc      keycloak         updated"))
+        .stdout(contains("starting oidc keycloak ... running"));
+
+    let override_yaml = server.read_server_file("shared/oidc/keycloak/compose.override.yaml");
+    for expected in [
+        "KC_DB_URL_HOST: postgres18",
+        "KC_DB_URL_DATABASE: compost_oidc_keycloak_db",
+        "KC_DB_PASSWORD: ",
+        "compost-db-postgres18: {}",
+        "- compost-oidc-keycloak-keycloak",
+    ] {
+        assert!(
+            override_yaml.contains(expected),
+            "missing {expected:?} in\n{override_yaml}"
+        );
+    }
+    let site = server
+        .read_server_file("shared/ingress/caddy-main/conf/sites/compost-oidc-keycloak-web.caddy");
+    assert!(site.contains("auth.example.com {"), "{site}");
+    assert!(
+        site.contains("reverse_proxy compost-oidc-keycloak-keycloak:8080"),
+        "{site}"
+    );
+
+    // Postgres and Caddy run first; the database exists before Keycloak starts,
+    // and Caddy routes to it once it runs.
+    let log = server.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    let postgres = position("-p compost-database-postgres18 up -d");
+    let caddy = position("-p compost-ingress-caddy-main up -d");
+    let database = position("CREATE DATABASE \"compost_oidc_keycloak_db\"");
+    let keycloak = position("-p compost-oidc-keycloak up -d");
+    let reload = position("caddy reload");
+    assert!(postgres < database && caddy < keycloak, "{log}");
+    assert!(database < keycloak && keycloak < reload, "{log}");
+
+    // Nothing changed: no recreate.
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("oidc      keycloak         unchanged"));
+    assert!(
+        !server
+            .take_docker_log()
+            .contains("compost-oidc-keycloak up -d --quiet-pull --force-recreate")
+    );
+
+    server
+        .run(&["connector", "list"], &running)
+        .success()
+        .stdout(contains("shared oidc/keycloak/db  database compost_oidc_keycloak_db, user compost_oidc_keycloak_db"))
+        .stdout(contains("shared oidc/keycloak/web  auth.example.com  / → compost-oidc-keycloak-keycloak:8080"))
+        .stdout(contains("keycloak  keycloak 26  running"));
+}
+
+#[test]
+fn server_restore_starts_keycloak_after_loading_its_database() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let old = LocalServer::new();
+    old.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    old.run(&["server", "deploy", "--apply"], &running)
+        .success();
+    old.run(&["server", "backup", "-o", "server.tar.gz"], &running)
+        .success();
+
+    let new = LocalServer::new();
+    fs::copy(
+        old.env.work.path().join("server.tar.gz"),
+        new.env.work.path().join("server.tar.gz"),
+    )
+    .unwrap();
+    new.run(&["server", "restore", "server.tar.gz", "--yes"], &running)
+        .success()
+        .stdout(contains("Restored."));
+
+    let log = new.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    let loaded = position("psql -U postgres -d postgres -q\n");
+    let provisioned = position("CREATE DATABASE \"compost_oidc_keycloak_db\"");
+    let keycloak = position("-p compost-oidc-keycloak up -d");
+    assert!(loaded < provisioned && provisioned < keycloak, "{log}");
+    let config = new.read_server_file("compost-server.yaml");
+    assert!(config.contains("name: keycloak"), "{config}");
+}

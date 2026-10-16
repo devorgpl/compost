@@ -38,6 +38,7 @@ impl DatabaseType for Postgres {
             notes: &[
                 "postgres: set `root_password` in .compost-server.secrets.yaml (copy the example). Optional: without it compost generates one on the first deploy; it cannot be changed later.",
             ],
+            requires: &[],
         }
     }
 

@@ -88,6 +88,7 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
             .map(|name| find_choice(&all, name))
             .collect::<Result<Vec<_>>>()?
     };
+    let selected = with_requirements(&all, selected, true)?;
     let files = server_files(&selected)?;
 
     write_all(
@@ -105,6 +106,37 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
     );
     print_notes(&files.notes);
     Ok(())
+}
+
+/// The selection plus the types it needs, each once, in the order chosen.
+fn with_requirements<'a>(
+    all: &'a [Choice],
+    selected: Vec<&'a Choice>,
+    report: bool,
+) -> Result<Vec<&'a Choice>> {
+    let mut result: Vec<&Choice> = Vec::new();
+    let mut queue = selected;
+    queue.reverse();
+    while let Some(choice) = queue.pop() {
+        if result.iter().any(|c| c.label() == choice.label()) {
+            continue;
+        }
+        for required in choice.kind.generate(choice.type_name)?.requires {
+            let found = find_choice(all, required)?;
+            let chosen = result
+                .iter()
+                .chain(queue.iter())
+                .any(|c| c.label() == found.label());
+            if !chosen {
+                if report {
+                    out!("Adding {} (needed by {})", found.label(), choice.label());
+                }
+                queue.push(found);
+            }
+        }
+        result.push(choice);
+    }
+    Ok(result)
 }
 
 /// A type by `type` or `kind/type`.
@@ -446,6 +478,7 @@ mod tests {
                 .filter(|(i, _)| mask & (1 << i) != 0)
                 .map(|(_, c)| c)
                 .collect();
+            let selected = with_requirements(&all, selected, false).unwrap();
             let files = server_files(&selected).unwrap();
             let dir = tempfile::tempdir().unwrap();
             let base = write(dir.path(), "base.yaml", &files.base);

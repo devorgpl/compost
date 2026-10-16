@@ -15,7 +15,15 @@ shared:
         tls: auto
         acme_email: admin@example.com
   database:
-    - name: postgres16
+    - name: postgres18
       type: postgres
-      version: 16
-      image: postgres:16-alpine
+      version: 18
+      image: postgres:18-alpine
+  oidc:
+    # Identity provider for app logins. Uses postgres18 (it needs >=18) and
+    # the domain of `url` on caddy-main.
+    - name: keycloak
+      type: keycloak
+      version: 26
+      configuration:
+        url: https://auth.example.com

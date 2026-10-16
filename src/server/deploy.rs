@@ -3,15 +3,21 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
-use super::compose::wait_until_ready;
+use super::compose::wait_until_ready_within;
 use super::lock::Lock;
 use super::state::{self, Status};
 use super::state_file::{DeployStatus, StateFile};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
-use crate::config::server::ServerConfig;
+use crate::app::contribution::Contribution;
+use crate::config::app::ComposeFile;
+use crate::config::server::{Consumer, ServerConfig};
 use crate::connector::{Connector, shell_quote};
 use crate::error::CompostError;
-use crate::shared::{self, Rendered, ServerCtx, SharedAppConfig};
+use crate::shared::{self, AppCtx, Kind, Rendered, ServerCtx, SharedAppConfig};
+
+/// Written next to `compose.yaml` of a shared app with links; docker compose
+/// reads it automatically.
+pub const SHARED_OVERRIDE_FILE: &str = "compose.override.yaml";
 
 pub struct Options {
     pub apply: bool,
@@ -21,12 +27,20 @@ pub struct Options {
 
 /// One shared app, rendered and ready to be written to the server.
 struct Plan<'a> {
-    kind: &'static str,
+    kind: &'static dyn Kind,
     app: &'a SharedAppConfig,
     rendered: Rendered,
     hash: String,
     /// Rendered files differ from the last deploy (or it is new).
     changed: bool,
+    /// Links to other shared apps, if it has any.
+    consumer: Option<Consumer>,
+}
+
+impl Plan<'_> {
+    fn kind_name(&self) -> &'static str {
+        self.kind.name()
+    }
 }
 
 pub fn deploy(
@@ -56,7 +70,7 @@ pub fn deploy(
 
     // 2. Render everything before changing anything on the server.
     let mut state_file = StateFile::load(&ctx)?;
-    let plans = render_all(&ctx, config, &state_file)?;
+    let mut plans = render_all(&ctx, config, &state_file)?;
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
     if options.dry_run {
@@ -78,23 +92,33 @@ pub fn deploy(
 
     // 4. Write networks and files.
     create_networks(connector, &plans)?;
-    for plan in &plans {
+    for plan in &mut plans {
         write_files(&ctx, &plan.rendered)?;
+        if let Some(consumer) = &plan.consumer {
+            let override_changed = prepare_links(&ctx, plan, consumer).map_err(|e| {
+                CompostError::ServerNotReady(format!(
+                    "{} {}: {e:#}",
+                    plan.kind_name(),
+                    plan.app.name
+                ))
+            })?;
+            plan.changed |= override_changed;
+        }
         if plan.changed {
             state_file.set_shared(
-                plan.kind,
+                plan.kind_name(),
                 &plan.app.name,
                 DeployStatus::Candidate,
                 &plan.hash,
             );
         }
         let change = if plan.changed { "updated" } else { "unchanged" };
-        out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
+        out!("  {:<9} {:<16} {change}", plan.kind_name(), plan.app.name);
     }
     for record in &state_file.shared {
         let configured = plans
             .iter()
-            .any(|p| p.kind == record.kind && p.app.name == record.name);
+            .any(|p| p.kind_name() == record.kind && p.app.name == record.name);
         if !configured {
             out!(
                 "  {:<9} {:<16} orphaned: not in the configuration any more, left as it is",
@@ -114,28 +138,21 @@ pub fn deploy(
     // 5. Start. `docker compose up -d` leaves unchanged containers alone; containers
     //    whose files changed are recreated, because compose cannot see those changes.
     for plan in &plans {
+        let kind = plan.kind_name();
         let deployed = state_file
-            .shared(plan.kind, &plan.app.name)
+            .shared(kind, &plan.app.name)
             .is_some_and(|r| r.status == DeployStatus::Deployed);
-        out_part!("  starting {} {} ... ", plan.kind, plan.app.name);
 
-        match start(&ctx, plan, !deployed) {
+        match apply(&ctx, plan, !deployed) {
             Ok(()) => {
-                out!("running");
-                state_file.set_shared(
-                    plan.kind,
-                    &plan.app.name,
-                    DeployStatus::Deployed,
-                    &plan.hash,
-                );
+                state_file.set_shared(kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
             }
             Err(err) => {
-                out!("failed");
-                state_file.set_shared(plan.kind, &plan.app.name, DeployStatus::Failed, &plan.hash);
+                state_file.set_shared(kind, &plan.app.name, DeployStatus::Failed, &plan.hash);
                 state_file.save(&ctx)?;
                 return Err(CompostError::ServerNotReady(format!(
-                    "{} {} did not start: {err:#}",
-                    plan.kind, plan.app.name
+                    "{kind} {} did not start: {err:#}",
+                    plan.app.name
                 ))
                 .into());
             }
@@ -160,14 +177,18 @@ fn render_all<'a>(
         let changed = state_file
             .shared(kind.name(), &app.name)
             .is_none_or(|record| record.config_hash != hash);
+        let consumer = config.consumer(kind_name, app)?;
         plans.push(Plan {
-            kind: kind.name(),
+            kind,
             app,
             rendered,
             hash,
             changed,
+            consumer,
         });
     }
+    // Shared apps with links start after the shared apps they use.
+    plans.sort_by_key(|plan| plan.consumer.is_some());
     Ok(plans)
 }
 
@@ -233,15 +254,84 @@ fn write_files(ctx: &ServerCtx, rendered: &Rendered) -> Result<()> {
     Ok(())
 }
 
+/// Run the links' `prepare_application` and write the compose override.
+/// Returns whether the override changed.
+fn prepare_links(ctx: &ServerCtx, plan: &Plan, consumer: &Consumer) -> Result<bool> {
+    let mut contribution = Contribution::default();
+    for link in &consumer.links {
+        let link_ctx = AppCtx {
+            server: ctx,
+            app: &consumer.app,
+            shared: &link.shared,
+        };
+        link.kind
+            .prepare_application(&link_ctx, &link.entry, &mut contribution)
+            .with_context(|| link.path())?;
+    }
+    let dir = shared::shared_dir(plan.kind_name(), &plan.app.name);
+    let compose_path = format!("{dir}/compose.yaml");
+    let compose = plan
+        .rendered
+        .files
+        .iter()
+        .find(|file| file.path == compose_path)
+        .with_context(|| format!("{compose_path} was not rendered (this is a bug in compost)"))?;
+    let compose = ComposeFile::parse(&compose.contents)?;
+    let text = contribution.override_yaml(&compose)?;
+    let path = ctx.path(&format!("{dir}/{SHARED_OVERRIDE_FILE}"));
+    let changed = ctx.connector.read_file(&path)?.as_deref() != Some(text.as_str());
+    ctx.connector.write_file(&path, text.as_bytes(), 0o600)?;
+    Ok(changed)
+}
+
+/// Start a shared app, with the hooks of its links around it.
+fn apply(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
+    run_link_hooks(ctx, plan, Hook::BeforeApply)?;
+    out_part!("  starting {} {} ... ", plan.kind_name(), plan.app.name);
+    match start(ctx, plan, recreate) {
+        Ok(()) => out!("running"),
+        Err(err) => {
+            out!("failed");
+            return Err(err);
+        }
+    }
+    run_link_hooks(ctx, plan, Hook::AfterApply)
+}
+
+#[derive(Clone, Copy)]
+enum Hook {
+    BeforeApply,
+    AfterApply,
+}
+
+fn run_link_hooks(ctx: &ServerCtx, plan: &Plan, hook: Hook) -> Result<()> {
+    let Some(consumer) = &plan.consumer else {
+        return Ok(());
+    };
+    for link in &consumer.links {
+        let link_ctx = AppCtx {
+            server: ctx,
+            app: &consumer.app,
+            shared: &link.shared,
+        };
+        match hook {
+            Hook::BeforeApply => link.kind.before_apply_application(&link_ctx, &link.entry),
+            Hook::AfterApply => link.kind.after_apply_application(&link_ctx, &link.entry),
+        }
+        .with_context(|| link.path())?;
+    }
+    Ok(())
+}
+
 fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
-    let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind, &plan.app.name)));
-    let project = shared::project_name(plan.kind, &plan.app.name);
+    let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind_name(), &plan.app.name)));
+    let project = shared::project_name(plan.kind_name(), &plan.app.name);
     let recreate = if recreate { " --force-recreate" } else { "" };
     ctx.connector.exec(&format!(
         "cd {dir} && docker compose -p {} up -d --quiet-pull{recreate}",
         shell_quote(&project)
     ))?;
-    wait_until_ready(ctx.connector, &project)?;
+    wait_until_ready_within(ctx.connector, &project, plan.kind.start_timeout())?;
     Ok(())
 }
 
@@ -257,7 +347,15 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
         } else {
             "unchanged"
         };
-        out!("  {:<9} {:<16} {change}", plan.kind, plan.app.name);
+        out!("  {:<9} {:<16} {change}", plan.kind_name(), plan.app.name);
+        if let Some(consumer) = &plan.consumer {
+            let uses: Vec<String> = consumer
+                .links
+                .iter()
+                .map(|link| format!("{} {}", link.kind.name(), link.shared.name))
+                .collect();
+            out!("      uses {}", uses.join(", "));
+        }
         for dir in &plan.rendered.dirs {
             out!("      {dir}/");
         }

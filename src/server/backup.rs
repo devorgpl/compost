@@ -213,31 +213,66 @@ pub fn restore(
         }
     }
 
-    // 2. Deploy and start them.
+    // 2. Deploy and start them. Shared apps with links (e.g. keycloak) wait:
+    //    their databases are in the data loaded next.
     let deploy_options = deploy::Options {
         apply: true,
         dry_run: false,
         force_unlock: false,
     };
+    let providers = without_consumers(&config, &selected)?;
+    let later = providers.shared_apps().count() != config.shared_apps().count();
     deploy::deploy(
         connector,
         server_home,
         manager_key,
-        &config,
+        &providers,
         &deploy_options,
     )?;
 
     // 3. Load their data.
-    let _lock = Lock::acquire(connector, &ctx.home, false)?;
-    for (kind_name, app) in &selected {
-        let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
-        out!("  loading data of {kind_name} {} ...", app.name);
-        let reader = reader(&archive, kind_name, &app.name);
-        kind.restore_shared_data(&ctx, app, &reader)
-            .with_context(|| format!("{kind_name} {}", app.name))?;
+    {
+        let _lock = Lock::acquire(connector, &ctx.home, false)?;
+        for (kind_name, app) in &selected {
+            let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
+            out!("  loading data of {kind_name} {} ...", app.name);
+            let reader = reader(&archive, kind_name, &app.name);
+            kind.restore_shared_data(&ctx, app, &reader)
+                .with_context(|| format!("{kind_name} {}", app.name))?;
+        }
+    }
+
+    // 4. Then the shared apps with links.
+    if later {
+        deploy::deploy(
+            connector,
+            server_home,
+            manager_key,
+            &config,
+            &deploy_options,
+        )?;
     }
     out!("Restored. Restore applications with `compost app restore`.");
     Ok(())
+}
+
+/// The config without the restored shared apps that link to others. Their
+/// links are not validated: the config is only deployed, and the full config
+/// was validated before.
+fn without_consumers(
+    config: &ServerConfig,
+    selected: &[(String, SharedAppConfig)],
+) -> Result<ServerConfig> {
+    let mut providers = config.clone();
+    for (kind_name, app) in selected {
+        if config.consumer(kind_name, app)?.is_some() {
+            if let Some(apps) = providers.shared.get_mut(kind_name) {
+                apps.retain(|a| a.name != app.name);
+            }
+        }
+    }
+    providers.shared.retain(|_, apps| !apps.is_empty());
+    Ok(providers)
 }
 
 fn reader<'a, 'c>(archive: &'a backup::Archive<'c>, kind: &str, name: &str) -> ItemReader<'a, 'c> {

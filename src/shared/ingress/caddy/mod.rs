@@ -62,6 +62,7 @@ impl IngressType for Caddy {
                 "caddy: point the domains of your apps to the server and set `acme_email` in compost-server.prod.yaml.",
                 "caddy: locally, apps answer on http://<domain>:18080/; `*.localhost` domains need no DNS.",
             ],
+            requires: &[],
         }
     }
 

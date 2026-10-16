@@ -6,6 +6,7 @@ use serde::Deserialize;
 use super::state::{self as server_state, Report, Status};
 use super::state_file::StateFile;
 use crate::app::instance;
+use crate::config::server::ServerConfig;
 use crate::connector::Connector;
 use crate::error::CompostError;
 use crate::shared::{self, AppCtx, ServerCtx, SharedAppConfig, connectors_dir};
@@ -57,7 +58,7 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
                 running(&report, kind_name, &shared_app.name)
             );
 
-            let lines = link_lines(&ctx, &state_file, kind_name, shared_app)?;
+            let lines = link_lines(&ctx, &server_config, &state_file, kind_name, shared_app)?;
             if lines.is_empty() {
                 out!("{indent}└─ no links");
             }
@@ -89,6 +90,7 @@ fn running(report: &Report, kind: &str, name: &str) -> &'static str {
 /// `myapp-staging/system-data  database mydb, user myuser  app: deployed`.
 fn link_lines(
     ctx: &ServerCtx,
+    server_config: &ServerConfig,
     state_file: &StateFile,
     kind_name: &str,
     shared_app: &SharedAppConfig,
@@ -108,6 +110,39 @@ fn link_lines(
         let record: LinkRecord = serde_yaml_ng::from_str(&text)
             .with_context(|| format!("invalid link record {path}"))?;
         let name = format!("{}-{}/{}", record.app, record.prefix, record.entry);
+
+        // A link of a shared app, e.g. the database of keycloak.
+        if let Some(consumer_kind) = shared::consumer_kind(&record.app) {
+            let consumer = server_config
+                .shared
+                .get(consumer_kind)
+                .and_then(|apps| apps.iter().find(|app| app.name == record.prefix));
+            let line = match consumer {
+                Some(consumer) => {
+                    let name = format!("shared {consumer_kind}/{}/{}", record.prefix, record.entry);
+                    match server_config.consumer(consumer_kind, consumer)? {
+                        Some(found) => {
+                            let link_ctx = AppCtx {
+                                server: ctx,
+                                app: &found.app,
+                                shared: shared_app,
+                            };
+                            let summary = kind
+                                .describe_link(&link_ctx, &record.entry)
+                                .unwrap_or_else(|err| format!("cannot read link: {err:#}"));
+                            format!("{name}  {summary}")
+                        }
+                        None => format!("{name}  (leftover record {file})"),
+                    }
+                }
+                None => format!(
+                    "shared {consumer_kind}/{}/{}  not configured (leftover record {file})",
+                    record.prefix, record.entry
+                ),
+            };
+            lines.push(line);
+            continue;
+        }
 
         let line = match instance::load(ctx, &record.app, &record.prefix)? {
             Some(instance) => {

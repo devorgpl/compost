@@ -165,6 +165,19 @@ At most one ingress is allowed per server (validation error otherwise).
 
 Postgres is not published on a host port in 0.1. Only containers on its network can reach it.
 
+**`keycloak`** (kind `oidc`)
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `version` | int | `26` | Major version |
+| `image` | string | `quay.io/keycloak/keycloak:26.6` for version 26 | Required for other versions (the registry has no major-only tags) |
+| `configuration.url` | string | required | Public URL, `https://<domain>` or `http://<domain>[:port]`, no path. Its domain is routed through the ingress |
+| `configuration.admin_user` | string | `admin` | Bootstrap administrator in realm `master` |
+| `configuration.admin_password` | secret | generated | Like postgres `root_password`: only used on the first start, changing it later is an error |
+| `configuration.database.instance` | string | – | Pin the database when several match |
+
+Keycloak uses other shared apps (§9.1, shared links): a database of type `postgres` with version `>=18` (database `compost_oidc_<name>_db`, created like an app's), and the server's ingress, which routes the domain of `url` to it. Without a matching database or an ingress the config is invalid (exit 2). Its data lives in that database: back up and restore Keycloak together with it. Containers on `compost-oidc-<name>` reach it at `http://<name>:8080`.
+
 ## 6. User application configuration
 
 ### 6.1 `compost.yaml` (in the application repository)
@@ -216,7 +229,7 @@ Database link values available in `environment` mappings:
 | `db_password` | (generated or from the overlay) |
 | `db_url` | `postgres://user:password@postgres16:5432/dbname` (user and password percent-encoded) |
 
-Compose services not listed in `app_services` are deployed unchanged and cannot be linked.
+Compose services not listed in `app_services` are deployed unchanged and cannot be linked. App names starting with `compost-` are reserved (§9.1).
 
 ### 6.2 Deployment overlay (e.g. `.compost-staging.yaml`)
 Holds per-instance values and secrets. It MAY live outside the repository. It uses the same schema as `compost.yaml` plus the keys below.
@@ -296,15 +309,21 @@ $COMPOST_SERVER_HOME/
 │   │   ├── conf/sites/<instance>-<entry>.caddy
 │   │   ├── data/                     # /data  (certificates)
 │   │   └── config/                   # /config
-│   └── database/postgres16/
+│   ├── database/postgres16/
+│   │   ├── compose.yaml
+│   │   ├── data/                     # PGDATA (owned by container uid)
+│   │   └── secrets/postgres.env      # POSTGRES_PASSWORD=…  (0600)
+│   └── oidc/keycloak/
 │       ├── compose.yaml
-│       ├── data/                     # PGDATA (owned by container uid)
-│       └── secrets/postgres.env      # POSTGRES_PASSWORD=…  (0600)
+│       ├── compose.override.yaml     # from its shared links: networks, database variables (0600)
+│       └── secrets/keycloak.env      # KC_BOOTSTRAP_ADMIN_*  (0600)
 ├── connectors/
 │   ├── ingress/caddy-main/<instance>-<entry>.yaml
-│   └── database/postgres16/
-│       ├── root-connector.yaml       # (0600)
-│       └── <instance>-<entry>.yaml   # (0600)
+│   ├── database/postgres16/
+│   │   ├── root-connector.yaml       # (0600)
+│   │   └── <instance>-<entry>.yaml   # (0600); compost-oidc-keycloak-db.yaml for keycloak's database
+│   └── oidc/keycloak/
+│       └── root-connector.yaml       # (0600)
 └── apps/<app>/<prefix>/
     ├── sources/                      # uploaded files (whole dir, or only the compose file)
     ├── compose/
@@ -322,6 +341,7 @@ $COMPOST_SERVER_HOME/
 | Instance compose project | `<app>-<prefix>` |
 | Ingress alias of an app service | `<app>-<prefix>-<service>` on `compost-ingress` |
 | Database host name | `<name>` (alias on `compost-db-<name>`) |
+| OIDC network | `compost-oidc-<name>` (external, created by compost); host name `<name>` |
 
 ### 8.2 `state.yaml`
 ```yaml
@@ -465,6 +485,11 @@ Generic operations:
 The draft's `apply_application` is split into `prepare_application`, which only computes the change, and `before_apply_application`, which carries it out. This lets `app deploy` without `--apply` and `--dry-run` work.
 
 Code shared by all kinds (adding external networks and aliases, env files) lives in the `Contribution` builder.
+
+**Shared links.** A shared app can use other shared apps, like Keycloak its database and the ingress. Its kind returns them from `Kind::shared_links`: compose services and link entries, written exactly like an app's `app_services` and `services`. Core then treats the shared app as an application named `compost-<kind>` with prefix `<name>`, so its instance is its compose project (`compost-oidc-keycloak`), and the existing link code of the used kinds runs unchanged: link records, credentials, domain conflicts. App names starting with `compost-` are therefore reserved.
+- Validation: every link is validated and resolved against the shared apps in the same config (exit 2 if none or several match). A shared app with links cannot be used through a link of another one.
+- `server deploy` (§10.7) starts shared apps with links after the others; their `compose.override.yaml` comes from the `Contribution`.
+- `connector list` shows their link records as `shared <kind>/<name>/<entry>`.
 
 ### 9.2 caddy (ingress type)
 
@@ -623,6 +648,7 @@ Without `--apply` or `--no-apply`, `deploy.apply` from `servers.yaml` or `config
 5. For each shared app: work out its secrets (config → existing secret files → generated), `render`, upload into `shared/<kind>/<name>/` and the root connector. Mark it `candidate` in `state.yaml` if `config_hash` changed or it is new.
 6. Upload the effective `compost-server.yaml` (secrets removed).
 7. With `--apply`, for every shared app: `docker compose -p compost-<kind>-<name> up -d`. Compose leaves unchanged containers alone. `--force-recreate` is added when the app is not `deployed` (candidate or failed), because compose cannot see changes in mounted files. Wait up to 60 s for running/healthy. Mark `deployed`, or `failed` and exit 3. Running `up -d` for every app also restarts apps that were stopped.
+   Shared apps with links (§9.1) start after all others. In step 5 their links' `prepare_application` writes the link records and `compose.override.yaml` (0600, read by docker compose next to `compose.yaml`); a changed override counts as a changed shared app. In step 7 `before_apply_application` runs before `up` (e.g. creating Keycloak's database) and `after_apply_application` after it (e.g. Caddy routing its domain). OIDC providers get 180 s to start.
 8. With `--apply`, run `server state`, print it and exit with its code. Without `--apply`, print a hint to run with `--apply`.
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
@@ -778,8 +804,9 @@ Saves the stored `compost-server.yaml`, the `connectors/` records and each share
 Restores shared apps onto a server that does not have them yet (a new server, or one without these shared apps; exit 3 if one is deployed).
 1. Preflight (an uninitialized server is fine). Merge the selected shared apps from the archived config into the server's config (the archived `backup` settings are used when the server has none). Confirm unless `--yes`.
 2. Lock; put back the link records of the selected shared apps and their `restore_shared_files`.
-3. `server deploy --apply` with the merged config.
+3. `server deploy --apply` with the merged config, without the selected shared apps that have links (§9.1).
 4. Lock; `restore_shared_data` of each selected shared app.
+5. If step 3 left some out: `server deploy --apply` with the full merged config. Their databases are back from the dump by now, so Keycloak finds its data instead of a new empty database.
 
 Applications are restored afterwards with `app restore`. Their link records are back, so they keep their database credentials; when the server dump already holds their data, restore them without links: `--include sources,volumes,images`.
 
@@ -792,7 +819,7 @@ Writes starter files to the current directory and needs neither `init` nor a ser
 - `compost-server.prod.yaml`: the overrides for a real server (`shared: {}` if none);
 - `.compost-server.secrets.example.yaml`: the secret keys of the chosen apps, with placeholder values.
 
-`--list` prints the types as `<kind>/<type>`. `--with` takes types (`caddy`) or `<kind>/<type>`. Without `--with`, compost shows a numbered list and asks; without a terminal it fails with exit 2. Existing files are only overwritten with `--force`. Afterwards it prints the deploy commands and each type's notes (e.g. postgres: set `root_password`). The snippets and notes come from each type (`generate` in the type interface, §9.1).
+`--list` prints the types as `<kind>/<type>`. `--with` takes types (`caddy`) or `<kind>/<type>`. Without `--with`, compost shows a numbered list and asks; without a terminal it fails with exit 2. Existing files are only overwritten with `--force`. Types a chosen type needs are added (keycloak adds `database/postgres` and `ingress/caddy`). Afterwards it prints the deploy commands and each type's notes (e.g. postgres: set `root_password`). The snippets and notes come from each type (`generate` in the type interface, §9.1).
 
 ### 10.20 `compost app generate [--compose-file <path>] [--name <name>] [--force]`
 Reads the compose file (default `docker-compose.yaml`) and writes:
@@ -1031,6 +1058,10 @@ src/
       mod.rs         # trait DatabaseType, impl Kind, type registry
       base.rs        # generic database behavior (defaults)
       postgres/ (mod.rs, templates/)
+    oidc/
+      mod.rs         # trait OidcType, impl Kind, type registry
+      base.rs        # generic OIDC behavior (defaults)
+      keycloak/ (mod.rs, templates/)
 ```
 
 ### 14.3 Testing
@@ -1043,7 +1074,7 @@ src/
 |---|---|---|
 | 0.2 | `app logs`, `app restart`, `server deploy --prune`, `-o json` output, Postgres tags and host port publishing | `state.yaml`, `DatabaseType` |
 | 0.3 | Backup/restore (§10.13–§10.18, done), `s3` backup target, S3 link | `Kind` backup hooks, new `s3` kind (`Kind` + `S3Type`) |
-| 0.4 | OIDC (Keycloak) link: realms, clients, users | New `oidc` kind (`Kind` + `OidcType`) |
+| 0.4 | OIDC (Keycloak) link: realms, clients, users (Keycloak shared app done) | New `oidc` kind (`Kind` + `OidcType`), shared links |
 | 0.5 | Logs (OpenObserve) and metrics | Hooks that add to the compose override |
 | 0.6 | Rollback (keep N previous `apps/…` revisions), per-instance networks | Atomic directory swap |
 | 1.0 | `compost-server` mode: API + WebUI; satellites that register with a parent server | `Connector` trait gets a `satellite` implementation |

@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail, ensure};
-use semver::{Version, VersionReq};
+use anyhow::{Context, Result, ensure};
+use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 
 use super::KIND;
@@ -11,6 +11,7 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir, generate_password,
+    is_variable_name, resolve_versioned,
 };
 
 /// Values a link can map to app variables (spec §6.1).
@@ -121,14 +122,6 @@ pub fn validate_link(link: &DatabaseLink, app: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-fn is_variable_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// Database name and user: from the link, or `<app>_<prefix>_<entry>`.
 pub fn names(app: &AppConfig, link: &DatabaseLink) -> (String, String) {
     let default = format!("{}_{}_{}", app.name, app.prefix, link.name).replace('-', "_");
@@ -143,38 +136,14 @@ pub fn resolve<'s>(
     link: &DatabaseLink,
     available: &'s [SharedAppConfig],
 ) -> Result<Resolution<'s>> {
-    let requirement = VersionReq::parse(&link.version)?;
-    let matching: Vec<&SharedAppConfig> = available
-        .iter()
-        .filter(|db| db.type_name == link.type_name)
-        .filter(|db| {
-            db.version
-                .is_some_and(|v| requirement.matches(&Version::new(v.into(), 0, 0)))
-        })
-        .filter(|db| link.instance.as_ref().is_none_or(|pin| *pin == db.name))
-        .collect();
-    match matching.as_slice() {
-        [database] => Ok(Resolution::Use(database)),
-        [] => {
-            let pin = link
-                .instance
-                .as_ref()
-                .map(|p| format!(" named `{p}`"))
-                .unwrap_or_default();
-            bail!(
-                "no running {} database{pin} with version `{}` on the server",
-                link.type_name,
-                link.version
-            )
-        }
-        several => {
-            let names: Vec<&str> = several.iter().map(|db| db.name.as_str()).collect();
-            bail!(
-                "several databases match ({}); choose one with `instance`",
-                names.join(", ")
-            )
-        }
-    }
+    resolve_versioned(
+        "database",
+        &link.type_name,
+        &link.version,
+        link.instance.as_deref(),
+        available,
+    )
+    .map(Resolution::Use)
 }
 
 /// Credentials from the link, else from the existing link record, else defaults

@@ -1,12 +1,16 @@
 //! Shared applications: the kind registry and the interface core uses (spec §9.1).
 //!
-//! Layers: core → kind (`ingress`, `database`) → type (`caddy`, `postgres`).
+//! Layers: core → kind (`ingress`, `database`, `oidc`) → type (`caddy`, `postgres`, `keycloak`).
 //! Core only talks to the [`Kind`] trait; each kind looks up its types and calls them.
 
 pub mod database;
 pub mod ingress;
+pub mod oidc;
 
-use anyhow::{Context, Result};
+use std::collections::BTreeMap;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
 use minijinja::{Environment, UndefinedBehavior};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,8 +18,9 @@ use serde_yaml_ng::Value;
 
 pub use crate::app::contribution::Contribution;
 pub use crate::backup::{ItemReader, ItemWriter, Role};
-use crate::config::app::AppConfig;
+use crate::config::app::{AppConfig, AppService};
 use crate::connector::Connector;
+use semver::{Version, VersionReq};
 
 /// One entry under `shared.<kind>` in compost-server.yaml.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,6 +155,18 @@ pub struct Generated {
     pub secrets: Option<&'static str>,
     /// Shown after the files are written.
     pub notes: &'static [&'static str],
+    /// Other types (`kind/type`) the type needs; `server generate` adds them.
+    pub requires: &'static [&'static str],
+}
+
+/// Links a shared app needs to other shared apps (spec §9.1). Core deploys the
+/// shared app like a small application: [`consumer_app`] with these links.
+#[derive(Debug, Default)]
+pub struct SharedLinks {
+    /// Compose services of the shared app that links can target.
+    pub app_services: Vec<AppService>,
+    /// Link entries by kind, as an app would write them under `services`.
+    pub services: BTreeMap<String, Vec<Value>>,
 }
 
 /// What core needs from a kind. Methods grow with the spec (hooks, …).
@@ -180,6 +197,16 @@ pub trait Kind: Sync {
 
     /// Files, directories and networks for one shared app.
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
+
+    /// Links to other shared apps, e.g. a database. Default: none.
+    fn shared_links(&self, _config: &SharedAppConfig) -> Result<Option<SharedLinks>> {
+        Ok(None)
+    }
+
+    /// How long `server deploy` waits for a shared app of this kind to run.
+    fn start_timeout(&self) -> Duration {
+        Duration::from_secs(60)
+    }
 
     // --- Links from applications (entries under `services.<kind>` in compost.yaml).
 
@@ -277,7 +304,11 @@ pub fn parse_link<T: DeserializeOwned>(link: &Value) -> Result<T> {
     serde_yaml_ng::from_value(link.clone()).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-static KINDS: &[&dyn Kind] = &[&database::DatabaseKind, &ingress::IngressKind];
+static KINDS: &[&dyn Kind] = &[
+    &database::DatabaseKind,
+    &ingress::IngressKind,
+    &oidc::OidcKind,
+];
 
 pub fn find_kind(name: &str) -> Option<&'static dyn Kind> {
     KINDS.iter().copied().find(|kind| kind.name() == name)
@@ -285,6 +316,66 @@ pub fn find_kind(name: &str) -> Option<&'static dyn Kind> {
 
 pub fn kind_names() -> Vec<&'static str> {
     KINDS.iter().map(|kind| kind.name()).collect()
+}
+
+/// App names starting with this are reserved for shared apps with links.
+pub const CONSUMER_PREFIX: &str = "compost-";
+
+/// A shared app with links, seen as an application: name `compost-<kind>`,
+/// prefix `<name>`, so its instance is the shared app's compose project.
+pub fn consumer_app(kind: &str, config: &SharedAppConfig, links: SharedLinks) -> AppConfig {
+    AppConfig {
+        name: format!("{CONSUMER_PREFIX}{kind}"),
+        prefix: config.name.clone(),
+        deployment: Default::default(),
+        services: links.services,
+        app_services: links.app_services,
+        backup: Default::default(),
+    }
+}
+
+/// The kind of a shared app whose link records use `app`, if `app` is one.
+pub fn consumer_kind(app: &str) -> Option<&'static str> {
+    let kind = app.strip_prefix(CONSUMER_PREFIX)?;
+    find_kind(kind).map(|kind| kind.name())
+}
+
+/// The one shared app of `type_name` whose major version matches `version`
+/// (a semver requirement), optionally pinned by name. `what` names it in
+/// errors, e.g. `database`.
+pub fn resolve_versioned<'s>(
+    what: &str,
+    type_name: &str,
+    version: &str,
+    instance: Option<&str>,
+    available: &'s [SharedAppConfig],
+) -> Result<&'s SharedAppConfig> {
+    let requirement = VersionReq::parse(version)?;
+    let matching: Vec<&SharedAppConfig> = available
+        .iter()
+        .filter(|app| app.type_name == type_name)
+        .filter(|app| {
+            app.version
+                .is_some_and(|v| requirement.matches(&Version::new(v.into(), 0, 0)))
+        })
+        .filter(|app| instance.is_none_or(|pin| pin == app.name))
+        .collect();
+    match matching.as_slice() {
+        [found] => Ok(found),
+        [] => {
+            let pin = instance
+                .map(|p| format!(" named `{p}`"))
+                .unwrap_or_default();
+            bail!("no running {type_name} {what}{pin} with version `{version}` on the server")
+        }
+        several => {
+            let names: Vec<&str> = several.iter().map(|app| app.name.as_str()).collect();
+            bail!(
+                "several {what}s match ({}); choose one with `instance`",
+                names.join(", ")
+            )
+        }
+    }
 }
 
 /// `shared/<kind>/<name>`: the shared app's folder and compose project directory.
@@ -315,6 +406,28 @@ pub fn render_template(source: &str, context: minijinja::Value) -> Result<String
     );
     env.render_str(source, context)
         .context("template rendering failed (this is a bug in compost)")
+}
+
+/// Letters, digits, `-` and `.`, optionally starting with `*.`.
+pub fn is_domain(domain: &str) -> bool {
+    let name = domain.strip_prefix("*.").unwrap_or(domain);
+    !name.is_empty()
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+}
+
+/// An environment variable name: letters, digits and `_`, not starting with a digit.
+pub fn is_variable_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// A new random password: 32 hexadecimal characters (122 random bits).

@@ -215,6 +215,13 @@ impl AppConfig {
     /// Core checks, then delegation to each kind (spec §6.3).
     fn validate(&self, compose: &ComposeFile) -> Result<()> {
         check_name("app name", &self.name)?;
+        if self.name.starts_with(shared::CONSUMER_PREFIX) {
+            return Err(config_err(format!(
+                "invalid app name `{}`: names starting with `{}` are reserved",
+                self.name,
+                shared::CONSUMER_PREFIX
+            )));
+        }
         check_name("prefix", &self.prefix)?;
 
         let mut names = HashSet::new();
@@ -361,6 +368,11 @@ services:
 
     fn error(text: &str) -> String {
         format!("{:#}", validate(text).unwrap_err())
+    }
+
+    #[test]
+    fn compost_prefix_is_reserved() {
+        assert!(error("{name: compost-oidc}").contains("are reserved"));
     }
 
     #[test]
