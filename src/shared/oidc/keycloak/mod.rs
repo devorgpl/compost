@@ -11,11 +11,11 @@ use serde_yaml_ng::Value;
 
 use super::base::{self, Endpoint, OidcLink, OidcRecord, PublicUrl};
 use super::{KIND, OidcType};
-use crate::config::app::AppService;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Generated, Monitored, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
-    connectors_dir, generate_password, project_name, render_template, shared_dir,
+    app_service, connectors_dir, generate_password, project_name, render_template, service_name,
+    shared_dir,
 };
 
 pub struct Keycloak;
@@ -81,9 +81,9 @@ impl OidcType for Keycloak {
         &["admin_password"]
     }
 
-    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+    fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
         Ok(Monitored {
-            services: vec![SERVICE],
+            services: vec![app_service(SERVICE, service_name(&config.name))],
             metrics: Vec::new(),
         })
     }
@@ -150,6 +150,8 @@ impl OidcType for Keycloak {
             include_str!("templates/compose.yaml.j2"),
             context! {
                 image,
+                service => service_name(&config.name),
+                container => project_name(KIND, &config.name),
                 url => url.url.as_str(),
                 network => network.as_str(),
                 host => config.name.as_str(),
@@ -220,11 +222,7 @@ impl OidcType for Keycloak {
         ))?;
 
         Ok(Some(SharedLinks {
-            app_services: vec![AppService {
-                name: SERVICE.to_string(),
-                service: SERVICE.to_string(),
-                environment: BTreeMap::new(),
-            }],
+            app_services: vec![app_service(SERVICE, service_name(&config.name))],
             services: BTreeMap::from([
                 ("database".to_string(), vec![Value::Mapping(database)]),
                 ("ingress".to_string(), vec![ingress]),
@@ -240,9 +238,9 @@ impl OidcType for Keycloak {
         })
     }
 
-    /// The alias its own ingress link gives it: `<compose project>-keycloak`.
+    /// Its service name, which is also the alias its own ingress link gives it.
     fn ingress_upstream(&self, config: &SharedAppConfig) -> String {
-        format!("{}-{SERVICE}:{HTTP_PORT}", project_name(KIND, &config.name))
+        format!("{}:{HTTP_PORT}", service_name(&config.name))
     }
 
     fn before_apply_application(&self, ctx: &AppCtx, link: &OidcLink) -> Result<()> {
@@ -395,9 +393,10 @@ fn purge_script(record: &OidcRecord, delete_realm: bool) -> Result<String> {
 /// secrets, so they go through stdin, never on the command line.
 fn run_script(ctx: &AppCtx, script: &str) -> Result<()> {
     let command = format!(
-        "cd {} && docker compose -p {} exec -T {SERVICE} bash -s",
+        "cd {} && docker compose -p {} exec -T {} bash -s",
         shell_quote(&ctx.server.path(&shared_dir(KIND, &ctx.shared.name))),
-        shell_quote(&project_name(KIND, &ctx.shared.name))
+        shell_quote(&project_name(KIND, &ctx.shared.name)),
+        shell_quote(&service_name(&ctx.shared.name))
     );
     let output = ctx
         .server
@@ -480,7 +479,8 @@ mod tests {
         let ingress = &links.services["ingress"][0];
         assert_eq!(ingress["domains"][0], "auth.localhost");
         assert_eq!(ingress["routes"][0]["port"], 8080);
-        assert_eq!(links.app_services[0].service, "keycloak");
+        assert_eq!(links.app_services[0].name, "keycloak");
+        assert_eq!(links.app_services[0].service, "compost-shared-keycloak");
     }
 
     mod render {
@@ -524,7 +524,7 @@ mod tests {
             assert!(compose.contains("compost-oidc-keycloak:\n        aliases: [keycloak]"));
             // Valid YAML that compost can read like an app's compose file.
             let parsed = crate::config::app::ComposeFile::parse(compose).unwrap();
-            assert!(parsed.services["keycloak"].has_networks);
+            assert!(parsed.services["compost-shared-keycloak"].has_networks);
 
             let paths: Vec<_> = rendered
                 .files

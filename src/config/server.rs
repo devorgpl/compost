@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
-use super::app::{AppConfig, AppService, link_name};
+use super::app::{AppConfig, link_name};
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared::{self, Kind, Monitored, Resolution, SharedAppConfig, SharedMonitoring};
@@ -69,7 +69,11 @@ fn monitoring_link(monitoring: &SharedMonitoring, monitored: &Monitored) -> Resu
     }
     link.insert("logs".into(), monitoring.logs.into());
     if monitoring.logs {
-        let targets: Vec<Value> = monitored.services.iter().map(|s| (*s).into()).collect();
+        let targets: Vec<Value> = monitored
+            .services
+            .iter()
+            .map(|s| s.name.as_str().into())
+            .collect();
         link.insert("targets".into(), Value::Sequence(targets));
     }
     if monitoring.metrics && !monitored.metrics.is_empty() {
@@ -185,12 +189,8 @@ impl ServerConfig {
             let monitored = kind.monitored(app)?;
             let links = links.get_or_insert_with(Default::default);
             for service in &monitored.services {
-                if !links.app_services.iter().any(|s| s.name == *service) {
-                    links.app_services.push(AppService {
-                        name: service.to_string(),
-                        service: service.to_string(),
-                        environment: BTreeMap::new(),
-                    });
+                if !links.app_services.iter().any(|s| s.name == service.name) {
+                    links.app_services.push(service.clone());
                 }
             }
             links
@@ -479,7 +479,10 @@ shared:
         let caddy = config.consumer("ingress", &config.shared["ingress"][0]);
         let caddy = caddy.unwrap().unwrap();
         assert_eq!(caddy.app.instance(), "compost-ingress-caddy-main");
-        assert_eq!(caddy.app.app_services[0].service, "caddy");
+        assert_eq!(
+            caddy.app.app_services[0].service,
+            "compost-shared-caddy-main"
+        );
         let link = &caddy.links[0];
         assert_eq!(
             (link.kind.name(), link.shared.name.as_str()),

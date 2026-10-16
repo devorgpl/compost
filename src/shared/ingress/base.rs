@@ -552,9 +552,9 @@ mod tests {
         assert_eq!(
             paths,
             [
-                ("b-realm", "/realms/second", "compost-oidc-kc-keycloak:8080"),
-                ("a-realm", "/realms/main", "compost-oidc-kc-keycloak:8080"),
-                ("a-resources", "/resources", "compost-oidc-kc-keycloak:8080"),
+                ("b-realm", "/realms/second", "compost-shared-kc:8080"),
+                ("a-realm", "/realms/main", "compost-shared-kc:8080"),
+                ("a-resources", "/resources", "compost-shared-kc:8080"),
             ]
         );
 

@@ -667,8 +667,8 @@ compost connector list
 # monitoring
 # └─ monitoring  openobserve 1  running
 #    ├─ sampleapp-local/telemetry  logs web, backend, migrate; metrics sampleapp-local-backend:5000/metrics  app: deployed
-#    ├─ shared database/postgres18/monitoring  logs postgres
-#    └─ shared ingress/caddy-main/monitoring  logs caddy; metrics compost-ingress-caddy-main-caddy:9180/metrics
+#    ├─ shared database/postgres18/monitoring  logs compost-shared-postgres18
+#    └─ shared ingress/caddy-main/monitoring  logs compost-shared-caddy-main; metrics compost-shared-caddy-main:9180/metrics
 ```
 
 Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; traces from the SDK show under Traces.
@@ -1500,7 +1500,7 @@ shared:
 | `configuration.collector_image` | `otel/opentelemetry-collector-contrib:X.Y.Z` | |
 
 What ends up in OpenObserve (organization `default`):
-- **Logs** stream `docker`: the output of linked containers, with `fluent_tag` (`<instance>.<service>`, e.g. `myapp-prod.backend` or `compost-ingress-caddy-main.caddy`), `container_name`, `source` (`stdout`/`stderr`) and the Compose project and service.
+- **Logs** stream `docker`: the output of linked containers, with `fluent_tag` (`<instance>.<service>`, e.g. `myapp-prod.backend` or `compost-ingress-caddy-main.compost-shared-caddy-main`), `container_name`, `source` (`stdout`/`stderr`) and the Compose project and service.
 - **Logs** stream `default`, **traces** and **metrics** that apps send with OpenTelemetry (OTLP).
 - **Metrics** scraped from the Prometheus endpoints of links, labeled `compost_app`, `compost_prefix` and `compost_service`, and the `container_*` metrics.
 
@@ -2194,17 +2194,20 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 |---|---|
 | Instance compose project | `<app>-<prefix>`, e.g. `myapp-staging` |
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
+| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
+| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector` |
 | Ingress network | `compost-ingress` |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
-| A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app `compost-<kind>-<name>-<service>` |
+| A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |
 
 So you can use plain Docker commands:
 
 ```sh
 docker compose -p myapp-staging logs -f backend
-docker compose -p compost-database-postgres18 exec postgres psql -U postgres
+docker compose -p compost-database-postgres18 exec compost-shared-postgres18 psql -U postgres
+docker exec -it compost-database-postgres18 psql -U postgres
 ```
 
 ---

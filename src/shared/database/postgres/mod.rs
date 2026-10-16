@@ -11,7 +11,8 @@ use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
     AppCtx, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role, ServerCtx,
-    SharedAppConfig, connectors_dir, generate_password, project_name, render_template, shared_dir,
+    SharedAppConfig, app_service, connectors_dir, generate_password, project_name, render_template,
+    service_name, shared_dir,
 };
 
 pub struct Postgres;
@@ -53,9 +54,9 @@ impl DatabaseType for Postgres {
         "postgres"
     }
 
-    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+    fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
         Ok(Monitored {
-            services: vec!["postgres"],
+            services: vec![app_service("postgres", service_name(&config.name))],
             metrics: Vec::new(),
         })
     }
@@ -352,7 +353,13 @@ impl DatabaseType for Postgres {
         let network = base::network_name(&config.name);
         let compose = render_template(
             include_str!("templates/compose.yaml.j2"),
-            context! { image, network => network.as_str(), host => config.name.as_str() },
+            context! {
+                image,
+                service => service_name(&config.name),
+                container => project_name(KIND, &config.name),
+                network => network.as_str(),
+                host => config.name.as_str(),
+            },
         )?;
         let root_connector = render_template(
             include_str!("templates/root-connector.yaml.j2"),
@@ -581,9 +588,10 @@ fn read_external_record(ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Ext
 /// Run a command inside the postgres container of a shared app.
 fn exec_command(ctx: &ServerCtx, name: &str, command: &str) -> String {
     format!(
-        "cd {} && docker compose -p {} exec -T postgres {command}",
+        "cd {} && docker compose -p {} exec -T {} {command}",
         shell_quote(&ctx.path(&shared_dir(KIND, name))),
-        shell_quote(&project_name(KIND, name))
+        shell_quote(&project_name(KIND, name)),
+        shell_quote(&service_name(name))
     )
 }
 
@@ -721,6 +729,15 @@ mod tests {
 
             let compose = &rendered.files[0].contents;
             assert!(compose.contains("image: postgres:16"), "{compose}");
+            // Not `postgres`: compose adds the service name as an alias on its networks.
+            assert!(
+                compose.contains("\n  compost-shared-postgres16:\n"),
+                "{compose}"
+            );
+            assert!(
+                compose.contains("container_name: compost-database-postgres16\n"),
+                "{compose}"
+            );
             assert!(compose.contains("compost-db-postgres16:\n        aliases: [postgres16]"));
             let paths: Vec<_> = rendered
                 .files

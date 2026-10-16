@@ -201,7 +201,7 @@ shared:
 | `configuration.collector_image` | `otel/opentelemetry-collector-contrib:X.Y.Z` | |
 
 What ends up in OpenObserve (organization `default`):
-- **Logs** stream `docker`: the output of linked containers, with `fluent_tag` (`<instance>.<service>`, e.g. `myapp-prod.backend` or `compost-ingress-caddy-main.caddy`), `container_name`, `source` (`stdout`/`stderr`) and the Compose project and service.
+- **Logs** stream `docker`: the output of linked containers, with `fluent_tag` (`<instance>.<service>`, e.g. `myapp-prod.backend` or `compost-ingress-caddy-main.compost-shared-caddy-main`), `container_name`, `source` (`stdout`/`stderr`) and the Compose project and service.
 - **Logs** stream `default`, **traces** and **metrics** that apps send with OpenTelemetry (OTLP).
 - **Metrics** scraped from the Prometheus endpoints of links, labeled `compost_app`, `compost_prefix` and `compost_service`, and the `container_*` metrics.
 

@@ -32,10 +32,10 @@ processors:
   batch: {}
 exporters:
   otlp_http/openobserve:
-    endpoint: http://openobserve:5080/api/default
+    endpoint: http://{{ openobserve }}:5080/api/default
     auth: {authenticator: basicauth/openobserve}
   otlp_http/docker:
-    endpoint: http://openobserve:5080/api/default
+    endpoint: http://{{ openobserve }}:5080/api/default
     auth: {authenticator: basicauth/openobserve}
     headers: {stream-name: docker}
 service:

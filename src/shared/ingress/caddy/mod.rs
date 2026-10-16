@@ -13,8 +13,8 @@ use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered,
-    RenderedFile, Role, ServerCtx, SharedAppConfig, is_domain, is_network_name, project_name,
-    render_template, shared_dir,
+    RenderedFile, Role, ServerCtx, SharedAppConfig, app_service, is_domain, is_network_name,
+    project_name, render_template, service_name, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -85,9 +85,9 @@ impl IngressType for Caddy {
     }
 
     /// Its output and, served on an internal port, its metrics.
-    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+    fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
         Ok(Monitored {
-            services: vec!["caddy"],
+            services: vec![app_service("caddy", service_name(&config.name))],
             metrics: vec![MetricsEndpoint {
                 service: "caddy",
                 port: METRICS_PORT,
@@ -246,6 +246,8 @@ impl IngressType for Caddy {
             include_str!("templates/compose.yaml.j2"),
             context! {
                 image,
+                service => service_name(&config.name),
+                container => project_name(KIND, &config.name),
                 user,
                 http_port => caddy.http_port,
                 https_port => caddy.https_port,
@@ -294,15 +296,16 @@ impl IngressType for Caddy {
     fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
         let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
         let project = shell_quote(&project_name(KIND, &config.name));
+        let service = shell_quote(&service_name(&config.name));
         let running = ctx.connector.exec(&format!(
-            "cd {dir} && docker compose -p {project} ps --status running -q caddy"
+            "cd {dir} && docker compose -p {project} ps --status running -q {service}"
         ))?;
         if running.trim().is_empty() {
             return Ok(false);
         }
         let caddy = |command: &str| {
             format!(
-                "cd {dir} && docker compose -p {project} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile"
+                "cd {dir} && docker compose -p {project} exec -T {service} caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile"
             )
         };
         ctx.connector.exec(&caddy("validate")).context(
@@ -472,9 +475,10 @@ fn site_path(ctx: &AppCtx, entry: &str) -> String {
 /// Run `caddy <command>` on the main Caddyfile inside the running container.
 fn caddy_command(ctx: &AppCtx, command: &str) -> String {
     format!(
-        "cd {} && docker compose -p {} exec -T caddy caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile",
+        "cd {} && docker compose -p {} exec -T {} caddy {command} --config /etc/caddy/Caddyfile --adapter caddyfile",
         shell_quote(&ctx.server.path(&shared_dir(KIND, &ctx.shared.name))),
-        shell_quote(&project_name(KIND, &ctx.shared.name))
+        shell_quote(&project_name(KIND, &ctx.shared.name)),
+        shell_quote(&service_name(&ctx.shared.name))
     )
 }
 
@@ -578,6 +582,10 @@ mod tests {
         let rendered = render("{name: caddy-main, type: caddy}");
         let compose = file(&rendered, "compose.yaml");
         assert!(compose.contains("image: caddy:2-alpine"), "{compose}");
+        assert!(
+            compose.contains("\n  compost-shared-caddy-main:\n"),
+            "{compose}"
+        );
         let id = |flag| {
             let out = std::process::Command::new("id")
                 .arg(flag)

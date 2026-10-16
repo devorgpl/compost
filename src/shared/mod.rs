@@ -69,8 +69,8 @@ fn yes() -> bool {
 /// What a monitoring link of a shared app watches (see [`Kind::monitored`]).
 #[derive(Debug, Default)]
 pub struct Monitored {
-    /// Compose services of the shared app.
-    pub services: Vec<&'static str>,
+    /// Compose services of the shared app; `name` is what the link targets.
+    pub services: Vec<AppService>,
     /// Prometheus endpoints it serves.
     pub metrics: Vec<MetricsEndpoint>,
 }
@@ -193,7 +193,11 @@ impl<'a> AppCtx<'a> {
     }
 
     /// Unique name of an app service on shared networks, e.g. `myapp-staging-backend`.
+    /// Services of shared apps are unique already (see [`service_name`]).
     pub fn service_alias(&self, compose_service: &str) -> String {
+        if consumer_kind(&self.app.name).is_some() {
+            return compose_service.to_string();
+        }
         format!("{}-{compose_service}", self.app.instance())
     }
 
@@ -549,6 +553,23 @@ pub fn connectors_dir(kind: &str, name: &str) -> String {
 /// Docker compose project of a shared app, e.g. `compost-database-postgres16`.
 pub fn project_name(kind: &str, name: &str) -> String {
     format!("compost-{kind}-{name}")
+}
+
+/// Compose service of a shared app, e.g. `compost-shared-postgres18`.
+/// Compose gives a container its service name as an alias on every network
+/// it joins, and apps join those networks: a plain `postgres` would hide an
+/// app's own service of that name. Shared app names are unique across kinds.
+pub fn service_name(name: &str) -> String {
+    format!("compost-shared-{name}")
+}
+
+/// An app service of a shared app: the name links target, and its compose service.
+pub fn app_service(name: &str, service: String) -> AppService {
+    AppService {
+        name: name.to_string(),
+        service,
+        environment: BTreeMap::new(),
+    }
 }
 
 /// Render an embedded template. Using an undefined variable is an error.

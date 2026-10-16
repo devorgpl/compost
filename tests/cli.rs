@@ -340,7 +340,7 @@ fn server_deploy_then_apply() {
     let log = server.take_docker_log();
     assert!(
         log.contains(
-            "docker compose -p compost-database-postgres16 up -d --quiet-pull --force-recreate"
+            "docker compose -p compost-database-postgres16 up -d --quiet-pull --remove-orphans --force-recreate"
         ),
         "{log}"
     );
@@ -355,7 +355,10 @@ fn server_deploy_then_apply() {
         .run(&["server", "deploy", "--apply"], &running)
         .success();
     let log = server.take_docker_log();
-    assert!(log.contains("up -d --quiet-pull\n"), "{log}");
+    assert!(
+        log.contains("up -d --quiet-pull --remove-orphans\n"),
+        "{log}"
+    );
     assert!(!log.contains("--force-recreate"), "{log}");
 }
 
@@ -410,7 +413,10 @@ fn caddy_joins_existing_networks_and_serves_sites() {
         .success()
         .stdout(contains("reloaded ingress caddy-main without a restart"));
     let log = server.take_docker_log();
-    assert!(log.contains("exec -T caddy caddy reload"), "{log}");
+    assert!(
+        log.contains("exec -T compost-shared-caddy-main caddy reload"),
+        "{log}"
+    );
     assert!(!log.contains("--force-recreate"), "{log}");
     assert!(
         !server
@@ -961,7 +967,7 @@ fn app_deploy_end_to_end() {
         "--project-directory sources -f sources/docker-compose.yaml -f compose/compost.override.yaml build -q",
     );
     let started = position("up -d --remove-orphans");
-    let reloaded = position("exec -T caddy caddy reload");
+    let reloaded = position("exec -T compost-shared-caddy-main caddy reload");
     assert!(
         created < built && built < started && started < reloaded,
         "{log}"
@@ -1505,7 +1511,7 @@ fn app_backup_of_one_link_as_raw_dump() {
     let log = server.take_docker_log();
     assert!(
         log.contains(
-            "exec -T postgres pg_dump -U postgres --no-owner --no-acl -d myapp_staging_system_data"
+            "exec -T compost-shared-postgres16 pg_dump -U postgres --no-owner --no-acl -d myapp_staging_system_data"
         ),
         "{log}"
     );
@@ -2254,7 +2260,7 @@ fn keycloak_uses_its_database_and_the_ingress() {
         "KC_DB_URL_DATABASE: compost_oidc_keycloak_db",
         "KC_DB_PASSWORD: ",
         "compost-db-postgres18: {}",
-        "- compost-oidc-keycloak-keycloak",
+        "- compost-shared-keycloak",
     ] {
         assert!(
             override_yaml.contains(expected),
@@ -2265,7 +2271,7 @@ fn keycloak_uses_its_database_and_the_ingress() {
         .read_server_file("shared/ingress/caddy-main/conf/sites/compost-oidc-keycloak-web.caddy");
     assert!(site.contains("auth.example.com {"), "{site}");
     assert!(
-        site.contains("reverse_proxy compost-oidc-keycloak-keycloak:8080"),
+        site.contains("reverse_proxy compost-shared-keycloak:8080"),
         "{site}"
     );
 
@@ -2292,14 +2298,14 @@ fn keycloak_uses_its_database_and_the_ingress() {
     assert!(
         !server
             .take_docker_log()
-            .contains("compost-oidc-keycloak up -d --quiet-pull --force-recreate")
+            .contains("compost-oidc-keycloak up -d --quiet-pull --remove-orphans --force-recreate")
     );
 
     server
         .run(&["connector", "list"], &running)
         .success()
         .stdout(contains("shared oidc/keycloak/db  database compost_oidc_keycloak_db, user compost_oidc_keycloak_db"))
-        .stdout(contains("shared oidc/keycloak/web  auth.example.com  / → compost-oidc-keycloak-keycloak:8080"))
+        .stdout(contains("shared oidc/keycloak/web  auth.example.com  / → compost-shared-keycloak:8080"))
         .stdout(contains("keycloak  keycloak 26  running"));
 }
 
@@ -2365,7 +2371,7 @@ fn oidc_link_creates_client_and_sets_variables() {
 
     let log = server.take_docker_log();
     let script = log
-        .find("-p compost-oidc-keycloak exec -T keycloak bash -s")
+        .find("-p compost-oidc-keycloak exec -T compost-shared-keycloak bash -s")
         .unwrap();
     let started = log.find("-p myapp-main").unwrap();
     assert!(script < started, "{log}");
@@ -2473,7 +2479,7 @@ app_services:
         .run(&["app", "deploy", "--apply", "-f", "app/compost.yaml"], &running)
         .success()
         .stdout(contains(
-            "login.example.com  /realms/shop → compost-oidc-keycloak-keycloak:8080, /resources → compost-oidc-keycloak-keycloak:8080",
+            "login.example.com  /realms/shop → compost-shared-keycloak:8080, /resources → compost-shared-keycloak:8080",
         ));
 
     let site =
@@ -2707,9 +2713,9 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
     let caddy = server.read_server_file("shared/ingress/caddy-main/compose.override.yaml");
     for expected in [
         "fluentd-address: 127.0.0.1:24224",
-        "tag: compost-ingress-caddy-main.caddy",
+        "tag: compost-ingress-caddy-main.compost-shared-caddy-main",
         "compost-monitoring-o2:",
-        "- compost-ingress-caddy-main-caddy",
+        "- compost-shared-caddy-main",
     ] {
         assert!(caddy.contains(expected), "missing {expected:?} in\n{caddy}");
     }
@@ -2719,13 +2725,13 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
         "shared/monitoring/o2/collector/targets/compost-ingress-caddy-main-monitoring.yaml",
     );
     assert!(
-        targets.contains("compost-ingress-caddy-main-caddy:9180"),
+        targets.contains("compost-shared-caddy-main:9180"),
         "{targets}"
     );
     let site = server
         .read_server_file("shared/ingress/caddy-main/conf/sites/compost-monitoring-o2-web.caddy");
     assert!(
-        site.contains("reverse_proxy compost-monitoring-o2-openobserve:5080"),
+        site.contains("reverse_proxy compost-shared-o2:5080"),
         "{site}"
     );
     let log = server.take_docker_log();
@@ -2737,7 +2743,7 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
         .run(&["connector", "list"], &running)
         .success()
         .stdout(contains(
-            "shared ingress/caddy-main/monitoring  logs caddy; metrics compost-ingress-caddy-main-caddy:9180/metrics",
+            "shared ingress/caddy-main/monitoring  logs compost-shared-caddy-main; metrics compost-shared-caddy-main:9180/metrics",
         ));
 
     // Without `monitoring`, the link and Caddy's override go away.
@@ -2767,11 +2773,9 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
             .join("connectors/monitoring/o2/compost-ingress-caddy-main-monitoring.yaml")
             .exists()
     );
-    assert!(
-        server
-            .take_docker_log()
-            .contains("-p compost-ingress-caddy-main up -d --quiet-pull --force-recreate")
-    );
+    assert!(server.take_docker_log().contains(
+        "-p compost-ingress-caddy-main up -d --quiet-pull --remove-orphans --force-recreate"
+    ));
 }
 
 #[test]

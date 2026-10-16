@@ -97,15 +97,18 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 |---|---|
 | Instance compose project | `<app>-<prefix>`, e.g. `myapp-staging` |
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
+| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
+| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector` |
 | Ingress network | `compost-ingress` |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
-| A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app `compost-<kind>-<name>-<service>` |
+| A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |
 
 So you can use plain Docker commands:
 
 ```sh
 docker compose -p myapp-staging logs -f backend
-docker compose -p compost-database-postgres18 exec postgres psql -U postgres
+docker compose -p compost-database-postgres18 exec compost-shared-postgres18 psql -U postgres
+docker exec -it compost-database-postgres18 psql -U postgres
 ```

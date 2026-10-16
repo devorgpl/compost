@@ -550,8 +550,10 @@ fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
     let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind_name(), &plan.app.name)));
     let project = shared::project_name(plan.kind_name(), &plan.app.name);
     let recreate = if recreate { " --force-recreate" } else { "" };
+    // --remove-orphans: a service that was renamed (e.g. `postgres` before
+    // services were named `compost-shared-<name>`) must not keep running.
     ctx.connector.exec(&format!(
-        "cd {dir} && docker compose -p {} up -d --quiet-pull{recreate}",
+        "cd {dir} && docker compose -p {} up -d --quiet-pull --remove-orphans{recreate}",
         shell_quote(&project)
     ))?;
     wait_until_ready_within(ctx.connector, &project, plan.kind.start_timeout())?;

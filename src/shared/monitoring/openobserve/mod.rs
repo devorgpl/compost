@@ -10,12 +10,11 @@ use serde_yaml_ng::Value;
 
 use super::base::{self, Endpoint};
 use super::{KIND, MonitoringType};
-use crate::config::app::AppService;
 use crate::connector::shell_quote;
 use crate::shared::{
     Generated, ItemReader, ItemWriter, PublicUrl, Rendered, RenderedFile, Role, ServerCtx,
-    SharedAppConfig, SharedLinks, connectors_dir, generate_password, parse_url, project_name,
-    render_template, shared_dir,
+    SharedAppConfig, SharedLinks, app_service, connectors_dir, generate_password, parse_url,
+    project_name, render_template, service_name, shared_dir,
 };
 
 pub struct OpenObserve;
@@ -171,6 +170,9 @@ impl MonitoringType for OpenObserve {
             include_str!("templates/compose.yaml.j2"),
             context! {
                 image => image(config)?,
+                service => service_name(&config.name),
+                container => project_name(KIND, &config.name),
+                collector_service => collector_service(&config.name),
                 collector_image => o2.collector_image.as_deref().unwrap_or(COLLECTOR_IMAGE),
                 user,
                 socket_group,
@@ -182,7 +184,10 @@ impl MonitoringType for OpenObserve {
         )?;
         let collector = render_template(
             include_str!("templates/collector.yaml.j2"),
-            context! { container_metrics => o2.container_metrics },
+            context! {
+                container_metrics => o2.container_metrics,
+                openobserve => service_name(&config.name),
+            },
         )?;
         let endpoint = self.endpoint(config)?;
         let root_connector = render_template(
@@ -233,11 +238,7 @@ impl MonitoringType for OpenObserve {
             url.domain
         ))?;
         Ok(Some(SharedLinks {
-            app_services: vec![AppService {
-                name: SERVICE.to_string(),
-                service: SERVICE.to_string(),
-                environment: BTreeMap::new(),
-            }],
+            app_services: vec![app_service(SERVICE, service_name(&config.name))],
             services: BTreeMap::from([("ingress".to_string(), vec![ingress])]),
         }))
     }
@@ -267,15 +268,16 @@ impl MonitoringType for OpenObserve {
             "docker compose -p {}",
             shell_quote(&project_name(KIND, &config.name))
         );
+        let service = shell_quote(&service_name(&config.name));
         out.stream(
             BACKUP_ITEM,
             Role::Data,
             &format!(
-                "cd {dir} || exit 1; running=$({compose} ps --status running -q {SERVICE}); \
+                "cd {dir} || exit 1; running=$({compose} ps --status running -q {service}); \
                  sparse=; if tar --version 2>/dev/null | grep -q GNU; then sparse=--sparse; fi; \
-                 if [ -n \"$running\" ]; then {compose} stop {SERVICE} >/dev/null 2>&1; fi; \
+                 if [ -n \"$running\" ]; then {compose} stop {service} >/dev/null 2>&1; fi; \
                  tar $sparse -cf - {}; status=$?; \
-                 if [ -n \"$running\" ]; then {compose} start {SERVICE} >/dev/null 2>&1; fi; \
+                 if [ -n \"$running\" ]; then {compose} start {service} >/dev/null 2>&1; fi; \
                  exit $status",
                 BACKUP_DIRS.join(" ")
             ),
@@ -321,6 +323,11 @@ fn image(config: &SharedAppConfig) -> Result<String> {
             "set `image` for openobserve version {version}, e.g. openobserve/openobserve:v{version}.0.0"
         ),
     }
+}
+
+/// Compose service of the collector, named like the shared app's own service.
+fn collector_service(name: &str) -> String {
+    format!("{}-collector", service_name(name))
 }
 
 fn secrets_path(name: &str) -> String {
@@ -465,11 +472,23 @@ mod tests {
             );
             assert!(!compose.contains("docker.sock"), "{compose}");
             let parsed = crate::config::app::ComposeFile::parse(compose).unwrap();
-            assert!(!parsed.services["openobserve"].has_networks);
-            assert!(parsed.services["collector"].has_networks);
+            assert!(!parsed.services["compost-shared-o2"].has_networks);
+            assert!(parsed.services["compost-shared-o2-collector"].has_networks);
+            assert!(
+                compose.contains("depends_on: [compost-shared-o2]"),
+                "{compose}"
+            );
+            assert!(
+                compose.contains("container_name: compost-monitoring-o2-collector\n"),
+                "{compose}"
+            );
 
             let collector = file(&rendered, "collector/config.yaml");
             let collector_yaml: Value = serde_yaml_ng::from_str(collector).unwrap();
+            assert_eq!(
+                collector_yaml["exporters"]["otlp_http/openobserve"]["endpoint"],
+                "http://compost-shared-o2:5080/api/default"
+            );
             assert!(collector_yaml["receivers"].get("docker_stats").is_none());
             assert_eq!(
                 collector_yaml["service"]["pipelines"]["metrics"]["receivers"],
