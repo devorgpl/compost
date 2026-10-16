@@ -104,7 +104,7 @@ pub struct AppBackupArgs {
     pub link: Vec<String>,
     #[command(flatten)]
     pub output: BackupOutputArgs,
-    /// Stop the services while volumes are copied, for a consistent copy
+    /// Stop every service while volumes are copied, for a consistent copy (default: those in `backup.stop`)
     #[arg(long)]
     pub stop: bool,
     /// Remove a lock left behind by an interrupted compost command

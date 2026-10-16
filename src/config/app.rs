@@ -35,18 +35,124 @@ pub struct AppConfig {
     pub backup: BackupConfig,
 }
 
-/// What `app backup` saves besides link data and sources.
+/// What `app backup` saves besides link data and sources, and the steps
+/// that run around a backup or restore.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupConfig {
     /// Named volumes (keys of the compose file's top-level `volumes`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub volumes: Vec<String>,
+    /// Services stopped while volumes are copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<StopServices>,
+    /// Before anything is saved, while the services run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_backup: Vec<Step>,
+    /// After the data is saved and the stopped services started again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_backup: Vec<Step>,
+    /// Before data is loaded into a deployed instance, while its services run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_restore: Vec<Step>,
+    /// After the data is loaded and the services started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_restore: Vec<Step>,
 }
 
 impl BackupConfig {
     fn is_empty(&self) -> bool {
         self.volumes.is_empty()
+            && self.stop.is_none()
+            && self.before_backup.is_empty()
+            && self.after_backup.is_empty()
+            && self.before_restore.is_empty()
+            && self.after_restore.is_empty()
+    }
+
+    /// The step lists with their keys, for messages.
+    fn steps(&self) -> [(&'static str, &[Step]); 4] {
+        [
+            ("before_backup", &self.before_backup),
+            ("after_backup", &self.after_backup),
+            ("before_restore", &self.before_restore),
+            ("after_restore", &self.after_restore),
+        ]
+    }
+}
+
+/// `backup.stop`: `true` for every service, or a list of compose services.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum StopServices {
+    All(bool),
+    Some(Vec<String>),
+}
+
+/// A command run in a service of the instance: `exec` in its running
+/// container, or `run` as a one-off container that must exit with 0.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Step {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// A string runs with `sh -c`; a list is the command and its arguments.
+    /// `run` without it uses the service's own command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<StepCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum StepCommand {
+    Shell(String),
+    Args(Vec<String>),
+}
+
+impl StepCommand {
+    /// The command's words.
+    pub fn args(&self) -> Vec<String> {
+        match self {
+            Self::Shell(script) => vec!["sh".into(), "-c".into(), script.clone()],
+            Self::Args(args) => args.clone(),
+        }
+    }
+}
+
+impl Step {
+    /// The compose service, and whether the step `exec`s into it.
+    pub fn target(&self) -> (&str, bool) {
+        match (&self.exec, &self.run) {
+            (Some(service), _) => (service, true),
+            (None, Some(service)) => (service, false),
+            (None, None) => ("", false),
+        }
+    }
+
+    fn validate(&self, compose: &ComposeFile) -> Result<()> {
+        let service = match (&self.exec, &self.run) {
+            (Some(_), Some(_)) | (None, None) => {
+                return Err(config_err("set either `exec` or `run`"));
+            }
+            (Some(service), None) => {
+                if self.command.as_ref().is_none_or(|c| c.args().is_empty()) {
+                    return Err(config_err("`exec` needs a `command`"));
+                }
+                service
+            }
+            (None, Some(service)) => service,
+        };
+        if matches!(&self.command, Some(StepCommand::Args(args)) if args.is_empty()) {
+            return Err(config_err("`command` must not be empty"));
+        }
+        if !compose.services.contains_key(service) {
+            return Err(config_err(format!(
+                "service `{service}` is not in the compose file"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -316,6 +422,22 @@ impl AppConfig {
                 )));
             }
         }
+        if let Some(StopServices::Some(services)) = &self.backup.stop {
+            for service in services {
+                if !compose.services.contains_key(service) {
+                    return Err(config_err(format!(
+                        "backup.stop: service `{service}` is not in {}",
+                        self.deployment.compose_file
+                    )));
+                }
+            }
+        }
+        for (key, steps) in self.backup.steps() {
+            for (index, step) in steps.iter().enumerate() {
+                step.validate(compose)
+                    .map_err(|e| config_err(format!("backup.{key}[{index}]: {e:#}")))?;
+            }
+        }
 
         for (kind_name, links) in &self.services {
             let kind = shared::find_kind(kind_name).ok_or_else(|| {
@@ -576,6 +698,71 @@ services:
 
         let err = error("{name: a, backup: {volumes: [data]}}");
         assert!(err.contains("`data` is not a named volume"), "{err}");
+    }
+
+    #[test]
+    fn backup_steps_and_stop() {
+        let config = validate(
+            "{name: a, backup: {stop: [backend-webapp], \
+              before_backup: [{exec: backend-webapp, command: 'dump > /x'}], \
+              after_backup: [{run: backend-migration}], \
+              after_restore: [{run: backend-migration, command: [load, --all]}]}}",
+        )
+        .unwrap();
+        let backup = &config.backup;
+        assert_eq!(
+            backup.stop,
+            Some(StopServices::Some(vec!["backend-webapp".into()]))
+        );
+        assert_eq!(backup.before_backup[0].target(), ("backend-webapp", true));
+        assert_eq!(
+            backup.before_backup[0].command.as_ref().unwrap().args(),
+            ["sh", "-c", "dump > /x"]
+        );
+        assert_eq!(
+            backup.after_backup[0].target(),
+            ("backend-migration", false)
+        );
+        assert!(backup.after_backup[0].command.is_none());
+        assert_eq!(
+            validate("{name: a, backup: {stop: true}}")
+                .unwrap()
+                .backup
+                .stop,
+            Some(StopServices::All(true))
+        );
+        // Stored configs keep the steps.
+        let stored = serde_yaml_ng::to_string(&config).unwrap();
+        let again: AppConfig = serde_yaml_ng::from_str(&stored).unwrap();
+        assert_eq!(again.backup.after_restore.len(), 1);
+
+        for (text, message) in [
+            ("{stop: [nope]}", "backup.stop: service `nope` is not in"),
+            (
+                "{before_backup: [{exec: front-webapp}]}",
+                "backup.before_backup[0]: `exec` needs a `command`",
+            ),
+            (
+                "{after_backup: [{run: x, exec: x}]}",
+                "backup.after_backup[0]: set either `exec` or `run`",
+            ),
+            (
+                "{before_restore: [{command: x}]}",
+                "backup.before_restore[0]: set either",
+            ),
+            (
+                "{after_restore: [{run: front-webapp, command: []}]}",
+                "must not be empty",
+            ),
+            (
+                "{after_restore: [{run: nope}]}",
+                "service `nope` is not in the compose file",
+            ),
+            ("{after_restore: [{run: x, cmd: y}]}", "unknown field `cmd`"),
+        ] {
+            let err = error(&format!("{{name: a, backup: {text}}}"));
+            assert!(err.contains(message), "{text}: {err}");
+        }
     }
 
     #[test]

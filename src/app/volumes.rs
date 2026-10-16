@@ -49,26 +49,67 @@ pub fn restore_script(volume: &str) -> String {
     )
 }
 
+/// Which services [`Stopped`] stops.
+#[derive(Clone, Copy)]
+pub enum Services<'s> {
+    All,
+    Only(&'s [String]),
+}
+
 /// Stops an instance's running services until dropped, then starts them
 /// again. Services that were not running (e.g. finished migrations) stay as they are.
 pub struct Stopped<'a> {
     ctx: &'a ServerCtx<'a>,
     app: &'a AppConfig,
     services: Vec<String>,
+    /// For messages: the instance, or the services stopped.
+    label: String,
 }
 
 impl<'a> Stopped<'a> {
-    pub fn stop(ctx: &'a ServerCtx<'a>, app: &'a AppConfig) -> Result<Self> {
+    pub fn stop(ctx: &'a ServerCtx<'a>, app: &'a AppConfig, which: Services) -> Result<Self> {
         let compose = instance::compose_command(ctx, app);
-        let running = ctx
-            .connector
-            .exec(&format!("{compose} ps --services --status running"))?;
-        let services: Vec<String> = running.lines().map(str::to_string).collect();
-        if !services.is_empty() {
-            out!("  stopping {} ...", app.instance());
-            ctx.connector.exec(&format!("{compose} stop"))?;
+        let running = || -> Result<Vec<String>> {
+            let output = ctx
+                .connector
+                .exec(&format!("{compose} ps --services --status running"))?;
+            Ok(output.lines().map(str::to_string).collect())
+        };
+        let before = running()?;
+        let (script, label) = match which {
+            Services::All => (format!("{compose} stop"), app.instance()),
+            Services::Only(only) => {
+                let quoted: Vec<String> = only.iter().map(|s| shell_quote(s)).collect();
+                (
+                    format!("{compose} stop {}", quoted.join(" ")),
+                    only.join(", "),
+                )
+            }
+        };
+        let targeted = match which {
+            Services::All => !before.is_empty(),
+            Services::Only(only) => before.iter().any(|s| only.contains(s)),
+        };
+        if !targeted {
+            return Ok(Self {
+                ctx,
+                app,
+                services: Vec::new(),
+                label,
+            });
         }
-        Ok(Self { ctx, app, services })
+        out!("  stopping {label} ...");
+        // Compose may stop services that depend on them too: start again
+        // whatever stopped.
+        let result = ctx.connector.exec(&script).and_then(|_| running());
+        let after = result.as_deref().unwrap_or_default();
+        let stopped = Self {
+            ctx,
+            app,
+            services: before.into_iter().filter(|s| !after.contains(s)).collect(),
+            label,
+        };
+        result.map(|_| stopped)
     }
 }
 
@@ -78,7 +119,7 @@ impl Drop for Stopped<'_> {
             return;
         }
         let _cleanup = crate::interrupt::cleanup();
-        out!("  starting {} ...", self.app.instance());
+        out!("  starting {} ...", self.label);
         let services: Vec<String> = self.services.iter().map(|s| shell_quote(s)).collect();
         let script = format!(
             "{} start {}",
@@ -86,10 +127,7 @@ impl Drop for Stopped<'_> {
             services.join(" ")
         );
         if let Err(err) = self.ctx.connector.exec(&script) {
-            eprintln!(
-                "warning: could not start {} again: {err:#}",
-                self.app.instance()
-            );
+            eprintln!("warning: could not start {} again: {err:#}", self.label);
         }
     }
 }

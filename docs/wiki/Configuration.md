@@ -52,7 +52,23 @@ app_services:
       APP_MODE: production
 backup:
   volumes: [uploads]                   # named volumes saved by `app backup`
+  stop: [worker]                       # services stopped while volumes are copied; `true` for all
+  before_backup: [ … ]                 # steps; see below
+  after_backup: [ … ]
+  before_restore: [ … ]
+  after_restore: [ … ]
 ```
+
+### `backup`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `volumes` | `[]` | Top-level `volumes:` keys of the compose file that `app backup` saves |
+| `stop` | none | Compose services stopped while the volumes are copied, or `true` for all; `--stop` stops all |
+| `before_backup`, `after_backup` | `[]` | Steps run before anything is saved and after it is saved |
+| `before_restore`, `after_restore` | `[]` | Steps run before data is loaded into a deployed instance and after it is loaded |
+
+Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
 ### `services.ingress[]`
 

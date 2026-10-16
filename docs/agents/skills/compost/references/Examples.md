@@ -329,3 +329,39 @@ compost app remove myapp-review --purge database --volumes --yes
 ```
 
 `compost -s prod backup list` shows what's there.
+
+## An app with its own database
+
+An app whose compose file runs its own MariaDB has no `database` link for compost to dump, and copying its data folder while it runs isn't safe. Dump it into a volume before each backup, and load it after a restore:
+
+```yaml
+# compose file
+services:
+  db:
+    image: mariadb:11
+    environment: {MARIADB_ROOT_PASSWORD: …}
+    volumes: [db-data:/var/lib/mysql, db-dumps:/dumps]
+    healthcheck:                  # `after_restore` waits until it accepts connections
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+volumes: {db-data: {}, db-dumps: {}}
+```
+
+```yaml
+# compost.yaml
+backup:
+  volumes: [db-dumps]
+  before_backup:
+    - exec: db
+      command: mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction > /dumps/all.sql
+  after_restore:
+    - exec: db
+      command: mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" < /dumps/all.sql
+```
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-prod.yaml    # stores the steps
+compost app backup myapp-prod
+compost app restore myapp-prod-….compost.tar.gz --include volumes --replace --yes
+```
+
+The restore stops the app, puts the dump back into `db-dumps`, starts it and loads the dump. More in [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).

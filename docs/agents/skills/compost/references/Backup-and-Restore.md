@@ -52,7 +52,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |
 
-The default is `links,sources,volumes`. The stored config is always saved, and the overlay stored with `secret deploy`, if any. `--link main-db` or `--link database:main-db` saves only that link. `--stop` stops the services while volumes are copied, for a consistent copy, and starts them again afterwards.
+The default is `links,sources,volumes`. The stored config is always saved, and the overlay stored with `secret deploy`, if any. `--link main-db` or `--link database:main-db` saves only that link.
 
 Volumes must be listed to be saved:
 
@@ -63,6 +63,62 @@ backup:
 ```
 
 Links to an [external database](Servers-and-Shared-Apps.md#external-databases) are dumped too, from a temporary `postgres` client container on the server, with the link's own credentials.
+
+For a consistent copy of files that a service keeps writing, stop it while the volumes are copied. `backup.stop` names those services (`true` for all); `--stop` stops all of them for one backup. They start again afterwards, as do the services that Compose stopped with them; services that weren't running stay stopped.
+
+```yaml
+backup:
+  volumes: [uploads, search-index]
+  stop: [worker, indexer]
+```
+
+## Steps around a backup or restore
+
+Some data must be prepared before it is copied, e.g. a database that runs inside the app is dumped into a volume, and loaded from it after a restore. Steps run commands in the instance's services:
+
+```yaml
+# compose file
+services:
+  db:
+    image: mariadb:11
+    environment: {MARIADB_ROOT_PASSWORD: …}
+    volumes: [db-dumps:/dumps, db-data:/var/lib/mysql]
+  backup-job:                     # started only by the step: the profile keeps `app deploy` from starting it
+    image: myorg/backup-tools
+    profiles: [backup]
+    volumes: [uploads:/uploads]
+volumes: {db-dumps: {}, db-data: {}, uploads: {}}
+```
+
+```yaml
+# compost.yaml
+backup:
+  volumes: [db-dumps, uploads]
+  before_backup:
+    - exec: db
+      command: mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction > /dumps/all.sql
+    - run: backup-job             # its own command; or `command: [prepare, --fast]`
+  after_backup:
+    - {exec: db, command: rm -f /dumps/all.sql}
+  after_restore:
+    - {exec: db, command: mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" < /dumps/all.sql}
+```
+
+| Step | Runs | Fails when |
+|---|---|---|
+| `exec: <service>` | `docker compose exec` in the running container; needs `command` | the service isn't running, or the command exits with an error |
+| `run: <service>` | `docker compose run --rm`: a new container, removed afterwards; `command` replaces the service's own | the command exits with an error |
+
+A string `command` runs with `sh -c` in the container, so `>`, `<`, `&&` and the container's variables work; a list (`[mariadb, --version]`) runs as is. Steps run on the server in order and their output is shown. They come from the config stored by the last `app deploy`, so deploy after changing them.
+
+| List | When |
+|---|---|
+| `before_backup` | Before anything of the instance is saved, while its services run. A failed step stops the backup. |
+| `after_backup` | After the data is saved and the stopped services started again. Also runs when the backup or a `before_backup` step failed, to clean up; its own failures are warnings. |
+| `before_restore` | When data is loaded into a deployed instance (restore without sources): before its services are stopped. A failed step stops the restore. Not run by a restore with sources: that instance only starts after its data is loaded. |
+| `after_restore` | After the data is loaded and the services are ready (healthy, for services with a healthcheck), in both kinds of restore. A failed step fails the restore. |
+
+The backup steps run when the backup saves links or volumes (not for `--include sources` or `images` alone).
 
 ## App restore
 
@@ -80,6 +136,8 @@ compost app restore myapp-prod-20261015-120000.compost.tar.gz --prefix review -f
 The copy needs other domains (one domain, one instance), and its databases follow the new prefix unless the config sets `db_name`.
 
 **Without sources** (`--include links,volumes`), it loads data into the deployed instance: it lists what will be replaced, asks unless `--yes`, stops the services, loads, and starts them again.
+
+Both run the instance's [restore steps](#steps-around-a-backup-or-restore): those of the restored config with sources, those of the deployed instance without.
 
 Databases and volumes that already hold data are only replaced with `--replace` (exit 3 otherwise). A link's database is created first if it doesn't exist yet, e.g. after `app deploy --no-apply` of a link that moved to another database.
 

@@ -10,6 +10,7 @@ pub mod restore;
 pub mod secrets;
 mod sources;
 pub mod state;
+mod steps;
 mod volumes;
 
 use std::io::{BufRead, IsTerminal, Write};

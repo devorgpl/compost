@@ -116,7 +116,17 @@ echo "docker $*" >> "$FAKE_DOCKER_LOG"
 case "$*" in
   "version "*) echo 29.0.0 ;;
   "compose version"*) echo 2.40.0 ;;
+  "compose "*" ps --services "*)
+    for s in ${FAKE_DOCKER_SERVICES:-app}; do
+      grep -qx "$s" "$FAKE_DOCKER_LOG.stopped" 2>/dev/null || echo "$s"
+    done ;;
   "compose "*" ps "*) echo "app running 0 healthy" ;;
+  "compose "*" stop"*)
+    names="${*##* stop}"; [ -n "$names" ] || names="${FAKE_DOCKER_SERVICES:-app}"
+    for s in $names; do echo "$s" >> "$FAKE_DOCKER_LOG.stopped"; done ;;
+  "compose "*" start "*) rm -f "$FAKE_DOCKER_LOG.stopped" ;;
+  "compose "*" run "*" failing-job"*) echo "job failed" >&2; exit 1 ;;
+  "compose "*" run "*) echo "job output" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*) ;;
@@ -2038,6 +2048,155 @@ fn app_backup_and_restore_keep_stored_secrets() {
         )
         .success()
         .stdout(contains("stored secrets").not());
+}
+
+const BACKUP_STEPS: &str = "
+backup:
+  volumes: [data]
+  stop: [backend-webapp]
+  before_backup:
+    - {exec: backend-webapp, command: 'dump > /data/dump'}
+  after_backup:
+    - {run: backup-job, command: [cleanup, --all]}
+  before_restore:
+    - {exec: front-webapp, command: [maintenance, 'on']}
+  after_restore:
+    - {exec: backend-webapp, command: 'load < /data/dump'}
+";
+
+#[test]
+fn app_backup_and_restore_run_steps() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/compost.yaml", &format!("{APP_CONFIG}{BACKUP_STEPS}"));
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "{services: {front-webapp: {build: .}, backend-webapp: {build: .}, \
+         backup-job: {build: ., profiles: [backup]}}, volumes: {data: {}}}",
+    );
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
+    let env = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_DOCKER_SERVICES", "front-webapp backend-webapp"),
+    ];
+    let deploy = |files: &str| {
+        server
+            .run(&["app", "deploy", "--apply", "-f", files], &env)
+            .success();
+        server.take_docker_log();
+    };
+    deploy("app/compost.yaml,app/.compost-staging.yaml");
+
+    let output = server
+        .run(&["app", "backup", "myapp-staging", "-o", "b.tar.gz"], &env)
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).unwrap();
+    let order = [
+        "before_backup: exec backend-webapp",
+        "links/database/system-data",
+        "stopping backend-webapp ...",
+        "starting backend-webapp ...",
+        "after_backup: run backup-job",
+        "    job output",
+    ];
+    let positions: Vec<_> = order
+        .iter()
+        .map(|line| {
+            stdout
+                .find(line)
+                .unwrap_or_else(|| panic!("{line}: {stdout}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "{stdout}");
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("exec -T backend-webapp sh -c dump > /data/dump"),
+        "{log}"
+    );
+    assert!(log.contains(" stop backend-webapp\n"), "{log}");
+    assert!(log.contains(" start backend-webapp\n"), "{log}");
+    assert!(
+        log.contains("run --rm -T backup-job cleanup --all"),
+        "{log}"
+    );
+
+    // A failed step stops the backup; the after steps still clean up.
+    server.write_work_file(
+        "app/.compost-failing.yaml",
+        "backup: {before_backup: [{run: failing-job}]}",
+    );
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "{services: {front-webapp: {build: .}, backend-webapp: {build: .}, \
+         backup-job: {build: ., profiles: [backup]}, failing-job: {build: .}}, volumes: {data: {}}}",
+    );
+    deploy("app/compost.yaml,app/.compost-staging.yaml,app/.compost-failing.yaml");
+    server
+        .run(&["app", "backup", "myapp-staging", "-o", "c.tar.gz"], &env)
+        .failure()
+        .stdout(contains("after_backup: run backup-job"))
+        .stderr(contains("backup.before_backup[0] (run failing-job)"))
+        .stderr(contains("job failed"));
+    assert!(!server.env.work.path().join("c.tar.gz").exists());
+    let log = server.take_docker_log();
+    assert!(!log.contains(" stop"), "{log}");
+    deploy("app/compost.yaml,app/.compost-staging.yaml");
+
+    // Loading data into the deployed instance.
+    let output = server
+        .run(
+            &[
+                "app",
+                "restore",
+                "b.tar.gz",
+                "--include",
+                "links",
+                "--replace",
+                "--yes",
+            ],
+            &env,
+        )
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).unwrap();
+    let order = [
+        "before_restore: exec front-webapp",
+        "stopping myapp-staging ...",
+        "starting myapp-staging ...",
+        "after_restore: exec backend-webapp",
+        "Restored myapp-staging.",
+    ];
+    let positions: Vec<_> = order
+        .iter()
+        .map(|line| {
+            stdout
+                .find(line)
+                .unwrap_or_else(|| panic!("{line}: {stdout}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "{stdout}");
+    let log = server.take_docker_log();
+    assert!(log.contains("exec -T front-webapp maintenance on"), "{log}");
+    assert!(
+        log.contains("exec -T backend-webapp sh -c load < /data/dump"),
+        "{log}"
+    );
+
+    // Deployed again from the archive: nothing runs before its data is loaded.
+    server
+        .run(&["app", "remove", "myapp-staging", "--yes"], &env)
+        .success();
+    server
+        .run(&["app", "restore", "b.tar.gz", "--replace", "--yes"], &env)
+        .success()
+        .stdout(contains("before_restore: skipped"))
+        .stdout(contains("after_restore: exec backend-webapp"));
+    let log = server.take_docker_log();
+    assert!(!log.contains("maintenance"), "{log}");
 }
 
 const OIDC_SERVER_CONFIG: &str = "\

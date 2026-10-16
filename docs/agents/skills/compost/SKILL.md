@@ -59,7 +59,7 @@ Or store the overlay on the server, so any machine or CI deploys with `compost.y
 
 **Inspect:** `compost app list`, `compost app state <instance>`, `compost connector list`, `compost server state`, `compost backup list`.
 
-**Back up and restore** ([Backup and restore](references/Backup-and-Restore.md)): `compost app backup <instance>` or `--all`, `compost server backup`; restores with `app restore` / `server restore`. `app restore <archive> --prefix review -f other-domains.yaml` makes a copy of an instance.
+**Back up and restore** ([Backup and restore](references/Backup-and-Restore.md)): `compost app backup <instance>` or `--all`, `compost server backup`; restores with `app restore` / `server restore`. `app restore <archive> --prefix review -f other-domains.yaml` makes a copy of an instance. Steps under `backup` in `compost.yaml` (`before_backup`, `after_backup`, `before_restore`, `after_restore`) run commands in the app's containers during these; `backup.stop` (or `--stop`, all services) stops services while volumes are copied.
 
 **Existing servers:** follow [Migrating to compost](references/Migration.md) phase by phase; every phase ends with everything working.
 

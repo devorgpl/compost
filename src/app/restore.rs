@@ -13,12 +13,13 @@ use super::backup::{
 };
 use super::instance::{self, Instance};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
-use super::{deploy, secrets, volumes};
+use super::{deploy, secrets, steps, volumes};
 use crate::backup::{self, Archive, InstanceRef, ItemReader, Manifest, Scope};
 use crate::config::app::{AppConfig, ComposeFile};
 use crate::config::server::{BackupTarget, ServerConfig};
 use crate::connector::{Connector, shell_quote};
 use crate::error::{CompostError, config_err};
+use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
 use crate::shared::{self, AppCtx, Kind, ServerCtx};
 
@@ -242,6 +243,11 @@ fn restore_deployment(
             return Ok(());
         }
     }
+    if !loaded.config.backup.before_restore.is_empty() {
+        out!(
+            "  before_restore: skipped, {target} is deployed again and starts after its data is loaded"
+        );
+    }
     let deploy_options = deploy::Options {
         apply: true,
         dry_run: false,
@@ -258,10 +264,14 @@ fn restore_deployment(
         &deploy_options,
     )?;
 
-    if let Some(overlay) = restored_secrets {
+    let after = &loaded.config.backup.after_restore;
+    if restored_secrets.is_some() || !after.is_empty() {
         let _lock = Lock::acquire(ctx.connector, &ctx.home, options.force_unlock)?;
-        let path = secrets::store(ctx, &overlay)?;
-        out!("Restored the stored secrets of {target} to {path}");
+        if let Some(overlay) = restored_secrets {
+            let path = secrets::store(ctx, &overlay)?;
+            out!("Restored the stored secrets of {target} to {path}");
+        }
+        steps::run(ctx, &loaded.config, "after_restore", after)?;
     }
     Ok(())
 }
@@ -301,7 +311,8 @@ fn restore_data(
     }
 
     let _lock = Lock::acquire(ctx.connector, &ctx.home, options.force_unlock)?;
-    let stopped = volumes::Stopped::stop(ctx, app)?;
+    steps::run(ctx, app, "before_restore", &app.backup.before_restore)?;
+    let stopped = volumes::Stopped::stop(ctx, app, volumes::Services::All)?;
     let server_config = instance::server_config(ctx)?;
     for link in &instance.links {
         let (Some(kind), Some(shared_app)) = (
@@ -326,6 +337,10 @@ fn restore_data(
         // Containers keep their old image until they are recreated.
         ctx.connector
             .exec(&format!("{} up -d", instance::compose_command(ctx, app)))?;
+    }
+    if !app.backup.after_restore.is_empty() {
+        wait_until_ready(ctx.connector, &app.instance())?;
+        steps::run(ctx, app, "after_restore", &app.backup.after_restore)?;
     }
     out!("Restored {}.", app.instance());
     Ok(())

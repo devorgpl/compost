@@ -443,7 +443,7 @@ Options:
           - s3:     An S3 bucket (not implemented yet)
 
       --stop
-          Stop the services while volumes are copied, for a consistent copy
+          Stop every service while volumes are copied, for a consistent copy (default: those in `backup.stop`)
 
       --force-unlock
           Remove a lock left behind by an interrupted compost command

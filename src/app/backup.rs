@@ -7,8 +7,9 @@ use anyhow::{Context, Result, bail};
 
 use super::instance::{self, Instance, Selector};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
-use super::{secrets, volumes};
+use super::{secrets, steps, volumes};
 use crate::backup::{self, Backup, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope};
+use crate::config::app::StopServices;
 use crate::config::server::{BackupTarget, ServerConfig};
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
@@ -58,7 +59,7 @@ pub struct Options {
     pub format: Format,
     pub target: Option<BackupTarget>,
     pub output: Option<PathBuf>,
-    /// Stop the services while volumes are copied.
+    /// Stop every service while volumes are copied, whatever `backup.stop` says.
     pub stop: bool,
     pub force_unlock: bool,
 }
@@ -229,6 +230,49 @@ fn backup_instance(
         )?;
     }
 
+    // The steps prepare the data that links and volumes save.
+    if components.contains(&Component::Links) || components.contains(&Component::Volumes) {
+        let before = steps::run(ctx, app, "before_backup", &app.backup.before_backup);
+        let saved = before.and_then(|()| {
+            save_data(
+                ctx,
+                server_config,
+                instance,
+                components,
+                options,
+                backup,
+                &dir,
+            )
+        });
+        steps::run_after(ctx, app, "after_backup", &app.backup.after_backup);
+        saved?;
+    }
+
+    if components.contains(&Component::Images) {
+        // Only images that exist: services that never started may have none.
+        let compose = instance::compose_command(ctx, app);
+        let script = format!(
+            "images=$({compose} config --images | sort -u | while read -r image; do \
+             docker image inspect \"$image\" >/dev/null 2>&1 && echo \"$image\"; done); \
+             [ -n \"$images\" ] || {{ echo 'no images found' >&2; exit 1; }}; \
+             docker save $images"
+        );
+        backup.stream(&images_item(&dir), Role::Data, &script)?;
+    }
+    Ok(())
+}
+
+/// Link data and volumes.
+fn save_data(
+    ctx: &ServerCtx,
+    server_config: &ServerConfig,
+    instance: &Instance,
+    components: &[Component],
+    options: &Options,
+    backup: &mut Backup,
+    dir: &str,
+) -> Result<()> {
+    let app = &instance.app;
     if components.contains(&Component::Links) {
         for link in instance
             .links
@@ -251,7 +295,7 @@ fn backup_instance(
                 shared: &shared_app,
                 peers: &[],
             };
-            let mut writer = ItemWriter::new(backup, links_dir(&dir, &link.kind));
+            let mut writer = ItemWriter::new(backup, links_dir(dir, &link.kind));
             kind.backup_link(&link_ctx, &link.entry, &mut writer)
                 .with_context(|| format!("link {} {}", link.kind, link.entry))?;
         }
@@ -259,11 +303,14 @@ fn backup_instance(
 
     if components.contains(&Component::Volumes) && !app.backup.volumes.is_empty() {
         let compose = stored_compose_file(ctx, instance)?;
-        let _stopped = if options.stop {
-            Some(volumes::Stopped::stop(ctx, app)?)
-        } else {
-            None
+        let stop = match (&app.backup.stop, options.stop) {
+            (_, true) | (Some(StopServices::All(true)), _) => Some(volumes::Services::All),
+            (Some(StopServices::Some(services)), _) => Some(volumes::Services::Only(services)),
+            _ => None,
         };
+        let _stopped = stop
+            .map(|which| volumes::Stopped::stop(ctx, app, which))
+            .transpose()?;
         for volume in &app.backup.volumes {
             let docker_volume = app.docker_volume(&compose, volume);
             if !volumes::exists(ctx.connector, &docker_volume)? {
@@ -271,23 +318,11 @@ fn backup_instance(
                 continue;
             }
             backup.stream(
-                &volume_item(&dir, volume),
+                &volume_item(dir, volume),
                 Role::Data,
                 &volumes::backup_script(&docker_volume),
             )?;
         }
-    }
-
-    if components.contains(&Component::Images) {
-        // Only images that exist: services that never started may have none.
-        let compose = instance::compose_command(ctx, app);
-        let script = format!(
-            "images=$({compose} config --images | sort -u | while read -r image; do \
-             docker image inspect \"$image\" >/dev/null 2>&1 && echo \"$image\"; done); \
-             [ -n \"$images\" ] || {{ echo 'no images found' >&2; exit 1; }}; \
-             docker save $images"
-        );
-        backup.stream(&images_item(&dir), Role::Data, &script)?;
     }
     Ok(())
 }
