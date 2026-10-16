@@ -303,8 +303,8 @@ compost connector list
 # monitoring
 # └─ monitoring  openobserve 1  running
 #    ├─ sampleapp-local/telemetry  logs web, backend, migrate; metrics sampleapp-local-backend:5000/metrics  app: deployed
-#    ├─ shared database/postgres18/monitoring  logs compost-shared-postgres18
-#    └─ shared ingress/caddy-main/monitoring  logs compost-shared-caddy-main; metrics compost-shared-caddy-main:9180/metrics
+#    ├─ shared database/postgres18/monitoring  logs postgres
+#    └─ shared ingress/caddy-main/monitoring  logs caddy; metrics compost-shared-caddy-main:9180/metrics
 ```
 
 Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; traces from the SDK show under Traces.

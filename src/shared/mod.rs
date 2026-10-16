@@ -201,6 +201,16 @@ impl<'a> AppCtx<'a> {
         format!("{}-{compose_service}", self.app.instance())
     }
 
+    /// Name of an app service in log tags and metrics labels: its compose
+    /// service, or for a shared app its `app_services` name (e.g. `caddy`),
+    /// since its compose service only repeats the shared app's name.
+    pub fn service_label(&self, app_service: &str) -> Result<String> {
+        if consumer_kind(&self.app.name).is_some() {
+            return Ok(app_service.to_string());
+        }
+        Ok(self.compose_service(app_service)?.to_string())
+    }
+
     /// Name of a link's records on the server, e.g. `myapp-staging-system-data`.
     pub fn link_id(&self, entry: &str) -> String {
         format!("{}-{entry}", self.app.instance())

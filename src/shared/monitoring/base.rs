@@ -251,8 +251,9 @@ pub fn prepare_application(
             out.set_env(service, variable, values[value.as_str()].clone())?;
         }
         if link.logs {
-            out.set_logging(service, logging(endpoint, &format!("{instance}.{service}")))?;
-            logs.push(service.to_string());
+            let label = ctx.service_label(target)?;
+            out.set_logging(service, logging(endpoint, &format!("{instance}.{label}")))?;
+            logs.push(label);
         }
     }
 
@@ -285,7 +286,7 @@ fn scrape_targets(ctx: &AppCtx, link: &MonitoringLink) -> Result<Vec<ScrapeTarge
         .map(|metrics| {
             let service = ctx.compose_service(&metrics.target)?;
             Ok(ScrapeTarget {
-                service: service.to_string(),
+                service: ctx.service_label(&metrics.target)?,
                 address: format!("{}:{}", ctx.service_alias(service), metrics.port),
                 path: metrics.path.clone(),
             })

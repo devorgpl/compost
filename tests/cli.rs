@@ -2713,7 +2713,7 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
     let caddy = server.read_server_file("shared/ingress/caddy-main/compose.override.yaml");
     for expected in [
         "fluentd-address: 127.0.0.1:24224",
-        "tag: compost-ingress-caddy-main.compost-shared-caddy-main",
+        "tag: compost-ingress-caddy-main.caddy",
         "compost-monitoring-o2:",
         "- compost-shared-caddy-main",
     ] {
@@ -2728,6 +2728,7 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
         targets.contains("compost-shared-caddy-main:9180"),
         "{targets}"
     );
+    assert!(targets.contains("compost_service: caddy"), "{targets}");
     let site = server
         .read_server_file("shared/ingress/caddy-main/conf/sites/compost-monitoring-o2-web.caddy");
     assert!(
@@ -2743,7 +2744,7 @@ fn caddy_and_openobserve_monitor_and_serve_each_other() {
         .run(&["connector", "list"], &running)
         .success()
         .stdout(contains(
-            "shared ingress/caddy-main/monitoring  logs compost-shared-caddy-main; metrics compost-shared-caddy-main:9180/metrics",
+            "shared ingress/caddy-main/monitoring  logs caddy; metrics compost-shared-caddy-main:9180/metrics",
         ));
 
     // Without `monitoring`, the link and Caddy's override go away.
