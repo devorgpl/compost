@@ -13,7 +13,8 @@ use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role,
-    ServerCtx, SharedAppConfig, is_domain, project_name, render_template, shared_dir,
+    ServerCtx, SharedAppConfig, is_domain, is_network_name, project_name, render_template,
+    shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -400,13 +401,6 @@ const BACKUP_DIRS: [&str; 3] = ["data", "config", "conf"];
 /// Folders put back on restore: certificates and Caddy's own state.
 const RESTORE_DIRS: [&str; 2] = ["data", "config"];
 const BACKUP_ITEM: &str = "caddy.tar";
-
-/// Letters, digits, `_`, `.` and `-`, starting with a letter or digit, as docker allows.
-fn is_network_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && chars.all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
-}
 
 /// The site block of an entry of `sites`, with its config indented.
 fn render_site(config: &SharedAppConfig, caddy: &CaddyConfig, site: &Site) -> Result<String> {

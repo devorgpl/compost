@@ -40,13 +40,25 @@ pub trait DatabaseType: Sync {
         base::validate_link(link, app)
     }
 
+    /// compost can create databases and users on the server: its own, or an
+    /// external one it has root credentials for.
+    fn can_provision(&self, _ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
+        Ok(!config.is_external())
+    }
+
     fn prepare_application(
         &self,
         ctx: &AppCtx,
         link: &DatabaseLink,
         out: &mut Contribution,
     ) -> Result<()> {
-        base::prepare_application(ctx, link, &self.endpoint(), out)
+        let provisioned = self.can_provision(ctx.server, ctx.shared)?;
+        base::prepare_application(ctx, link, &self.endpoint(), provisioned, out)
+    }
+
+    /// Whether an external server answers.
+    fn check_external(&self, _ctx: &ServerCtx, config: &SharedAppConfig) -> Result<String> {
+        bail!("{} databases cannot be external", config.type_name)
     }
 
     fn after_apply_application(&self, _ctx: &AppCtx, _link: &DatabaseLink) -> Result<()> {
@@ -154,8 +166,19 @@ impl Kind for DatabaseKind {
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
         let mut rendered = find_type(&config.type_name)?.render(ctx, config)?;
-        rendered.networks.push(base::network_name(&config.name));
+        match base::external(config)? {
+            None => rendered.networks.push(base::network_name(&config.name)),
+            Some(external) => rendered.existing_networks.extend(external.network),
+        }
         Ok(rendered)
+    }
+
+    fn supports_external(&self) -> bool {
+        true
+    }
+
+    fn check_external(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<String> {
+        find_type(&config.type_name)?.check_external(ctx, config)
     }
 
     fn apply_order(&self) -> i32 {

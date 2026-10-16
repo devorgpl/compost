@@ -381,8 +381,17 @@ fn prepare_links(ctx: &ServerCtx, plan: &Plan, consumer: &Consumer) -> Result<bo
 /// Start a shared app, with the hooks of its links around it.
 fn apply(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
     run_link_hooks(ctx, plan, Hook::BeforeApply)?;
-    out_part!("  starting {} {} ... ", plan.kind_name(), plan.app.name);
+    if plan.app.is_external() {
+        out!(
+            "  {} {}: external, not started by compost",
+            plan.kind_name(),
+            plan.app.name
+        );
+    } else {
+        out_part!("  starting {} {} ... ", plan.kind_name(), plan.app.name);
+    }
     match start(ctx, plan, recreate) {
+        Ok(()) if plan.app.is_external() => {}
         Ok(()) => out!("running"),
         Err(err) => {
             out!("failed");
@@ -420,6 +429,9 @@ fn run_link_hooks(ctx: &ServerCtx, plan: &Plan, hook: Hook) -> Result<()> {
 }
 
 fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
+    if plan.app.is_external() {
+        return Ok(());
+    }
     let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind_name(), &plan.app.name)));
     let project = shared::project_name(plan.kind_name(), &plan.app.name);
     let recreate = if recreate { " --force-recreate" } else { "" };

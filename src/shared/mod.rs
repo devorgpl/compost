@@ -36,9 +36,18 @@ pub struct SharedAppConfig {
     /// Type-specific settings, parsed by the type itself.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub configuration: Value,
+    /// Set for a server compost does not run, e.g. an existing database
+    /// container or a hosted service; parsed by the kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<Value>,
 }
 
 impl SharedAppConfig {
+    /// compost does not run it: no compose project, nothing to start or stop.
+    pub fn is_external(&self) -> bool {
+        self.external.is_some()
+    }
+
     /// Parse the `configuration` block into a type's own struct.
     pub fn configuration<T: DeserializeOwned + Default>(&self) -> Result<T> {
         if self.configuration.is_null() {
@@ -251,6 +260,16 @@ pub trait Kind: Sync {
 
     /// Validate one shared app of this kind.
     fn validate_shared(&self, config: &SharedAppConfig) -> Result<()>;
+
+    /// Shared apps of this kind can be `external` servers compost does not run.
+    fn supports_external(&self) -> bool {
+        false
+    }
+
+    /// Whether an external shared app answers, e.g. `accepting connections`.
+    fn check_external(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Result<String> {
+        bail!("{} servers cannot be external", self.name())
+    }
 
     /// Validate all shared apps of this kind together. Default: no rules.
     fn validate_instances(&self, _configs: &[SharedAppConfig]) -> Result<()> {
@@ -504,6 +523,13 @@ pub fn is_domain(domain: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         })
+}
+
+/// Letters, digits, `_`, `.` and `-`, starting with a letter or digit, as docker allows.
+pub fn is_network_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
 }
 
 /// An environment variable name: letters, digits and `_`, not starting with a digit.

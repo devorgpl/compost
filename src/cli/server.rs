@@ -156,11 +156,12 @@ pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, verbose)?;
-    let report = state::check(
+    let mut report = state::check(
         connector.as_ref(),
         server.server_home(),
         &manager.manager_key,
     )?;
+    let external = state::check_external(connector.as_ref(), &mut report)?;
 
     let summary = format!(
         "{} ({}): {}",
@@ -187,10 +188,14 @@ pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<
         let version = app
             .version
             .map_or_else(|| "-".to_string(), |v| v.to_string());
-        let running = if app.running {
-            "running"
-        } else {
-            "not running"
+        let checked = external
+            .iter()
+            .find(|(kind, name, _)| *kind == app.kind && *name == app.name);
+        let running = match checked {
+            Some((_, _, Ok(answer))) => format!("external, {answer}"),
+            Some((_, _, Err(err))) => format!("external, not reachable: {err:#}"),
+            None if app.running => "running".to_string(),
+            None => "not running".to_string(),
         };
         out!(
             "  {:<9} {:<16} {} {version}  {running}",

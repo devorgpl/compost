@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
 use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
-use crate::shared::project_name;
+use crate::shared::{ServerCtx, find_kind, project_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -50,7 +50,10 @@ pub struct SharedAppState {
     pub name: String,
     pub type_name: String,
     pub version: Option<u32>,
+    /// Running, or external: compost does not run those, and checking them
+    /// takes a container (see [`check_external`]).
     pub running: bool,
+    pub external: bool,
 }
 
 impl Report {
@@ -119,7 +122,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
             .with_context(|| format!("invalid {config_path} on the server"))?;
         for (kind, app) in config.shared_apps() {
             let project = project_name(kind, &app.name);
-            let running = is_project_running(connector, &project)?;
+            let running = app.is_external() || is_project_running(connector, &project)?;
             if !running {
                 report.status = Status::Degraded;
             }
@@ -129,10 +132,49 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
                 type_name: app.type_name.clone(),
                 version: app.version,
                 running,
+                external: app.is_external(),
             });
         }
     }
     Ok(report)
+}
+
+/// Check that the external shared apps answer: `(kind, name, result)` for
+/// each. One that does not makes the report `DEGRADED`.
+pub fn check_external(
+    connector: &dyn Connector,
+    report: &mut Report,
+) -> Result<Vec<(String, String, Result<String>)>> {
+    let Some(home) = report.home.clone() else {
+        return Ok(Vec::new());
+    };
+    if !report.shared.iter().any(|s| s.external) {
+        return Ok(Vec::new());
+    }
+    let Some(text) = connector.read_file(&format!("{home}/{SERVER_CONFIG_FILE}"))? else {
+        return Ok(Vec::new());
+    };
+    let config = ServerConfig::parse(&text)?;
+    let ctx = ServerCtx { connector, home };
+    let mut results = Vec::new();
+    for (kind_name, app) in config.shared_apps().filter(|(_, app)| app.is_external()) {
+        let kind = find_kind(kind_name).context("kinds are checked on load")?;
+        let result = kind.check_external(&ctx, app);
+        if result.is_err() {
+            if let Some(state) = report
+                .shared
+                .iter_mut()
+                .find(|s| s.kind == kind_name && s.name == app.name)
+            {
+                state.running = false;
+            }
+            if report.status == Status::Ok {
+                report.status = Status::Degraded;
+            }
+        }
+        results.push((kind_name.to_string(), app.name.clone(), result));
+    }
+    Ok(results)
 }
 
 pub fn is_project_running(connector: &dyn Connector, project: &str) -> Result<bool> {

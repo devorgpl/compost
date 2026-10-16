@@ -81,6 +81,7 @@ fn running(report: &Report, kind: &str, name: &str) -> &'static str {
         .iter()
         .find(|s| s.kind == kind && s.name == name)
     {
+        Some(state) if state.external => "external",
         Some(state) if state.running => "running",
         _ => "not running",
     }

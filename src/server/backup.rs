@@ -112,6 +112,13 @@ pub fn backup(
             kind: kind_name.to_string(),
             name: app.name.clone(),
         };
+        if app.is_external() {
+            out!(
+                "  {kind_name} {}: external, its data is not saved (`compost app backup` saves the apps' databases)",
+                app.name
+            );
+            continue;
+        }
         let dir = id.dir();
         backup.manifest_mut().shared.push(id);
         let mut writer = ItemWriter::new(&mut backup, dir);
@@ -205,7 +212,7 @@ pub fn restore(
         if archive.has(CONNECTORS_ITEM) {
             restore_records(&ctx, &archive, &selected)?;
         }
-        for (kind_name, app) in &selected {
+        for (kind_name, app) in selected.iter().filter(|(_, app)| !app.is_external()) {
             let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
             let reader = reader(&archive, kind_name, &app.name);
             kind.restore_shared_files(&ctx, app, &reader)
@@ -233,7 +240,7 @@ pub fn restore(
     // 3. Load their data.
     {
         let _lock = Lock::acquire(connector, &ctx.home, false)?;
-        for (kind_name, app) in &selected {
+        for (kind_name, app) in selected.iter().filter(|(_, app)| !app.is_external()) {
             let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
             out!("  loading data of {kind_name} {} ...", app.name);
             let reader = reader(&archive, kind_name, &app.name);

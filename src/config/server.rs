@@ -209,6 +209,11 @@ impl ServerConfig {
                 if !names.insert(app.name.as_str()) {
                     return Err(config_err(format!("{path}: name is used more than once")));
                 }
+                if app.is_external() && !kind.supports_external() {
+                    return Err(config_err(format!(
+                        "{path}: `external` is not supported for {kind_name} servers"
+                    )));
+                }
                 kind.validate_shared(app)
                     .map_err(|e| config_err(format!("{path}: {e:#}")))?;
             }
@@ -352,6 +357,24 @@ shared:
             .collect();
         assert_eq!(used, [("database", "pg19"), ("ingress", "caddy-main")]);
         assert_eq!(consumer.app.instance(), "compost-oidc-kc");
+    }
+
+    #[test]
+    fn external_only_where_the_kind_supports_it() {
+        let err = error("shared: {ingress: [{name: c, type: caddy, external: {host: x}}]}");
+        assert!(
+            err.contains("shared.ingress[c]: `external` is not supported for ingress servers"),
+            "{err}"
+        );
+        let err = error(
+            "shared: {database: [{name: pg, type: postgres, version: 16, configuration: {root_user: admin}}]}",
+        );
+        assert!(
+            err.contains("root_user is only used with `external`"),
+            "{err}"
+        );
+        parse("shared: {database: [{name: pg, type: postgres, version: 16, external: {host: db}, configuration: {root_user: admin, root_password: x}}]}")
+            .unwrap();
     }
 
     #[test]

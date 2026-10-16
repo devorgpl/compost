@@ -125,6 +125,9 @@ case "$*" in
     exit 1 ;;
   "network create "*) ;;
   "ps "*) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
+  "run "*" pg_dump "*) echo "-- dump" ;;
+  "run "*" pg_isready"*) echo "accepting connections" ;;
+  "run "*) cat >> "$FAKE_DOCKER_LOG" ;;
   *) echo "fake docker: unexpected call" >&2; exit 1 ;;
 esac
 "#;
@@ -496,6 +499,182 @@ fn app_from_another_folder_with_compose_overrides() {
     assert!(
         stored.contains(".compost/compose-override-1.yaml"),
         "{stored}"
+    );
+}
+
+#[test]
+fn external_database_is_linked_and_backed_up_but_never_run() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}    - name: legacy-db\n      type: postgres\n      version: 15\n      external: {{host: shop-db-1, network: shop_default}}\n"
+        ),
+    );
+    let env = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_DOCKER_NETWORKS", "shop_default"),
+    ];
+    server
+        .run(&["server", "deploy", "--apply"], &env)
+        .success()
+        .stdout(contains(
+            "database legacy-db: external, not started by compost",
+        ));
+    let log = server.take_docker_log();
+    assert!(!log.contains("compost-database-legacy-db"), "{log}");
+    assert!(!log.contains("network create shop_default"), "{log}");
+    let record = server.read_server_file("connectors/database/legacy-db/root-connector.yaml");
+    assert!(record.contains("host: shop-db-1"), "{record}");
+    assert!(!record.contains("root_password"), "{record}");
+    server.state(&env).success().stdout(contains(
+        "legacy-db        postgres 15  external, accepting connections",
+    ));
+
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services:\n  web:\n    image: shop\n",
+    );
+    // `old` uses the external database, `new` gets compost's: external ones
+    // are only used when pinned.
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nservices:\n  database:\n    - {name: old, type: postgres, instance: legacy-db, targets: [web], environment: {OLD_URL: db_url}}\n    - {name: new, type: postgres, targets: [web], environment: {NEW_HOST: db_host}}\napp_services: [{name: web, service: web}]\n",
+    );
+    server
+        .run(&["app", "deploy", "--apply", "-f", "app/compost.yaml"], &env)
+        .code(3)
+        .stderr(contains(
+            "legacy-db is external and compost has no root credentials for it, so it cannot create databases",
+        ));
+    server.write_work_file(
+        "app/.compost-prod.yaml",
+        "services:\n  database:\n    - {name: old, db_name: shop, db_user: shop, db_password: 'old secret'}\n",
+    );
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml,app/.compost-prod.yaml",
+            ],
+            &env,
+        )
+        .success();
+    let compose = server.read_server_file("apps/shop/main/compose/compost.override.yaml");
+    assert!(
+        compose.contains("OLD_URL: postgres://shop:old%20secret@shop-db-1:5432/shop"),
+        "{compose}"
+    );
+    assert!(compose.contains("NEW_HOST: postgres16"), "{compose}");
+    assert!(
+        compose.contains("shop_default: {}") || compose.contains("shop_default:"),
+        "{compose}"
+    );
+    let log = server.take_docker_log();
+    assert!(
+        !log.contains("CREATE DATABASE \"shop\""),
+        "nothing is created on the external server: {log}"
+    );
+
+    // Backups dump it from a throwaway client, with the password in an env file.
+    server
+        .run(
+            &[
+                "app",
+                "backup",
+                "shop-main",
+                "--link",
+                "old",
+                "--format",
+                "raw",
+                "-o",
+                "old.sql",
+            ],
+            &env,
+        )
+        .success();
+    assert_eq!(
+        fs::read_to_string(server.env.work.path().join("old.sql")).unwrap(),
+        "-- dump\n"
+    );
+    let log = server.take_docker_log();
+    let run = log
+        .lines()
+        .find(|l| l.starts_with("docker run"))
+        .unwrap_or_else(|| panic!("{log}"));
+    assert!(
+        run.contains(
+            "--network shop_default postgres:15-alpine pg_dump --no-owner --no-acl -d shop"
+        ),
+        "{run}"
+    );
+    assert!(!run.contains("old secret"), "{run}");
+    let tmp = server.server_home.join("tmp");
+    assert_eq!(
+        fs::read_dir(&tmp).unwrap().count(),
+        0,
+        "the env file is deleted"
+    );
+
+    // Purging never drops a database on an external server without allow_purge.
+    server
+        .run(
+            &["app", "remove", "shop-main", "--purge", "database", "--yes"],
+            &env,
+        )
+        .success()
+        .stderr(contains(
+            "warning: database `shop` on legacy-db is kept: it is external",
+        ));
+}
+
+#[test]
+fn external_database_with_root_credentials_is_provisioned() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}    - name: rds\n      type: postgres\n      version: 16\n      external: {{host: main.rds.example.com, sslmode: require}}\n      configuration: {{root_user: admin, root_password: r00t}}\n"
+        ),
+    );
+    let env = [("FAKE_DOCKER_RUNNING", "1")];
+    server.run(&["server", "deploy", "--apply"], &env).success();
+    let stored = server.read_server_file("compost-server.yaml");
+    assert!(!stored.contains("r00t"), "{stored}");
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services:\n  web:\n    image: shop\n",
+    );
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nservices:\n  database:\n    - {name: main, type: postgres, instance: rds, targets: [web], environment: {URL: db_url}}\napp_services: [{name: web, service: web}]\n",
+    );
+    server.take_docker_log();
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &env,
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker run --rm -i --env-file")
+            && log.contains("postgres:16-alpine psql -d postgres"),
+        "{log}"
+    );
+    assert!(log.contains("CREATE DATABASE \"shop_main_main\""), "{log}");
+    assert!(
+        !log.lines()
+            .any(|l| l.starts_with("docker run") && l.contains("r00t")),
+        "{log}"
+    );
+    let compose = server.read_server_file("apps/shop/main/compose/compost.override.yaml");
+    assert!(
+        compose.contains("@main.rds.example.com:5432/shop_main_main?sslmode=require"),
+        "{compose}"
     );
 }
 
