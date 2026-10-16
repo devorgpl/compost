@@ -9,13 +9,13 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_yaml_ng::Value;
 
-use super::base::{self, Endpoint, OidcLink, OidcRecord};
+use super::base::{self, Endpoint, OidcLink, OidcRecord, PublicUrl};
 use super::{KIND, OidcType};
 use crate::config::app::AppService;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Generated, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
-    connectors_dir, generate_password, is_domain, project_name, render_template, shared_dir,
+    connectors_dir, generate_password, project_name, render_template, shared_dir,
 };
 
 pub struct Keycloak;
@@ -61,44 +61,9 @@ struct DatabaseChoice {
     instance: Option<String>,
 }
 
-/// `http(s)://<domain>[:port]`, split into its parts.
-struct PublicUrl {
-    /// The URL without a trailing `/`.
-    url: String,
-    domain: String,
-}
-
-fn parse_url(url: &str) -> Result<PublicUrl> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"));
-    let Some(rest) = rest else {
-        bail!("url `{url}` must start with https:// or http://");
-    };
-    let authority = rest.strip_suffix('/').unwrap_or(rest);
-    let (domain, port) = match authority.split_once(':') {
-        Some((domain, port)) => (domain, Some(port)),
-        None => (authority, None),
-    };
-    ensure!(
-        is_domain(domain) && !domain.starts_with("*."),
-        "url `{url}`: `{domain}` is not a valid domain name (a path is not supported)"
-    );
-    if let Some(port) = port {
-        ensure!(
-            port.parse::<u16>().is_ok_and(|p| p > 0),
-            "url `{url}`: invalid port `{port}`"
-        );
-    }
-    Ok(PublicUrl {
-        url: url.trim_end_matches('/').to_string(),
-        domain: domain.to_string(),
-    })
-}
-
 fn public_url(config: &KeycloakConfig) -> Result<PublicUrl> {
     match &config.url {
-        Some(url) => parse_url(url),
+        Some(url) => base::parse_url(url),
         None => bail!("configuration.url is required, e.g. https://auth.example.com"),
     }
 }
@@ -268,6 +233,11 @@ impl OidcType for Keycloak {
         })
     }
 
+    /// The alias its own ingress link gives it: `<compose project>-keycloak`.
+    fn ingress_upstream(&self, config: &SharedAppConfig) -> String {
+        format!("{}-{SERVICE}:{HTTP_PORT}", project_name(KIND, &config.name))
+    }
+
     fn before_apply_application(&self, ctx: &AppCtx, link: &OidcLink) -> Result<()> {
         let record = base::record(ctx, link)?;
         let script = provisioning_script(link, &record)?;
@@ -326,7 +296,11 @@ fn check_record(record: &OidcRecord) -> Result<()> {
     ensure!(
         base::is_identifier(&record.realm)
             && base::is_identifier(&record.client_id)
-            && record.users.iter().all(|u| base::is_username(u)),
+            && record.users.iter().all(|u| base::is_username(u))
+            && record
+                .public_url
+                .as_deref()
+                .is_none_or(|url| base::parse_url(url).is_ok()),
         "unexpected names in the link record"
     );
     Ok(())
@@ -384,6 +358,8 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
             realm => record.realm.as_str(),
             client_id => record.client_id.as_str(),
             client_json => client.to_string(),
+            // Empty clears it: the realm then uses the provider's URL.
+            frontend_url => record.public_url.as_deref().unwrap_or(""),
             users,
         },
     )
@@ -596,6 +572,7 @@ mod tests {
             client_id: "a-main-login".into(),
             client_secret: Some("s3cret".into()),
             users: users.iter().map(|u| u.to_string()).collect(),
+            public_url: None,
         }
     }
 
@@ -622,6 +599,19 @@ mod tests {
             }
         }
         assert!(script.contains("-q username='alice' -q exact=true"));
+        assert!(
+            script.contains("-s 'attributes.frontendUrl='"),
+            "cleared without public_url: {script}"
+        );
+        let mut with_url = record(&["alice"]);
+        with_url.public_url = Some("https://login.example.com".into());
+        let script = provisioning_script(&link, &with_url).unwrap();
+        assert!(
+            script.contains("-s 'attributes.frontendUrl=https://login.example.com'"),
+            "{script}"
+        );
+        with_url.public_url = Some("https://x.com'; rm -rf /".into());
+        assert!(provisioning_script(&link, &with_url).is_err());
     }
 
     #[test]

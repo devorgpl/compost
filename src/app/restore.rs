@@ -313,6 +313,7 @@ fn restore_data(
             server: ctx,
             app,
             shared: &shared_app,
+            peers: &[],
         };
         plan.restore_link(&link_ctx, kind, &link.entry)
             .with_context(|| format!("link {} {}", link.kind, link.entry))?;

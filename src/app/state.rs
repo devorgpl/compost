@@ -83,6 +83,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
                         server: ctx,
                         app,
                         shared: &shared,
+                        peers: &[],
                     };
                     kind.describe_link(&link_ctx, &link.entry)
                         .unwrap_or_else(|err| format!("cannot read link: {err:#}"))

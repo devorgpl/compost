@@ -1914,3 +1914,90 @@ fn server_restore_starts_keycloak_after_loading_its_database() {
     let config = new.read_server_file("compost-server.yaml");
     assert!(config.contains("name: keycloak"), "{config}");
 }
+
+#[test]
+fn realm_on_its_own_domain() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+
+    let config = |name: &str, public_url: &str| {
+        format!(
+            "\
+name: {name}
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      realm: shop
+      public_url: {public_url}
+      targets: [backend]
+      redirect_uris: ['https://app.example.com/*']
+      environment: {{OIDC_ISSUER: oidc_issuer}}
+  ingress:
+    - name: login-page
+      domains: [login.example.com]
+      routes:
+        - {{name: realm, link: oidc/login}}
+app_services:
+  - name: backend
+    service: backend
+"
+        )
+    };
+    server.write_work_file(
+        "app/compost.yaml",
+        &config("myapp", "https://login.example.com"),
+    );
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {backend: {image: x}}\n",
+    );
+    server
+        .run(&["app", "deploy", "--apply", "-f", "app/compost.yaml"], &running)
+        .success()
+        .stdout(contains(
+            "login.example.com  /realms/shop → compost-oidc-keycloak-keycloak:8080, /resources → compost-oidc-keycloak-keycloak:8080",
+        ));
+
+    let site =
+        server.read_server_file("shared/ingress/caddy-main/conf/sites/myapp-main-login-page.caddy");
+    assert!(
+        site.contains("@realm-realm path /realms/shop /realms/shop/*"),
+        "{site}"
+    );
+    assert!(
+        site.contains("respond 404"),
+        "everything else is not served: {site}"
+    );
+    let override_yaml = server.read_server_file("apps/myapp/main/compose/compost.override.yaml");
+    assert!(
+        override_yaml.contains("OIDC_ISSUER: https://login.example.com/realms/shop"),
+        "{override_yaml}"
+    );
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("-s 'attributes.frontendUrl=https://login.example.com'"),
+        "{log}"
+    );
+
+    // Another app using the realm must agree on its URL.
+    server.write_work_file(
+        "other/compost.yaml",
+        &config("other", "https://other.example.com"),
+    );
+    server.write_work_file(
+        "other/docker-compose.yaml",
+        "services: {backend: {image: x}}\n",
+    );
+    server
+        .run(&["app", "deploy", "--apply", "-f", "other/compost.yaml"], &running)
+        .code(3)
+        .stderr(contains(
+            "realm `shop` has public_url https://login.example.com in myapp/main (login), here https://other.example.com",
+        ));
+}

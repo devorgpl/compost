@@ -29,6 +29,20 @@ pub struct Consumer {
     pub links: Vec<ConsumerLink>,
 }
 
+impl Consumer {
+    pub fn peers(&self) -> Vec<shared::Peer<'_>> {
+        self.links
+            .iter()
+            .map(|link| shared::Peer {
+                kind: link.kind,
+                name: &link.name,
+                entry: &link.entry,
+                shared: &link.shared,
+            })
+            .collect()
+    }
+}
+
 /// One link of a [`Consumer`], resolved to a configured shared app.
 pub struct ConsumerLink {
     pub kind: &'static dyn Kind,

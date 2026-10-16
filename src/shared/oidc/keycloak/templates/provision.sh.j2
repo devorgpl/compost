@@ -22,6 +22,7 @@ if kc get "realms/$realm" </dev/null >/dev/null 2>&1; then kc delete "realms/$re
 if ! kc get "realms/$realm" </dev/null >/dev/null 2>&1; then
   kc create realms -s realm="$realm" -s enabled=true </dev/null
 fi
+kc update "realms/$realm" -s 'attributes.frontendUrl={{ frontend_url }}' </dev/null
 id=$(kc get clients -r "$realm" -q clientId='{{ client_id }}' --fields id --format csv --noquotes </dev/null)
 if [ -z "$id" ]; then
   kc create clients -r "$realm" -f - <<'COMPOST_JSON'

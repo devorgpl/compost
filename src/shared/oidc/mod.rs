@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
+    AppCtx, Contribution, Exposed, Generated, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
     SharedAppConfig, SharedLinks, parse_link,
 };
 use crate::config::app::AppConfig;
@@ -60,7 +60,15 @@ pub trait OidcType: Sync {
         base::remove_application(ctx, entry)
     }
 
+    /// Paths of the link's realm, for an ingress route on its own domain.
+    fn exposed_routes(&self, ctx: &AppCtx, link: &OidcLink) -> Result<Exposed> {
+        base::exposed_routes(ctx, link, &self.ingress_upstream(ctx.shared))
+    }
+
     // Type-specific, no default.
+
+    /// `<host>:<port>` of the provider on the ingress network.
+    fn ingress_upstream(&self, config: &SharedAppConfig) -> String;
 
     /// Starter configuration for `server generate`.
     fn generate(&self) -> Generated;
@@ -170,6 +178,14 @@ impl Kind for OidcKind {
 
     fn supports_purge(&self) -> bool {
         true
+    }
+
+    fn exposes_routes(&self) -> bool {
+        true
+    }
+
+    fn exposed_routes(&self, ctx: &AppCtx, link: &Value) -> Result<Exposed> {
+        find_type(&ctx.shared.type_name)?.exposed_routes(ctx, &parse_link(link)?)
     }
 
     fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +10,8 @@ use super::KIND;
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir,
-    generate_password, is_variable_name, resolve_versioned,
+    AppCtx, Contribution, Exposed, ExposedRoute, ItemWriter, Resolution, Role, SharedAppConfig,
+    connectors_dir, generate_password, is_domain, is_variable_name, resolve_versioned,
 };
 
 /// Values a link can map to app variables.
@@ -47,6 +47,10 @@ pub struct OidcLink {
     /// Default `<app>-<prefix>-<entry>`.
     #[serde(default)]
     pub client_id: Option<String>,
+    /// The realm's own public URL, e.g. `https://login.example.com`, served by
+    /// an ingress route with `link: oidc/<entry>`. Default: the provider's URL.
+    #[serde(default)]
+    pub public_url: Option<String>,
     /// A client without a secret, e.g. a single-page app.
     #[serde(default)]
     pub public_client: bool,
@@ -100,6 +104,9 @@ pub struct OidcRecord {
     /// Users the link created.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub users: Vec<String>,
+    /// The realm's own public URL, if the link sets one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 /// Where a provider is reached: by browsers, and by apps on its network.
@@ -108,6 +115,41 @@ pub struct Endpoint {
     pub public_url: String,
     /// e.g. `http://keycloak:8080`
     pub internal_url: String,
+}
+
+/// `http(s)://<domain>[:port]`, split into its parts.
+pub struct PublicUrl {
+    /// The URL without a trailing `/`.
+    pub url: String,
+    pub domain: String,
+}
+
+pub fn parse_url(url: &str) -> Result<PublicUrl> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        bail!("url `{url}` must start with https:// or http://");
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    let (domain, port) = match authority.split_once(':') {
+        Some((domain, port)) => (domain, Some(port)),
+        None => (authority, None),
+    };
+    ensure!(
+        is_domain(domain) && !domain.starts_with("*."),
+        "url `{url}`: `{domain}` is not a valid domain name (a path is not supported)"
+    );
+    if let Some(port) = port {
+        ensure!(
+            port.parse::<u16>().is_ok_and(|p| p > 0),
+            "url `{url}`: invalid port `{port}`"
+        );
+    }
+    Ok(PublicUrl {
+        url: url.trim_end_matches('/').to_string(),
+        domain: domain.to_string(),
+    })
 }
 
 pub fn validate_config(config: &SharedAppConfig) -> Result<()> {
@@ -147,6 +189,9 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
             is_identifier(value),
             "{key} `{value}` must match ^[a-z0-9][a-z0-9_-]{{0,63}}$"
         );
+    }
+    if let Some(url) = &link.public_url {
+        parse_url(url).context("public_url")?;
     }
     ensure!(
         !link.redirect_uris.is_empty(),
@@ -254,6 +299,10 @@ pub fn record(ctx: &AppCtx, link: &OidcLink) -> Result<OidcRecord> {
         client_id,
         client_secret,
         users: link.users.iter().map(|u| u.username.clone()).collect(),
+        public_url: match &link.public_url {
+            Some(url) => Some(parse_url(url)?.url),
+            None => None,
+        },
     })
 }
 
@@ -275,10 +324,11 @@ pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<OidcRecord>> {
     }
 }
 
-/// Another link record of this provider uses `realm`.
-pub fn realm_used_elsewhere(ctx: &AppCtx, entry: &str, realm: &str) -> Result<bool> {
+/// The link records of this provider, except the one of `entry`.
+fn other_records(ctx: &AppCtx, entry: &str) -> Result<Vec<OidcRecord>> {
     let dir = records_dir(ctx);
     let own = format!("{}.yaml", ctx.link_id(entry));
+    let mut records = Vec::new();
     for file in ctx.server.connector.list_dir(&dir)? {
         if file == own || file.starts_with("root-") || !file.ends_with(".yaml") {
             continue;
@@ -287,13 +337,35 @@ pub fn realm_used_elsewhere(ctx: &AppCtx, entry: &str, realm: &str) -> Result<bo
         let Some(text) = ctx.server.connector.read_file(&path)? else {
             continue;
         };
-        let other: OidcRecord =
-            serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?;
-        if other.realm == realm {
-            return Ok(true);
+        records.push(serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?);
+    }
+    Ok(records)
+}
+
+/// Another link record of this provider uses `realm`.
+pub fn realm_used_elsewhere(ctx: &AppCtx, entry: &str, realm: &str) -> Result<bool> {
+    Ok(other_records(ctx, entry)?
+        .iter()
+        .any(|other| other.realm == realm))
+}
+
+/// A realm has one public URL: links sharing a realm must agree on it.
+fn check_public_url(ctx: &AppCtx, record: &OidcRecord) -> Result<()> {
+    for other in other_records(ctx, &record.entry)? {
+        if other.realm == record.realm && other.public_url != record.public_url {
+            let show = |url: &Option<String>| url.clone().unwrap_or_else(|| "none".to_string());
+            bail!(
+                "realm `{}` has public_url {} in {}/{} ({}), here {}",
+                record.realm,
+                show(&other.public_url),
+                other.app,
+                other.prefix,
+                other.entry,
+                show(&record.public_url)
+            );
         }
     }
-    Ok(false)
+    Ok(())
 }
 
 /// e.g. `realm myapp-staging, client myapp-staging-login` (never the secret).
@@ -312,10 +384,12 @@ pub fn prepare_application(
     out: &mut Contribution,
 ) -> Result<()> {
     let record = record(ctx, link)?;
+    check_public_url(ctx, &record)?;
+    let public_url = record.public_url.as_deref().unwrap_or(&endpoint.public_url);
     let values: BTreeMap<&str, String> = BTreeMap::from([
         (
             "oidc_issuer",
-            format!("{}/realms/{}", endpoint.public_url, record.realm),
+            format!("{public_url}/realms/{}", record.realm),
         ),
         (
             "oidc_internal_url",
@@ -342,6 +416,34 @@ pub fn prepare_application(
     ctx.server
         .connector
         .write_file(&record_path(ctx, &link.name), text.as_bytes(), 0o600)
+}
+
+/// The realm on its own domain: its paths, and `/resources` for the shared
+/// static files of the login pages. `upstream` is the provider on the ingress
+/// network.
+pub fn exposed_routes(ctx: &AppCtx, link: &OidcLink, upstream: &str) -> Result<Exposed> {
+    let Some(url) = &link.public_url else {
+        bail!(
+            "services.oidc[{}] needs `public_url` to be served on its own domain",
+            link.name
+        );
+    };
+    let (realm, _) = names(ctx.app, link);
+    Ok(Exposed {
+        routes: vec![
+            ExposedRoute {
+                name: "realm",
+                path: format!("/realms/{realm}"),
+                upstream: upstream.to_string(),
+            },
+            ExposedRoute {
+                name: "resources",
+                path: "/resources".to_string(),
+                upstream: upstream.to_string(),
+            },
+        ],
+        domain: Some(parse_url(url)?.domain),
+    })
 }
 
 /// `<entry>.yaml`: the link record. It holds the client secret.
@@ -415,6 +517,7 @@ mod tests {
             (", users: [{username: a}, {username: a}]", "listed twice"),
             (", users: [{username: 'a b'}]", "users: `a b`"),
             (", version: abc", "not a valid requirement"),
+            (", public_url: login.example.com", "public_url"),
         ] {
             let text = text(extra);
             let err = validate_link(&link(&text), &app()).unwrap_err().to_string();

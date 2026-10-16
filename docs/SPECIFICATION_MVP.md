@@ -239,6 +239,7 @@ services:
       instance: keycloak               # optional pin
       realm: myapp                     # default <app>-<prefix>; created if missing
       client_id: web                   # default <app>-<prefix>-<entry name>
+      public_url: https://login.domain.tld   # optional: the realm's own domain (see below)
       public_client: false             # true: no client secret (e.g. a single-page app)
       redirect_uris: ["https://staging.domain.tld/*"]   # required, usually in the overlay
       web_origins: []
@@ -253,13 +254,25 @@ services:
 
 | Value | Example |
 |---|---|
-| `oidc_issuer` | `https://auth.domain.tld/realms/myapp` |
+| `oidc_issuer` | `https://auth.domain.tld/realms/myapp` (with `public_url`: `https://login.domain.tld/realms/myapp`) |
 | `oidc_internal_url` | `http://keycloak:8080/realms/myapp` (back channel, on `compost-oidc-<name>`) |
 | `oidc_realm` | `myapp` |
 | `oidc_client_id` | `web` |
 | `oidc_client_secret` | (generated or from the overlay; empty for public clients) |
 
 `app remove --purge oidc` deletes the client and the link's users, and the realm when no other link record uses it.
+
+**A realm on its own domain.** An ingress route can target another link of the app with `link: <kind>/<entry>` instead of `target` and `port`; the linked kind decides the paths (§9.1, `exposed_routes`). For an OIDC link these are `/realms/<realm>` and `/resources` (the shared static files of the login pages). Everything else on that domain, including the admin console and other realms, gets the ingress' 404:
+```yaml
+services:
+  ingress:
+    - name: login-page
+      domains: [login.domain.tld]        # usually in the overlay
+      routes:
+        - name: realm
+          link: oidc/login               # no path, strip_prefix, target or port
+```
+The OIDC link then needs `public_url`, whose host must be one of the route's domains. Its value becomes the realm's frontend URL in Keycloak: issuer, login pages and redirects use it, also when the realm is reached through the provider's own URL. Without `public_url` the frontend URL is cleared. Links sharing a realm must agree on `public_url` (exit 3 otherwise).
 
 Compose services not listed in `app_services` are deployed unchanged and cannot be linked. App names starting with `compost-` are reserved (§9.1).
 
@@ -292,7 +305,8 @@ Errors (exit code 2), grouped by the layer that raises them:
   - `app_services[].service` not present in the compose file
   - `backup.volumes[]` not a named volume of the compose file, or listed twice
 - **ingress** (generic, used by every ingress type)
-  - `routes[].target` not in `app_services`
+  - `routes[].target` not in `app_services`; a route without either `target` + `port` or `link`
+  - `routes[].link` not `<kind>/<entry>` of an entry in the app, of a kind whose links can be routed
   - entry with no `domains` that is not `optional`
   - duplicate route paths within one entry
 - **database** (generic)
@@ -426,6 +440,7 @@ realm: myapp-staging
 client_id: myapp-staging-login
 client_secret: …
 users: [alice]
+public_url: https://login.domain.tld   # if set
 ```
 Ingress link `<instance>-<entry>.yaml`:
 ```yaml
@@ -533,6 +548,8 @@ Code shared by all kinds (adding external networks and aliases, env files) lives
 - Validation: every link is validated and resolved against the shared apps in the same config (exit 2 if none or several match). A shared app with links cannot be used through a link of another one.
 - `server deploy` (§10.7) starts shared apps with links after the others; their `compose.override.yaml` comes from the `Contribution`.
 - `connector list` shows their link records as `shared <kind>/<name>/<entry>`.
+
+**Routes to links.** A kind whose links can sit behind an ingress returns `true` from `Kind::exposes_routes` and implements `Kind::exposed_routes`: paths, upstreams on the ingress network and optionally the domain the link expects. During `app deploy` every link hook gets the app's other resolved links in `AppCtx::peers`, so the ingress kind expands a route with `link: <kind>/<entry>` by asking that kind, without knowing it. Expanded routes are named `<route>-<name>`; identical paths with the same upstream are kept once, other duplicates are an error.
 
 ### 9.2 caddy (ingress type)
 

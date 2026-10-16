@@ -133,6 +133,7 @@ fn remove_links(ctx: &ServerCtx, instance: &Instance, purge: &[String]) -> Resul
             server: ctx,
             app: &instance.app,
             shared: &shared,
+            peers: &[],
         };
         kind.remove_application(&link_ctx, &link.entry, purge.contains(&link.kind))
             .with_context(|| format!("removing link {} {}", link.kind, link.entry))?;

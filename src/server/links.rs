@@ -126,6 +126,7 @@ fn link_lines(
                                 server: ctx,
                                 app: &found.app,
                                 shared: shared_app,
+                                peers: &[],
                             };
                             let summary = kind
                                 .describe_link(&link_ctx, &record.entry)
@@ -150,6 +151,7 @@ fn link_lines(
                     server: ctx,
                     app: &instance.app,
                     shared: shared_app,
+                    peers: &[],
                 };
                 let summary = kind
                     .describe_link(&link_ctx, &record.entry)

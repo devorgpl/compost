@@ -249,6 +249,7 @@ fn backup_instance(
                 server: ctx,
                 app,
                 shared: &shared_app,
+                peers: &[],
             };
             let mut writer = ItemWriter::new(backup, links_dir(&dir, &link.kind));
             kind.backup_link(&link_ctx, &link.entry, &mut writer)

@@ -257,12 +257,14 @@ fn write_files(ctx: &ServerCtx, rendered: &Rendered) -> Result<()> {
 /// Run the links' `prepare_application` and write the compose override.
 /// Returns whether the override changed.
 fn prepare_links(ctx: &ServerCtx, plan: &Plan, consumer: &Consumer) -> Result<bool> {
+    let peers = consumer.peers();
     let mut contribution = Contribution::default();
     for link in &consumer.links {
         let link_ctx = AppCtx {
             server: ctx,
             app: &consumer.app,
             shared: &link.shared,
+            peers: &peers,
         };
         link.kind
             .prepare_application(&link_ctx, &link.entry, &mut contribution)
@@ -308,11 +310,13 @@ fn run_link_hooks(ctx: &ServerCtx, plan: &Plan, hook: Hook) -> Result<()> {
     let Some(consumer) = &plan.consumer else {
         return Ok(());
     };
+    let peers = consumer.peers();
     for link in &consumer.links {
         let link_ctx = AppCtx {
             server: ctx,
             app: &consumer.app,
             shared: &link.shared,
+            peers: &peers,
         };
         match hook {
             Hook::BeforeApply => link.kind.before_apply_application(&link_ctx, &link.entry),

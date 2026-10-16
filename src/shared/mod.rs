@@ -73,9 +73,55 @@ pub struct AppCtx<'a> {
     pub server: &'a ServerCtx<'a>,
     pub app: &'a AppConfig,
     pub shared: &'a SharedAppConfig,
+    /// All links of the app being deployed, e.g. for an ingress route to
+    /// another link. Empty outside deploy.
+    pub peers: &'a [Peer<'a>],
 }
 
-impl AppCtx<'_> {
+/// A link of the app, resolved to a shared app.
+pub struct Peer<'a> {
+    pub kind: &'static dyn Kind,
+    pub name: &'a str,
+    pub entry: &'a Value,
+    pub shared: &'a SharedAppConfig,
+}
+
+/// Paths a link puts behind an ingress (see [`Kind::exposed_routes`]).
+#[derive(Debug)]
+pub struct Exposed {
+    pub routes: Vec<ExposedRoute>,
+    /// The domain the link expects to be served on, if it has one; an
+    /// ingress link routing to it must serve that domain.
+    pub domain: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ExposedRoute {
+    /// Added to the route name, e.g. `realm`.
+    pub name: &'static str,
+    pub path: String,
+    /// `<host>:<port>` on the ingress network.
+    pub upstream: String,
+}
+
+impl<'a> AppCtx<'a> {
+    /// The context of another link of the app (`kind/entry`), if it is deployed with it.
+    pub fn peer(&self, kind: &str, entry: &str) -> Option<(&'a Peer<'a>, AppCtx<'a>)> {
+        let peer = self
+            .peers
+            .iter()
+            .find(|peer| peer.kind.name() == kind && peer.name == entry)?;
+        Some((
+            peer,
+            AppCtx {
+                server: self.server,
+                app: self.app,
+                shared: peer.shared,
+                peers: self.peers,
+            },
+        ))
+    }
+
     /// Compose service behind an `app_services` name (checked during validation).
     pub fn compose_service(&self, app_service: &str) -> Result<&str> {
         self.app
@@ -241,6 +287,19 @@ pub trait Kind: Sync {
     /// `--purge <kind>` is allowed: the kind holds data of the app.
     fn supports_purge(&self) -> bool {
         false
+    }
+
+    /// Links of this kind can be targets of ingress routes (`link: <kind>/<entry>`).
+    fn exposes_routes(&self) -> bool {
+        false
+    }
+
+    /// Paths and upstreams a link puts behind an ingress route.
+    fn exposed_routes(&self, _ctx: &AppCtx, _link: &Value) -> Result<Exposed> {
+        bail!(
+            "{} links cannot be the target of an ingress route",
+            self.name()
+        )
     }
 
     /// Undo a link on `app remove`; with `purge`, also delete the app's data.

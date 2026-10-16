@@ -18,7 +18,7 @@ use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
 use crate::server::state::{self, Report, Status};
 use crate::server::state_file::{DeployStatus, StateFile};
-use crate::shared::{self, AppCtx, Kind, Resolution, ServerCtx, SharedAppConfig};
+use crate::shared::{self, AppCtx, Kind, Peer, Resolution, ServerCtx, SharedAppConfig};
 
 pub struct Options<'a> {
     pub apply: bool,
@@ -37,6 +37,15 @@ struct Link<'a> {
 }
 
 impl Link<'_> {
+    fn peer(&self) -> Peer<'_> {
+        Peer {
+            kind: self.kind,
+            name: self.name,
+            entry: self.entry,
+            shared: &self.shared,
+        }
+    }
+
     /// e.g. `services.database[system-data]`, for error messages.
     fn path(&self) -> String {
         format!("services.{}[{}]", self.kind.name(), self.name)
@@ -100,6 +109,7 @@ pub fn deploy(
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;
     out!("  uploaded {} files", files.len());
 
+    let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
     let mut contribution = Contribution::default();
     for service in &app.app_services {
         for (key, value) in &service.environment {
@@ -112,6 +122,7 @@ pub fn deploy(
             server: &ctx,
             app,
             shared: &link.shared,
+            peers: &peers,
         };
         // Fails on server-side conflicts, e.g. a domain used by another instance.
         link.kind
@@ -239,11 +250,13 @@ fn apply(
     restore: Option<&RestorePlan>,
 ) -> Result<()> {
     let app = &loaded.config;
+    let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
     for link in links {
         let link_ctx = AppCtx {
             server: ctx,
             app,
             shared: &link.shared,
+            peers: &peers,
         };
         link.kind
             .before_apply_application(&link_ctx, link.entry)
@@ -283,6 +296,7 @@ fn apply(
             server: ctx,
             app,
             shared: &link.shared,
+            peers: &peers,
         };
         link.kind
             .after_apply_application(&link_ctx, link.entry)
