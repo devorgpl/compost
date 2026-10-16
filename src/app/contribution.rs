@@ -19,6 +19,8 @@ struct ServiceChanges {
     /// Network name → aliases on that network.
     networks: BTreeMap<String, Vec<String>>,
     environment: BTreeMap<String, String>,
+    /// The compose `logging` section, e.g. to send the output to a collector.
+    logging: Option<Mapping>,
 }
 
 impl Contribution {
@@ -46,6 +48,20 @@ impl Contribution {
             }
             _ => {
                 environment.insert(key.to_string(), value);
+                Ok(())
+            }
+        }
+    }
+
+    /// Set the service's `logging`; setting it twice differently is an error.
+    pub fn set_logging(&mut self, service: &str, logging: Mapping) -> Result<()> {
+        let current = &mut self.service(service).logging;
+        match current {
+            Some(existing) if *existing != logging => {
+                bail!("the logging of service `{service}` is set twice in different ways")
+            }
+            _ => {
+                *current = Some(logging);
                 Ok(())
             }
         }
@@ -93,6 +109,15 @@ impl Contribution {
                     .map(|(k, v)| (Value::from(k.as_str()), Value::from(v.replace('$', "$$"))))
                     .collect();
                 service.insert("environment".into(), Value::Mapping(environment));
+            }
+
+            if let Some(logging) = &changes.logging {
+                if original.is_some_and(|s| s.has_logging) {
+                    bail!(
+                        "service `{name}` sets its own `logging`, so compost cannot collect its output; remove `logging` or set `logs: false` on the monitoring link"
+                    );
+                }
+                service.insert("logging".into(), Value::Mapping(logging.clone()));
             }
             services.insert(name.as_str().into(), Value::Mapping(service));
         }
@@ -157,6 +182,31 @@ networks:
         c.set_env("api", "X", "1".into()).unwrap();
         c.set_env("api", "X", "1".into()).unwrap();
         assert!(c.set_env("api", "X", "2".into()).is_err());
+    }
+
+    fn logging() -> Mapping {
+        serde_yaml_ng::from_str("{driver: fluentd, options: {tag: x}}").unwrap()
+    }
+
+    #[test]
+    fn renders_logging() {
+        let mut c = Contribution::default();
+        c.set_logging("web", logging()).unwrap();
+        c.set_logging("web", logging()).unwrap();
+        let yaml = c.override_yaml(&compose()).unwrap();
+        assert!(yaml.contains("logging:\n      driver: fluentd\n"), "{yaml}");
+        let other: Mapping = serde_yaml_ng::from_str("{driver: json-file}").unwrap();
+        assert!(c.set_logging("web", other).is_err());
+    }
+
+    #[test]
+    fn services_with_own_logging_cannot_be_collected() {
+        let compose =
+            ComposeFile::parse("services: {web: {image: x, logging: {driver: syslog}}}").unwrap();
+        let mut c = Contribution::default();
+        c.set_logging("web", logging()).unwrap();
+        let err = c.override_yaml(&compose).unwrap_err().to_string();
+        assert!(err.contains("sets its own `logging`"), "{err}");
     }
 
     #[test]

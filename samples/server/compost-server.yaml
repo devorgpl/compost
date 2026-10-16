@@ -14,11 +14,16 @@ shared:
         # auto: certificates from Let's Encrypt. Domains must point to this server.
         tls: auto
         acme_email: admin@example.com
+        # Log every request; with `monitoring`, the log goes to OpenObserve.
+        access_log: true
+      # Send its output and metrics to the monitoring app below.
+      monitoring: {}
   database:
     - name: postgres18
       type: postgres
       version: 18
       image: postgres:18-alpine
+      monitoring: {}
   oidc:
     # Identity provider for app logins. Uses postgres18 (it needs >=18) and
     # the domain of `url` on caddy-main.
@@ -27,3 +32,13 @@ shared:
       version: 26
       configuration:
         url: https://auth.example.com
+      monitoring: {}
+  monitoring:
+    # Logs, metrics and traces of apps and shared apps. Its UI is served on
+    # the domain of `url` by caddy-main, which sends its own logs here.
+    - name: monitoring
+      type: openobserve
+      version: 1
+      configuration:
+        url: https://logs.example.com
+        retention_days: 30

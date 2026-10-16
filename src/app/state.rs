@@ -91,7 +91,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
                 _ => "shared app is no longer configured".to_string(),
             };
             out!(
-                "    {:<9} {:<16} {}: {summary}",
+                "    {:<10} {:<16} {}: {summary}",
                 link.kind,
                 link.entry,
                 link.instance
@@ -101,7 +101,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     if !instance.removing.is_empty() {
         out!("  no longer configured (removed by the next deploy with --apply):");
         for link in &instance.removing {
-            out!("    {:<9} {:<16} {}", link.kind, link.entry, link.instance);
+            out!("    {:<10} {:<16} {}", link.kind, link.entry, link.instance);
         }
     }
     Ok(healthy)

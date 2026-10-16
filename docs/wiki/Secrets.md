@@ -7,7 +7,7 @@ Passwords and other per-instance values (domains, database credentials, OIDC use
 - Commit only examples: `.compost.secrets.example.yaml`, `.compost-staging.example.yaml`. compost never loads `*.example.yaml` by itself.
 - Keep the real files out of Git, e.g. with `.compost-*.yaml` and `.compost.*.yaml` in `.gitignore`, keeping the examples with `!*.example.yaml`.
 - Files named `.compost-*.yaml` or `.compost.*.yaml`, and every file passed with `-f`, are never uploaded with the sources.
-- Passwords you leave out are generated on the first deploy (32 hexadecimal characters), stored on the server and reused by later deploys.
+- Passwords you leave out are generated on the first deploy (32 hexadecimal characters; OpenObserve's root password starts with `Compost-` to meet its rules), stored on the server and reused by later deploys.
 - On the server, secret files have mode `0600`. Secrets never appear in output, `--dry-run` (shown as `***`), stored configs or remote command lines.
 
 ## Local overlays
@@ -49,16 +49,22 @@ shared:
     - name: keycloak
       configuration:
         admin_password: change-me-to-a-long-random-string
+  monitoring:
+    - name: monitoring
+      configuration:
+        root_password: Change-me-to-a-long-random-string-1
 ```
 
-Lists merge by `name`, so only the secret keys are repeated. Both passwords are optional, and both can't change after the first deploy. Generated ones are on the server:
+Lists merge by `name`, so only the secret keys are repeated. The passwords are optional, and none can change after the first deploy. Generated ones are on the server:
 
 ```sh
 cat ~/.compost-server/shared/database/postgres18/secrets/postgres.env
 grep PASSWORD ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
+grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml
 ```
 
 ## Notes
 
 - Every instance linked to the same shared app is on that shared app's Docker network. Networks don't isolate instances from each other yet.
+- Apps send data to a monitoring app's collector without credentials: any container on its network can. Only the collector holds OpenObserve's password.
 - Server backups hold root passwords and link credentials. Keep archives as safe as the server.

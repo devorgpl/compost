@@ -249,6 +249,66 @@ curl -H 'Host: login.localhost' http://localhost:18080/realms/sampleapp/.well-kn
 
 To remove the login, delete both entries and deploy with `--purge oidc`; without it the realm, client and users stay in Keycloak.
 
+## Logs and metrics in OpenObserve
+
+Add a monitoring app to `compost-server.yaml`, and let Caddy and Postgres send their output to it. Caddy serves OpenObserve's UI and also sends its own access log there:
+
+```yaml
+# compost-server.yaml
+shared:
+  ingress:
+    - name: caddy-main
+      type: caddy
+      configuration:
+        access_log: true
+      monitoring: {}            # output, and Caddy's metrics
+  database:
+    - name: postgres18
+      type: postgres
+      version: 18
+      monitoring: {}
+  monitoring:
+    - name: monitoring
+      type: openobserve
+      version: 1
+      configuration:
+        url: http://logs.localhost:18080
+```
+
+```sh
+compost server deploy --apply
+grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml   # login for the UI
+```
+
+Then link the app. `optional: true` keeps the app deployable on servers without monitoring:
+
+```yaml
+# compost.yaml
+services:
+  monitoring:
+    - name: telemetry
+      optional: true
+      targets: [web, backend, migrate]
+      metrics:
+        - {target: backend, port: 5000, path: /metrics}   # if the backend serves Prometheus metrics
+      environment:                     # for an OpenTelemetry SDK in the backend
+        OTEL_EXPORTER_OTLP_ENDPOINT: otlp_endpoint
+        OTEL_SERVICE_NAME: service_name
+        OTEL_RESOURCE_ATTRIBUTES: resource_attributes
+```
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml
+compost connector list
+# monitoring
+# └─ monitoring  openobserve 1  running
+#    ├─ sampleapp-local/telemetry  logs web, backend, migrate; metrics sampleapp-local-backend:5000/metrics  app: deployed
+#    ├─ shared database/postgres18/monitoring  logs postgres
+#    └─ shared ingress/caddy-main/monitoring  logs caddy; metrics compost-ingress-caddy-main-caddy:9180/metrics
+```
+
+Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; traces from the SDK show under Traces.
+
 ## A review copy of production
 
 ```sh

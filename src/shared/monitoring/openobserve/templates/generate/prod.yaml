@@ -1,0 +1,4 @@
+    - name: monitoring
+      configuration:
+        url: https://logs.example.com
+        retention_days: 30

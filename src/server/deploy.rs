@@ -115,6 +115,9 @@ pub fn deploy(
             })?;
             plan.changed |= override_changed;
             plan.compose_changed |= override_changed;
+        } else if remove_override(&ctx, plan)? {
+            plan.changed = true;
+            plan.compose_changed = true;
         }
         if plan.changed {
             state_file.set_shared(
@@ -125,7 +128,7 @@ pub fn deploy(
             );
         }
         let change = if plan.changed { "updated" } else { "unchanged" };
-        out!("  {:<9} {:<16} {change}", plan.kind_name(), plan.app.name);
+        out!("  {:<10} {:<16} {change}", plan.kind_name(), plan.app.name);
     }
     let orphans: Vec<(String, String)> = state_file
         .shared
@@ -146,14 +149,14 @@ pub fn deploy(
         });
         if was_external && forget_external(&ctx, &kind, &name)? {
             state_file.remove_shared(&kind, &name);
-            out!("  {kind:<9} {name:<16} removed: external, compost only forgets it");
+            out!("  {kind:<10} {name:<16} removed: external, compost only forgets it");
         } else if was_external {
             out!(
-                "  {kind:<9} {name:<16} orphaned: apps still link to it; deploy them without it first"
+                "  {kind:<10} {name:<16} orphaned: apps still link to it; deploy them without it first"
             );
         } else {
             out!(
-                "  {kind:<9} {name:<16} orphaned: not in the configuration any more, left as it is"
+                "  {kind:<10} {name:<16} orphaned: not in the configuration any more, left as it is"
             );
         }
     }
@@ -165,9 +168,14 @@ pub fn deploy(
         return Ok(());
     }
 
-    // 5. Start. `docker compose up -d` leaves unchanged containers alone; containers
-    //    whose files changed are recreated, because compose cannot see those changes,
-    //    unless the shared app can reload changed configuration files itself.
+    // 5. Undo links of shared apps that the config dropped, e.g. a removed
+    //    `monitoring`. Then start: `docker compose up -d` leaves unchanged
+    //    containers alone; containers whose files changed are recreated, because
+    //    compose cannot see those changes, unless the shared app can reload
+    //    changed configuration files itself.
+    if let Some(previous) = &previous {
+        remove_dropped_links(&ctx, previous, &plans)?;
+    }
     for plan in &plans {
         let kind = plan.kind_name();
         let deployed = state_file
@@ -199,7 +207,8 @@ fn render_all<'a>(
     state_file: &StateFile,
 ) -> Result<Vec<Plan<'a>>> {
     let mut plans = Vec::new();
-    for (kind_name, app) in config.shared_apps() {
+    // Shared apps with links start after the shared apps they use.
+    for (kind_name, app) in config.start_order()? {
         let kind =
             shared::find_kind(kind_name).with_context(|| format!("unknown kind `{kind_name}`"))?;
         let rendered = kind
@@ -221,8 +230,6 @@ fn render_all<'a>(
             consumer,
         });
     }
-    // Shared apps with links start after the shared apps they use.
-    plans.sort_by_key(|plan| plan.consumer.is_some());
     Ok(plans)
 }
 
@@ -417,6 +424,75 @@ fn prepare_links(ctx: &ServerCtx, plan: &Plan, consumer: &Consumer) -> Result<bo
     Ok(changed)
 }
 
+/// Delete the compose override of a shared app that has no links any more.
+/// Returns whether there was one.
+fn remove_override(ctx: &ServerCtx, plan: &Plan) -> Result<bool> {
+    let dir = shared::shared_dir(plan.kind_name(), &plan.app.name);
+    let path = ctx.path(&format!("{dir}/{SHARED_OVERRIDE_FILE}"));
+    if ctx.connector.read_file(&path)?.is_none() {
+        return Ok(false);
+    }
+    ctx.connector
+        .exec(&format!("rm -f -- {}", shell_quote(&path)))?;
+    Ok(true)
+}
+
+/// Remove the links that shared apps had in the previously deployed config
+/// and no longer have, or that now use another shared app.
+fn remove_dropped_links(ctx: &ServerCtx, previous: &ServerConfig, plans: &[Plan]) -> Result<()> {
+    for (kind_name, app) in previous.shared_apps() {
+        // Only links that resolved then; a config that does not resolve any
+        // more has nothing deployed to remove.
+        let Ok(Some(old)) = previous.consumer(kind_name, app) else {
+            continue;
+        };
+        // A shared app removed from the config is left as it is, links included.
+        let Some(plan) = plans
+            .iter()
+            .find(|p| p.kind_name() == kind_name && p.app.name == app.name)
+        else {
+            continue;
+        };
+        let current = plan.consumer.as_ref();
+        let peers = old.peers();
+        for link in &old.links {
+            let kept = current.is_some_and(|current| {
+                current.links.iter().any(|l| {
+                    l.kind.name() == link.kind.name()
+                        && l.name == link.name
+                        && l.shared.name == link.shared.name
+                })
+            });
+            if kept {
+                continue;
+            }
+            let link_ctx = AppCtx {
+                server: ctx,
+                app: &old.app,
+                shared: &link.shared,
+                peers: &peers,
+            };
+            link.kind
+                .remove_application(&link_ctx, &link.name, false)
+                .map_err(|e| {
+                    CompostError::ServerNotReady(format!(
+                        "{kind_name} {}: removing {}: {e:#}",
+                        app.name,
+                        link.path()
+                    ))
+                })?;
+            out!(
+                "  {kind_name:<10} {:<16} removed link {} ({} {})",
+                app.name,
+                link.path(),
+                link.kind.name(),
+                link.shared.name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Start a shared app, with the hooks of its links around it.
 fn apply(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
     run_link_hooks(ctx, plan, Hook::BeforeApply)?;
@@ -501,7 +577,7 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
         } else {
             "unchanged"
         };
-        out!("  {:<9} {:<16} {change}", plan.kind_name(), plan.app.name);
+        out!("  {:<10} {:<16} {change}", plan.kind_name(), plan.app.name);
         if let Some(consumer) = &plan.consumer {
             let uses: Vec<String> = consumer
                 .links

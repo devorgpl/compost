@@ -1,6 +1,6 @@
 # compost
 
-compost deploys docker-compose applications to your own servers. A server gets shared services that many apps use: a **Caddy** reverse proxy with automatic HTTPS, **Postgres** databases and a **Keycloak** login provider. Each app is linked to them by a few lines of YAML next to its compose file.
+compost deploys docker-compose applications to your own servers. A server gets shared services that many apps use: a **Caddy** reverse proxy with automatic HTTPS, **Postgres** databases, a **Keycloak** login provider and **OpenObserve** for logs, metrics and traces. Each app is linked to them by a few lines of YAML next to its compose file.
 
 compost is a single CLI on your machine. It reaches servers over SSH, or manages this machine directly. It installs no agent: a server only holds plain files in one folder and Docker containers.
 
@@ -14,6 +14,7 @@ compost app deploy --apply -f compost.yaml,.compost-staging.yaml   # your app, w
 - **Routing and HTTPS:** domains and paths go to your services through Caddy, with certificates from Let's Encrypt.
 - **Databases:** each app gets its own Postgres database and user, and its services get the connection variables.
 - **Logins:** an app can get a Keycloak realm, client and test users, with the OIDC settings passed to its services.
+- **Monitoring:** the output and metrics of apps and shared services go to OpenObserve, and services get the variables to send OpenTelemetry traces.
 - **Instances:** the same app runs as `staging`, `prod` or a review copy, each with its own domains and data.
 - **Secrets:** passwords live in files you don't commit, or are stored on the server; generated ones are kept between deploys.
 - **Backup and restore:** apps and shared services, to this machine or to a folder on the server, also to make copies or move to a new server.
@@ -27,11 +28,11 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
-| **Link** | A connection between an instance and a shared app: a domain on the ingress, a database, a login realm. |
+| **Link** | A connection between an instance and a shared app: a domain on the ingress, a database, a login realm, log collection. |
 | **Manager key** | A UUID that marks which compost installation manages a server. Copy it to manage the same servers from another machine. |
 
 ## Pages

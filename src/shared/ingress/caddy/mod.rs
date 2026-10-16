@@ -12,9 +12,9 @@ use crate::config::check_name;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role,
-    ServerCtx, SharedAppConfig, is_domain, is_network_name, project_name, render_template,
-    shared_dir,
+    AppCtx, Contribution, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered,
+    RenderedFile, Role, ServerCtx, SharedAppConfig, is_domain, is_network_name, project_name,
+    render_template, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -33,6 +33,8 @@ struct CaddyConfig {
     networks: Vec<String>,
     /// Sites written by hand, e.g. for apps not moved to compost yet.
     sites: Vec<Site>,
+    /// Log every request (to the container output, as JSON).
+    access_log: bool,
 }
 
 impl Default for CaddyConfig {
@@ -44,6 +46,7 @@ impl Default for CaddyConfig {
             acme_email: None,
             networks: Vec::new(),
             sites: Vec::new(),
+            access_log: false,
         }
     }
 }
@@ -57,6 +60,9 @@ struct Site {
     /// The body of the site block, e.g. `reverse_proxy shop-web-1:80`.
     config: String,
 }
+
+/// Port of the metrics endpoint inside the container, served with `monitoring`.
+const METRICS_PORT: u16 = 9180;
 
 /// Folder of the site files of `sites`, owned by `server deploy`.
 const CUSTOM_DIR: &str = "conf/custom";
@@ -76,6 +82,18 @@ impl IngressType for Caddy {
 
     fn default_version(&self) -> Option<u32> {
         Some(DEFAULT_VERSION)
+    }
+
+    /// Its output and, served on an internal port, its metrics.
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        Ok(Monitored {
+            services: vec!["caddy"],
+            metrics: vec![MetricsEndpoint {
+                service: "caddy",
+                port: METRICS_PORT,
+                path: "/metrics",
+            }],
+        })
     }
 
     fn generate(&self) -> Generated {
@@ -202,6 +220,10 @@ impl IngressType for Caddy {
         if let Some(email) = &caddy.acme_email {
             options.push(format!("email {email}"));
         }
+        let metrics = config.monitoring.as_ref().is_some_and(|m| m.metrics);
+        if metrics {
+            options.push("metrics".to_string());
+        }
         match caddy.tls {
             Tls::Auto => {}
             Tls::Internal => options.push("local_certs".to_string()),
@@ -233,7 +255,12 @@ impl IngressType for Caddy {
         )?;
         let caddyfile = render_template(
             include_str!("templates/Caddyfile.j2"),
-            context! { options, custom_sites => !caddy.sites.is_empty() },
+            context! {
+                options,
+                custom_sites => !caddy.sites.is_empty(),
+                access_log => caddy.access_log,
+                metrics_port => metrics.then_some(METRICS_PORT),
+            },
         )?;
 
         let dir = shared_dir(KIND, &config.name);
@@ -573,7 +600,7 @@ mod tests {
 
         let caddyfile = file(&rendered, "conf/Caddyfile");
         assert!(
-            !caddyfile.contains('{'),
+            caddyfile.contains("\n\n# Imported by every site.\n"),
             "no global options block: {caddyfile}"
         );
         assert!(caddyfile.contains("import /etc/caddy/sites/*.caddy"));
@@ -606,7 +633,7 @@ mod tests {
         let site = file(&rendered, "conf/custom/shop.caddy");
         assert!(
             site.ends_with(
-                "http://shop.example.com, http://www.shop.example.com {\n\treverse_proxy shop-web-1:80\n\n\theader {\n\t  -Server\n\t}\n}\n"
+                "http://shop.example.com, http://www.shop.example.com {\n\timport compost_site\n\treverse_proxy shop-web-1:80\n\n\theader {\n\t  -Server\n\t}\n}\n"
             ),
             "{site:?}"
         );
@@ -614,6 +641,27 @@ mod tests {
         let rendered = render("{name: c, type: caddy}");
         assert!(!file(&rendered, "conf/Caddyfile").contains("custom"));
         assert!(rendered.existing_networks.is_empty());
+    }
+
+    #[test]
+    fn renders_access_log_and_metrics() {
+        let caddyfile = |text: &str| file(&render(text), "conf/Caddyfile").to_string();
+        let plain = caddyfile("{name: c, type: caddy}");
+        assert!(plain.contains("(compost_site) {\n}\n"), "{plain}");
+        assert!(!plain.contains("metrics"), "{plain}");
+
+        let logged = caddyfile("{name: c, type: caddy, configuration: {access_log: true}}");
+        assert!(logged.contains("(compost_site) {\n\tlog\n}\n"), "{logged}");
+
+        let monitored = caddyfile("{name: c, type: caddy, monitoring: {}}");
+        assert!(monitored.starts_with("# Generated"), "{monitored}");
+        assert!(monitored.contains("{\n\tmetrics\n}\n"), "{monitored}");
+        assert!(
+            monitored.contains("http://:9180 {\n\tmetrics\n}\n"),
+            "{monitored}"
+        );
+        let no_metrics = caddyfile("{name: c, type: caddy, monitoring: {metrics: false}}");
+        assert!(!no_metrics.contains("metrics"), "{no_metrics}");
     }
 
     #[test]

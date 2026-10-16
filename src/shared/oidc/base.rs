@@ -11,8 +11,9 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Contribution, Exposed, ExposedRoute, ItemWriter, Resolution, Role, SharedAppConfig,
-    connectors_dir, generate_password, is_domain, is_variable_name, resolve_versioned,
+    connectors_dir, generate_password, is_variable_name, resolve_versioned,
 };
+pub use crate::shared::{PublicUrl, parse_url};
 
 /// Values a link can map to app variables.
 const LINK_VALUES: [&str; 5] = [
@@ -115,41 +116,6 @@ pub struct Endpoint {
     pub public_url: String,
     /// e.g. `http://keycloak:8080`
     pub internal_url: String,
-}
-
-/// `http(s)://<domain>[:port]`, split into its parts.
-pub struct PublicUrl {
-    /// The URL without a trailing `/`.
-    pub url: String,
-    pub domain: String,
-}
-
-pub fn parse_url(url: &str) -> Result<PublicUrl> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"));
-    let Some(rest) = rest else {
-        bail!("url `{url}` must start with https:// or http://");
-    };
-    let authority = rest.strip_suffix('/').unwrap_or(rest);
-    let (domain, port) = match authority.split_once(':') {
-        Some((domain, port)) => (domain, Some(port)),
-        None => (authority, None),
-    };
-    ensure!(
-        is_domain(domain) && !domain.starts_with("*."),
-        "url `{url}`: `{domain}` is not a valid domain name (a path is not supported)"
-    );
-    if let Some(port) = port {
-        ensure!(
-            port.parse::<u16>().is_ok_and(|p| p > 0),
-            "url `{url}`: invalid port `{port}`"
-        );
-    }
-    Ok(PublicUrl {
-        url: url.trim_end_matches('/').to_string(),
-        domain: domain.to_string(),
-    })
 }
 
 pub fn validate_config(config: &SharedAppConfig) -> Result<()> {

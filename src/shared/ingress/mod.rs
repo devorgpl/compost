@@ -7,8 +7,8 @@ use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
-    SharedAppConfig, parse_link,
+    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered, Resolution,
+    ServerCtx, SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::IngressLink;
@@ -74,6 +74,14 @@ pub trait IngressType: Sync {
         Ok(())
     }
 
+    /// Services and metrics endpoints, for `monitoring` of the shared app.
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        bail!(
+            "ingress shared apps of type `{}` cannot be monitored",
+            self.type_name()
+        )
+    }
+
     // Type-specific, no default.
 
     /// Starter configuration for `server generate`.
@@ -126,6 +134,10 @@ impl Kind for IngressKind {
 
     fn secret_keys(&self, config: &SharedAppConfig) -> Result<&'static [&'static str]> {
         Ok(find_type(&config.type_name)?.secret_keys())
+    }
+
+    fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
+        find_type(&config.type_name)?.monitored(config)
     }
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {

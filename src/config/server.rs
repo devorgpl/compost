@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
-use super::app::{AppConfig, link_name};
+use super::app::{AppConfig, AppService, link_name};
 use super::{check_name, merge};
 use crate::error::config_err;
-use crate::shared::{self, Kind, Resolution, SharedAppConfig};
+use crate::shared::{self, Kind, Monitored, Resolution, SharedAppConfig, SharedMonitoring};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +56,37 @@ impl ConsumerLink {
     pub fn path(&self) -> String {
         format!("services.{}[{}]", self.kind.name(), self.name)
     }
+}
+
+const MONITORING: &str = "monitoring";
+
+/// The `services.monitoring` entry of a shared app with `monitoring`.
+fn monitoring_link(monitoring: &SharedMonitoring, monitored: &Monitored) -> Result<Value> {
+    let mut link = serde_yaml_ng::Mapping::new();
+    link.insert("name".into(), MONITORING.into());
+    if let Some(instance) = &monitoring.instance {
+        link.insert("instance".into(), instance.as_str().into());
+    }
+    link.insert("logs".into(), monitoring.logs.into());
+    if monitoring.logs {
+        let targets: Vec<Value> = monitored.services.iter().map(|s| (*s).into()).collect();
+        link.insert("targets".into(), Value::Sequence(targets));
+    }
+    if monitoring.metrics && !monitored.metrics.is_empty() {
+        let metrics: Vec<Value> = monitored
+            .metrics
+            .iter()
+            .map(|m| {
+                serde_yaml_ng::to_value(BTreeMap::from([
+                    ("target", Value::from(m.service)),
+                    ("port", Value::from(m.port)),
+                    ("path", Value::from(m.path)),
+                ]))
+            })
+            .collect::<Result<_, _>>()?;
+        link.insert("metrics".into(), Value::Sequence(metrics));
+    }
+    Ok(Value::Mapping(link))
 }
 
 /// Where `backup` writes archives and `restore` reads them by default.
@@ -144,11 +175,31 @@ impl ServerConfig {
     }
 
     /// The links of a shared app to other shared apps of this config, in
-    /// apply order; `None` when it has no links.
+    /// apply order: its type's own and its `monitoring`; `None` when it has
+    /// no links.
     pub fn consumer(&self, kind_name: &str, app: &SharedAppConfig) -> Result<Option<Consumer>> {
         let kind =
             shared::find_kind(kind_name).with_context(|| format!("unknown kind `{kind_name}`"))?;
-        let Some(links) = kind.shared_links(app)? else {
+        let mut links = kind.shared_links(app)?;
+        if let Some(monitoring) = &app.monitoring {
+            let monitored = kind.monitored(app)?;
+            let links = links.get_or_insert_with(Default::default);
+            for service in &monitored.services {
+                if !links.app_services.iter().any(|s| s.name == *service) {
+                    links.app_services.push(AppService {
+                        name: service.to_string(),
+                        service: service.to_string(),
+                        environment: BTreeMap::new(),
+                    });
+                }
+            }
+            links
+                .services
+                .entry(MONITORING.to_string())
+                .or_default()
+                .push(monitoring_link(monitoring, &monitored)?);
+        }
+        let Some(links) = links else {
             return Ok(None);
         };
         let app = shared::consumer_app(kind_name, app, links);
@@ -172,12 +223,6 @@ impl ServerConfig {
                 Resolution::Use(shared) => shared,
                 Resolution::Skip(reason) => anyhow::bail!("{path}: {reason}"),
             };
-            if link_kind.shared_links(shared)?.is_some() {
-                anyhow::bail!(
-                    "{path}: {link_kind_name} {} uses other shared apps itself, which is not supported",
-                    shared.name
-                );
-            }
             resolved.push(ConsumerLink {
                 kind: link_kind,
                 name: name.to_string(),
@@ -190,6 +235,48 @@ impl ServerConfig {
             app,
             links: resolved,
         }))
+    }
+
+    /// Shared apps in the order they start: a shared app starts after the
+    /// shared apps it links to, unless the link's kind does not need that
+    /// (see [`Kind::orders_start`]). Otherwise in config order.
+    pub fn start_order(&self) -> Result<Vec<(&str, &SharedAppConfig)>> {
+        let apps: Vec<(&str, &SharedAppConfig)> = self.shared_apps().collect();
+        // For each shared app, the indexes of the ones it waits for.
+        let mut waits_for: Vec<Vec<usize>> = Vec::new();
+        for (kind_name, app) in &apps {
+            let mut before = Vec::new();
+            if let Some(consumer) = self.consumer(kind_name, app)? {
+                for link in consumer.links.iter().filter(|l| l.kind.orders_start()) {
+                    let index = apps
+                        .iter()
+                        .position(|(k, a)| *k == link.kind.name() && a.name == link.shared.name)
+                        .context("links resolve to configured shared apps")?;
+                    before.push(index);
+                }
+            }
+            waits_for.push(before);
+        }
+        let mut order: Vec<usize> = Vec::new();
+        while order.len() < apps.len() {
+            let next = (0..apps.len()).find(|i| {
+                !order.contains(i) && waits_for[*i].iter().all(|before| order.contains(before))
+            });
+            match next {
+                Some(i) => order.push(i),
+                None => {
+                    let stuck: Vec<String> = (0..apps.len())
+                        .filter(|i| !order.contains(i))
+                        .map(|i| format!("{}[{}]", apps[i].0, apps[i].1.name))
+                        .collect();
+                    anyhow::bail!(
+                        "shared apps link to each other in a cycle: {}",
+                        stuck.join(", ")
+                    );
+                }
+            }
+        }
+        Ok(order.into_iter().map(|i| apps[i]).collect())
     }
 
     /// Core checks, then delegation to each kind (spec §6.3, §9.1).
@@ -222,9 +309,17 @@ impl ServerConfig {
         }
         // Links between shared apps, once every shared app is valid on its own.
         for (kind_name, app) in self.shared_apps() {
+            let path = format!("shared.{kind_name}[{}]", app.name);
+            if app.monitoring.is_some() && app.is_external() {
+                return Err(config_err(format!(
+                    "{path}: `monitoring` is not supported with `external`: compost does not run it"
+                )));
+            }
             self.consumer(kind_name, app)
-                .map_err(|e| config_err(format!("shared.{kind_name}[{}]: {e:#}", app.name)))?;
+                .map_err(|e| config_err(format!("{path}: {e:#}")))?;
         }
+        self.start_order()
+            .map_err(|e| config_err(format!("{e:#}")))?;
         if let Some(path) = self.backup.as_ref().and_then(|b| b.server_path.as_ref()) {
             if path.trim().is_empty() {
                 return Err(config_err("backup.server_path must not be empty"));
@@ -271,7 +366,7 @@ shared:
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/server");
         let secrets = dir.join(".compost-server.secrets.example.yaml");
         let real = ServerConfig::load(&[dir.join("compost-server.yaml"), secrets]).unwrap();
-        assert_eq!(real.shared_apps().count(), 3);
+        assert_eq!(real.shared_apps().count(), 4);
         let local = ServerConfig::load(&[
             dir.join("compost-server.yaml"),
             dir.join("compost-server.local.yaml"),
@@ -357,6 +452,72 @@ shared:
             .collect();
         assert_eq!(used, [("database", "pg19"), ("ingress", "caddy-main")]);
         assert_eq!(consumer.app.instance(), "compost-oidc-kc");
+    }
+
+    const MONITORED: &str = "
+shared:
+  ingress: [{name: caddy-main, type: caddy, monitoring: {}}]
+  database: [{name: pg18, type: postgres, version: 18, monitoring: {metrics: false}}]
+  monitoring:
+    - {name: o2, type: openobserve, configuration: {url: 'https://logs.example.com'}}
+  oidc:
+    - {name: kc, type: keycloak, configuration: {url: 'https://a.example.com'}}
+";
+
+    #[test]
+    fn monitoring_links_shared_apps_both_ways() {
+        let config = parse(MONITORED).unwrap();
+        // Caddy sends to o2, o2 is served by Caddy: o2 starts after Caddy only.
+        let order: Vec<_> = config
+            .start_order()
+            .unwrap()
+            .iter()
+            .map(|(_, app)| app.name.as_str())
+            .collect();
+        assert_eq!(order, ["pg18", "caddy-main", "o2", "kc"]);
+
+        let caddy = config.consumer("ingress", &config.shared["ingress"][0]);
+        let caddy = caddy.unwrap().unwrap();
+        assert_eq!(caddy.app.instance(), "compost-ingress-caddy-main");
+        assert_eq!(caddy.app.app_services[0].service, "caddy");
+        let link = &caddy.links[0];
+        assert_eq!(
+            (link.kind.name(), link.shared.name.as_str()),
+            ("monitoring", "o2")
+        );
+        assert_eq!(link.entry["targets"][0], "caddy");
+        assert_eq!(link.entry["metrics"][0]["port"], 9180);
+
+        let pg = config.consumer("database", &config.shared["database"][0]);
+        let pg = pg.unwrap().unwrap();
+        assert!(pg.links[0].entry.get("metrics").is_none());
+        // Keycloak links to a database that has links itself.
+        let kc = config.consumer("oidc", &config.shared["oidc"][0]).unwrap();
+        assert_eq!(kc.unwrap().links.len(), 2);
+    }
+
+    #[test]
+    fn monitoring_needs_a_monitoring_app_and_a_running_shared_app() {
+        let err = error("shared: {ingress: [{name: c, type: caddy, monitoring: {}}]}");
+        assert!(
+            err.contains(
+                "shared.ingress[c]: services.monitoring[monitoring]: no monitoring app is running"
+            ),
+            "{err}"
+        );
+        let err = error(
+            "shared: {database: [{name: pg, type: postgres, version: 16, external: {host: db}, monitoring: {}}]}",
+        );
+        assert!(err.contains("not supported with `external`"), "{err}");
+        let err = error("shared: {monitoring: [{name: o2, type: openobserve, monitoring: {}}]}");
+        assert!(
+            err.contains("not supported for monitoring shared apps"),
+            "{err}"
+        );
+        let err = error(
+            "shared: {monitoring: [{name: a, type: openobserve}, {name: b, type: openobserve}]}",
+        );
+        assert!(err.contains("both use forward_port 24224"), "{err}");
     }
 
     #[test]

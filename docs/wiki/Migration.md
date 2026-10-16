@@ -130,8 +130,8 @@ Register every old database that apps will keep using as an **external** databas
 ```sh
 compost server deploy --apply
 compost server state
-#   database  postgres18       postgres 18  running
-#   database  shop-db          postgres 16  external, accepting connections
+#   database   postgres18       postgres 18  running
+#   database   shop-db          postgres 16  external, accepting connections
 ```
 
 An external database is only used by links that name it with `instance`, so adding one never changes which database other apps get. A hosted database (AWS RDS and similar) is registered the same way, without `network` (see [External databases](Servers-and-Shared-Apps.md#external-databases)).

@@ -279,7 +279,7 @@ fn server_deploy_then_apply() {
         .run(&["server", "deploy"], &[])
         .success()
         .stdout(contains("Initialized"))
-        .stdout(contains("database  postgres16       updated"))
+        .stdout(contains("database   postgres16       updated"))
         .stdout(contains("Run again with --apply"));
     let log = server.take_docker_log();
     assert!(
@@ -385,7 +385,9 @@ fn caddy_joins_existing_networks_and_serves_sites() {
     );
     let site = server.read_server_file("shared/ingress/caddy-main/conf/custom/shop.caddy");
     assert!(
-        site.contains("shop.example.com {\n\treverse_proxy shop-web-1:80\n}"),
+        site.contains(
+            "shop.example.com {\n\timport compost_site\n\treverse_proxy shop-web-1:80\n}"
+        ),
         "{site}"
     );
     server.take_docker_log();
@@ -890,8 +892,8 @@ fn app_deploy_end_to_end() {
         .stdout(contains("services.ingress[docs]: skipped (optional and no domains given)"))
         .stdout(contains("uploaded 2 files"))
         .stdout(contains("myapp-staging: deployed ("))
-        .stdout(contains("database  system-data      postgres16: database myapp_staging_system_data, user myapp_staging_system_data"))
-        .stdout(contains("ingress   ui-front         caddy-main: staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000"));
+        .stdout(contains("database   system-data      postgres16: database myapp_staging_system_data, user myapp_staging_system_data"))
+        .stdout(contains("ingress    ui-front         caddy-main: staging.example.com  /ui → myapp-staging-front-webapp:8080, / → myapp-staging-backend-webapp:5000"));
 
     // Sources: no .git and no config files (the overlay holds secrets).
     let instance = server.server_home.join("apps/myapp/staging");
@@ -1057,7 +1059,7 @@ fn app_state_by_name_or_files() {
         .success()
         .stdout(contains("myapp-staging: deployed"))
         .stdout(contains("app  running healthy"))
-        .stdout(contains("database  system-data"));
+        .stdout(contains("database   system-data"));
     server
         .run(
             &[
@@ -2084,7 +2086,7 @@ fn keycloak_uses_its_database_and_the_ingress() {
     server
         .run(&["server", "deploy", "--apply"], &running)
         .success()
-        .stdout(contains("oidc      keycloak         updated"))
+        .stdout(contains("oidc       keycloak         updated"))
         .stdout(contains("starting oidc keycloak ... running"));
 
     let override_yaml = server.read_server_file("shared/oidc/keycloak/compose.override.yaml");
@@ -2127,7 +2129,7 @@ fn keycloak_uses_its_database_and_the_ingress() {
     server
         .run(&["server", "deploy", "--apply"], &running)
         .success()
-        .stdout(contains("oidc      keycloak         unchanged"));
+        .stdout(contains("oidc       keycloak         unchanged"));
     assert!(
         !server
             .take_docker_log()
@@ -2183,7 +2185,7 @@ fn oidc_link_creates_client_and_sets_variables() {
         )
         .success()
         .stdout(contains(
-            "oidc      login            keycloak: realm myapp-main, client myapp-main-login",
+            "oidc       login            keycloak: realm myapp-main, client myapp-main-login",
         ));
 
     let override_yaml = server.read_server_file("apps/myapp/main/compose/compost.override.yaml");
@@ -2410,7 +2412,7 @@ fn dropped_links_are_removed_once_the_app_runs() {
         .stdout(contains(
             "no longer configured (removed by the next deploy with --apply):",
         ))
-        .stdout(contains("database  system-data      postgres16"));
+        .stdout(contains("database   system-data      postgres16"));
     server.take_docker_log();
 
     // With --apply: the old site goes before the new one is validated (same
@@ -2423,7 +2425,7 @@ fn dropped_links_are_removed_once_the_app_runs() {
             "removing link database system-data (postgres16)\n",
         ))
         .stdout(contains(
-            "ingress   web              caddy-main: staging.example.com",
+            "ingress    web              caddy-main: staging.example.com",
         ))
         .stdout(contains("no longer configured").not());
     let log = server.take_docker_log();
@@ -2510,13 +2512,174 @@ fn stored_secrets_keep_links_when_deploying_compost_yaml_only() {
         .success()
         .stdout(contains("removing").not())
         .stdout(contains(
-            "ingress   ui-front         caddy-main: staging.example.com",
+            "ingress    ui-front         caddy-main: staging.example.com",
         ))
-        .stdout(contains("database  system-data      postgres16"));
+        .stdout(contains("database   system-data      postgres16"));
     assert!(
         server
             .server_home
             .join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy")
             .exists()
     );
+}
+
+const MONITORING_SERVER_CONFIG: &str = "\
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy, configuration: {access_log: true}, monitoring: {}}
+  monitoring:
+    - name: o2
+      type: openobserve
+      configuration: {url: 'https://logs.example.com', container_metrics: false}
+";
+
+#[test]
+fn caddy_and_openobserve_monitor_and_serve_each_other() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("compost-server.yaml", MONITORING_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("starting monitoring o2 ... running"));
+
+    // Caddy sends its output to the collector and is scraped; it starts
+    // first, because OpenObserve needs it for its domain.
+    let caddy = server.read_server_file("shared/ingress/caddy-main/compose.override.yaml");
+    for expected in [
+        "fluentd-address: 127.0.0.1:24224",
+        "tag: compost-ingress-caddy-main.caddy",
+        "compost-monitoring-o2:",
+        "- compost-ingress-caddy-main-caddy",
+    ] {
+        assert!(caddy.contains(expected), "missing {expected:?} in\n{caddy}");
+    }
+    let caddyfile = server.read_server_file("shared/ingress/caddy-main/conf/Caddyfile");
+    assert!(caddyfile.contains("http://:9180 {"), "{caddyfile}");
+    let targets = server.read_server_file(
+        "shared/monitoring/o2/collector/targets/compost-ingress-caddy-main-monitoring.yaml",
+    );
+    assert!(
+        targets.contains("compost-ingress-caddy-main-caddy:9180"),
+        "{targets}"
+    );
+    let site = server
+        .read_server_file("shared/ingress/caddy-main/conf/sites/compost-monitoring-o2-web.caddy");
+    assert!(
+        site.contains("reverse_proxy compost-monitoring-o2-openobserve:5080"),
+        "{site}"
+    );
+    let log = server.take_docker_log();
+    let caddy_up = log.find("-p compost-ingress-caddy-main up -d").unwrap();
+    let o2_up = log.find("-p compost-monitoring-o2 up -d").unwrap();
+    assert!(caddy_up < o2_up, "{log}");
+
+    server
+        .run(&["connector", "list"], &running)
+        .success()
+        .stdout(contains(
+            "shared ingress/caddy-main/monitoring  logs caddy; metrics compost-ingress-caddy-main-caddy:9180/metrics",
+        ));
+
+    // Without `monitoring`, the link and Caddy's override go away.
+    server.write_work_file(
+        "compost-server.yaml",
+        &MONITORING_SERVER_CONFIG.replace(", monitoring: {}", ""),
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("removed link services.monitoring[monitoring]"));
+    let home = &server.server_home;
+    assert!(
+        !home
+            .join("shared/ingress/caddy-main/compose.override.yaml")
+            .exists()
+    );
+    assert!(
+        !home
+            .join(
+                "shared/monitoring/o2/collector/targets/compost-ingress-caddy-main-monitoring.yaml"
+            )
+            .exists()
+    );
+    assert!(
+        !home
+            .join("connectors/monitoring/o2/compost-ingress-caddy-main-monitoring.yaml")
+            .exists()
+    );
+    assert!(
+        server
+            .take_docker_log()
+            .contains("-p compost-ingress-caddy-main up -d --quiet-pull --force-recreate")
+    );
+}
+
+#[test]
+fn monitoring_link_collects_output_and_sets_variables() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let app = "\
+name: myapp
+services:
+  monitoring:
+    - name: telemetry
+      optional: true
+      targets: [backend]
+      metrics: [{target: backend, port: 9100}]
+      environment: {OTEL_EXPORTER_OTLP_ENDPOINT: otlp_endpoint}
+app_services:
+  - name: backend
+    service: backend
+";
+    server.write_work_file("app/compost.yaml", app);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {backend: {image: x}}\n",
+    );
+
+    // Optional: skipped while the server has no monitoring app.
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared: {ingress: [{name: caddy-main, type: caddy}]}\n",
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains("services.monitoring[telemetry]: skipped"));
+
+    server.write_work_file("compost-server.yaml", MONITORING_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "logs backend; metrics myapp-main-backend:9100/metrics",
+        ));
+    let override_yaml = server.read_server_file("apps/myapp/main/compose/compost.override.yaml");
+    for expected in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT: http://o2:4318",
+        "driver: fluentd",
+        "tag: myapp-main.backend",
+        "- myapp-main-backend",
+    ] {
+        assert!(
+            override_yaml.contains(expected),
+            "missing {expected:?} in\n{override_yaml}"
+        );
+    }
+    let targets =
+        server.read_server_file("shared/monitoring/o2/collector/targets/myapp-main-telemetry.yaml");
+    assert!(targets.contains("myapp-main-backend:9100"), "{targets}");
 }

@@ -23,7 +23,7 @@ cd server
 compost server deploy --apply -f compost-server.yaml,compost-server.local.yaml
 ```
 
-`compost-server.yaml` defines Caddy, Postgres 18 and Keycloak for a real server. `compost-server.local.yaml` is an overlay that changes Caddy to port 18080 without TLS and Keycloak to `http://auth.localhost:18080`. Files given with `-f` are merged in order; see [Configuration](Configuration.md#how-files-are-merged).
+`compost-server.yaml` defines Caddy, Postgres 18, Keycloak and OpenObserve for a real server. `compost-server.local.yaml` is an overlay that changes Caddy to port 18080 without TLS, Keycloak to `http://auth.localhost:18080` and OpenObserve to `http://logs.localhost:18080`. Files given with `-f` are merged in order; see [Configuration](Configuration.md#how-files-are-merged).
 
 compost generates the passwords it needs. Keycloak takes a minute or two to start the first time.
 
@@ -31,9 +31,10 @@ compost generates the passwords it needs. Keycloak takes a minute or two to star
 compost server state
 # dev (local): OK
 #   Docker …, home /home/you/.compost-server
-#   ingress   caddy-main       caddy 2  running
-#   database  postgres18       postgres 18  running
-#   oidc      keycloak         keycloak 26  running
+#   ingress    caddy-main       caddy 2  running
+#   database   postgres18       postgres 18  running
+#   monitoring monitoring       openobserve 1  running
+#   oidc       keycloak         keycloak 26  running
 ```
 
 ## 3. Deploy the app
@@ -44,7 +45,7 @@ cp .compost-local.example.yaml .compost-local.yaml
 compost app deploy --apply -f compost.yaml,.compost-local.yaml
 ```
 
-compost uploads the folder, builds the images, creates a database and user for the app, passes `DATABASE_URL` to the services that need it, runs the migration and routes `sampleapp.localhost` through Caddy.
+compost uploads the folder, builds the images, creates a database and user for the app, passes `DATABASE_URL` to the services that need it, sends their output to OpenObserve, runs the migration and routes `sampleapp.localhost` through Caddy.
 
 ```sh
 curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits   # {"hits": 1, "mode": "local"}
@@ -72,12 +73,14 @@ compost app remove sampleapp-local --purge database --yes
 docker compose -p compost-ingress-caddy-main down
 docker compose -p compost-database-postgres18 down
 docker compose -p compost-oidc-keycloak down
+docker compose -p compost-monitoring-monitoring down
 ```
 
 Their files are in `~/.compost-server/shared/`.
 
 ## Next
 
+- See the sample's logs and metrics: [Examples](Examples.md#logs-and-metrics-in-openobserve).
 - Add a Keycloak login to the sample: [Examples](Examples.md#log-in-with-keycloak).
 - Set up your own app: [Applications](Applications.md).
 - Deploy to a real server: [Production setup](Production-Setup.md).

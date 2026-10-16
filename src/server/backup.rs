@@ -198,7 +198,7 @@ pub fn restore(
 
     out!("Restoring on {}:", connector.target());
     for (kind, app) in &selected {
-        out!("  {kind:<9} {}", app.name);
+        out!("  {kind:<10} {}", app.name);
     }
     if !options.yes && !app::confirm()? {
         out!("Cancelled.");
@@ -221,14 +221,18 @@ pub fn restore(
     }
 
     // 2. Deploy and start them. Shared apps with links (e.g. keycloak) wait:
-    //    their databases are in the data loaded next.
+    //    their databases are in the data loaded next. Monitoring is set up
+    //    with them.
     let deploy_options = deploy::Options {
         apply: true,
         dry_run: false,
         force_unlock: false,
     };
     let providers = without_consumers(&config, &selected)?;
-    let later = providers.shared_apps().count() != config.shared_apps().count();
+    let later = providers.shared_apps().count() != config.shared_apps().count()
+        || config
+            .shared_apps()
+            .any(|(_, app)| app.monitoring.is_some());
     deploy::deploy(
         connector,
         server_home,
@@ -263,22 +267,31 @@ pub fn restore(
     Ok(())
 }
 
-/// The config without the restored shared apps that link to others. Their
-/// links are not validated: the config is only deployed, and the full config
-/// was validated before.
+/// The config without the restored shared apps that need others running
+/// (e.g. keycloak and its database), and without `monitoring`, whose
+/// monitoring app may be one of them. Their links are not validated: the
+/// config is only deployed, and the full config was validated before.
 fn without_consumers(
     config: &ServerConfig,
     selected: &[(String, SharedAppConfig)],
 ) -> Result<ServerConfig> {
     let mut providers = config.clone();
     for (kind_name, app) in selected {
-        if config.consumer(kind_name, app)?.is_some() {
+        let waits = config
+            .consumer(kind_name, app)?
+            .is_some_and(|c| c.links.iter().any(|l| l.kind.orders_start()));
+        if waits {
             if let Some(apps) = providers.shared.get_mut(kind_name) {
                 apps.retain(|a| a.name != app.name);
             }
         }
     }
     providers.shared.retain(|_, apps| !apps.is_empty());
+    for apps in providers.shared.values_mut() {
+        for app in apps {
+            app.monitoring = None;
+        }
+    }
     Ok(providers)
 }
 

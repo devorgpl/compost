@@ -44,6 +44,7 @@ services:
   ingress: [ … ]                       # see Applications
   database: [ … ]
   oidc: [ … ]
+  monitoring: [ … ]
 app_services:
   - name: backend                      # name used by links
     service: backend-webapp            # service in the compose file
@@ -96,6 +97,20 @@ backup:
 | `users[]` | `[]` | `username`, `email`, `first_name`, `last_name`, `password`. Secret |
 | `targets`, `environment` | | Values: `oidc_issuer`, `oidc_internal_url`, `oidc_realm`, `oidc_client_id`, `oidc_client_secret` |
 
+### `services.monitoring[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name |
+| `instance` | – | Pin a monitoring app by name; required when the server has several |
+| `optional` | `false` | Skip the entry when the server runs no monitoring app |
+| `targets` | `[]` | `app_services` whose output is collected and that get the variables and the network |
+| `logs` | `true` | Collect the output of `targets`. Fails for a service with its own `logging` |
+| `metrics[]` | `[]` | Prometheus endpoints: `target` (`app_services` name), `port`, `path` (default `/metrics`) |
+| `environment` | `{}` | Variable → `otlp_endpoint`, `otlp_grpc_endpoint`, `otlp_protocol`, `service_name`, `resource_attributes` |
+
+At least one of `targets` and `metrics` is required.
+
 Details and examples: [Applications](Applications.md).
 
 ## Overlays
@@ -130,12 +145,25 @@ shared:
     - {name: shop-db, type: postgres, version: 16, external: {host: db, network: shop_default}}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
+  monitoring:
+    - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
 backup:
   target: local                        # local | server | s3 (not implemented)
   server_path: backups                 # folder of the server target
 ```
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server.
+
+Keys every shared app has:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name`, `type` | required | |
+| `version` | per type | Major version |
+| `image` | per type | |
+| `configuration` | `{}` | The type's keys |
+| `external` | – | A server compost doesn't run; databases only |
+| `monitoring` | – | Send its output and metrics to a monitoring app: `instance`, `logs` (default `true`), `metrics` (default `true`). See [Monitoring shared apps](Servers-and-Shared-Apps.md#monitoring-shared-apps) |
 
 ## servers.yaml
 

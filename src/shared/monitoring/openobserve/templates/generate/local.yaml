@@ -1,0 +1,7 @@
+    # Logs, metrics and traces of apps and shared apps. Needs an ingress for its UI.
+    - name: monitoring
+      type: openobserve
+      version: 1
+      configuration:
+        # Public URL of the UI; its host is routed through the ingress.
+        url: http://logs.localhost:18080

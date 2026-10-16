@@ -1,16 +1,18 @@
 //! Shared applications: the kind registry and the interface core uses (spec §9.1).
 //!
-//! Layers: core → kind (`ingress`, `database`, `oidc`) → type (`caddy`, `postgres`, `keycloak`).
+//! Layers: core → kind (`ingress`, `database`, `oidc`, `monitoring`) → type (`caddy`,
+//! `postgres`, `keycloak`, `openobserve`).
 //! Core only talks to the [`Kind`] trait; each kind looks up its types and calls them.
 
 pub mod database;
 pub mod ingress;
+pub mod monitoring;
 pub mod oidc;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use minijinja::{Environment, UndefinedBehavior};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,44 @@ pub struct SharedAppConfig {
     /// container or a hosted service; parsed by the kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<Value>,
+    /// Send the shared app's output and metrics to a monitoring shared app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitoring: Option<SharedMonitoring>,
+}
+
+/// `monitoring` of a shared app: becomes a `services.monitoring` link of it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedMonitoring {
+    /// The monitoring shared app; needed when there are several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    /// Collect the docker output of its containers.
+    #[serde(default = "yes")]
+    pub logs: bool,
+    /// Scrape the metrics it serves, if its type serves any.
+    #[serde(default = "yes")]
+    pub metrics: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// What a monitoring link of a shared app watches (see [`Kind::monitored`]).
+#[derive(Debug, Default)]
+pub struct Monitored {
+    /// Compose services of the shared app.
+    pub services: Vec<&'static str>,
+    /// Prometheus endpoints it serves.
+    pub metrics: Vec<MetricsEndpoint>,
+}
+
+#[derive(Debug)]
+pub struct MetricsEndpoint {
+    pub service: &'static str,
+    pub port: u16,
+    pub path: &'static str,
 }
 
 impl SharedAppConfig {
@@ -287,6 +327,19 @@ pub trait Kind: Sync {
         Ok(None)
     }
 
+    /// Services and metrics endpoints of a shared app, for its `monitoring`.
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        bail!("{} shared apps cannot be monitored", self.name())
+    }
+
+    /// A shared app linking to a shared app of this kind starts after it.
+    /// `false` for links that work while the other side is not running yet,
+    /// which lets two shared apps link to each other (e.g. an ingress sending
+    /// its logs to a monitoring app that the ingress serves).
+    fn orders_start(&self) -> bool {
+        true
+    }
+
     /// How long `server deploy` waits for a shared app of this kind to run.
     fn start_timeout(&self) -> Duration {
         Duration::from_secs(60)
@@ -411,6 +464,7 @@ pub fn parse_link<T: DeserializeOwned>(link: &Value) -> Result<T> {
 static KINDS: &[&dyn Kind] = &[
     &database::DatabaseKind,
     &ingress::IngressKind,
+    &monitoring::MonitoringKind,
     &oidc::OidcKind,
 ];
 
@@ -510,6 +564,41 @@ pub fn render_template(source: &str, context: minijinja::Value) -> Result<String
     );
     env.render_str(source, context)
         .context("template rendering failed (this is a bug in compost)")
+}
+
+/// `http(s)://<domain>[:port]`, split into its parts.
+pub struct PublicUrl {
+    /// The URL without a trailing `/`.
+    pub url: String,
+    pub domain: String,
+}
+
+pub fn parse_url(url: &str) -> Result<PublicUrl> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        bail!("url `{url}` must start with https:// or http://");
+    };
+    let authority = rest.strip_suffix('/').unwrap_or(rest);
+    let (domain, port) = match authority.split_once(':') {
+        Some((domain, port)) => (domain, Some(port)),
+        None => (authority, None),
+    };
+    ensure!(
+        is_domain(domain) && !domain.starts_with("*."),
+        "url `{url}`: `{domain}` is not a valid domain name (a path is not supported)"
+    );
+    if let Some(port) = port {
+        ensure!(
+            port.parse::<u16>().is_ok_and(|p| p > 0),
+            "url `{url}`: invalid port `{port}`"
+        );
+    }
+    Ok(PublicUrl {
+        url: url.trim_end_matches('/').to_string(),
+        domain: domain.to_string(),
+    })
 }
 
 /// Letters, digits, `-` and `.`, optionally starting with `*.`.

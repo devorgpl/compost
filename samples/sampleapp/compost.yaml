@@ -28,6 +28,16 @@ services:
           target: web
           port: 8080
 
+  monitoring:
+    # Output of all services goes to the monitoring app, if the server runs one.
+    - name: telemetry
+      optional: true
+      targets: [web, backend, migrate]
+      # For an OpenTelemetry SDK in the app; the sample does not use one.
+      environment:
+        OTEL_EXPORTER_OTLP_ENDPOINT: otlp_endpoint
+        OTEL_SERVICE_NAME: service_name
+
 # Names that links refer to, mapped to services in docker-compose.yaml.
 app_services:
   - name: web

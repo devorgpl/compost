@@ -142,6 +142,8 @@ pub struct ComposeService {
     pub restart: Option<String>,
     /// The service has a `build` section.
     pub builds: bool,
+    /// The service sets its own `logging`.
+    pub has_logging: bool,
 }
 
 impl ComposeService {
@@ -412,6 +414,7 @@ impl ComposeFile {
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     builds: service.get("build").is_some(),
+                    has_logging: service.get("logging").is_some(),
                 },
             );
         }

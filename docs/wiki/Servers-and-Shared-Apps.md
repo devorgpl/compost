@@ -41,26 +41,28 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 ## Deploying shared apps
 
 ```sh
-compost server generate [--with caddy,postgres,keycloak] [--force]
+compost server generate [--with caddy,postgres,keycloak,openobserve] [--force]
 compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
 ```
 
-`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`. `--list` shows the available types.
+`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. `--list` shows the available types.
 
 `server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`. It:
 
 1. validates the config (exit 2 on errors, before anything touches the server);
 2. creates compost's folder and the Docker networks;
 3. renders each shared app's files and uploads them, generating missing passwords;
-4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`.
+4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
 Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
+
+When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 
 Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`.
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases and OIDC providers. Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases, OIDC providers and monitoring apps. Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -89,6 +91,7 @@ shared:
 | `configuration.acme_email` | – | Contact for the ACME account |
 | `configuration.networks` | `[]` | Existing Docker networks Caddy joins too, so `sites` can reach containers compost doesn't manage. Never created: `server deploy` fails if one is missing |
 | `configuration.sites[]` | `[]` | Sites written by hand: `name`, `domains`, and `config`, the inside of a Caddyfile site block |
+| `configuration.access_log` | `false` | Log every request, as JSON, to Caddy's output. With [`monitoring`](#monitoring-shared-apps), the log goes to OpenObserve. An app's site gets it on the app's next `app deploy` |
 
 ```yaml
       configuration:
@@ -101,6 +104,8 @@ shared:
 ```
 
 `sites` are for services compost doesn't deploy, typically while [migrating](Migration.md). A domain belongs to a site or to an app, not both: `app deploy` refuses a domain a site serves, and `server deploy` refuses a site for a domain an app serves.
+
+With [`monitoring`](#monitoring-shared-apps), Caddy also serves its Prometheus metrics (requests, durations, sizes per host) on port 9180 inside its container, not published on the host, and the collector scrapes them. This needs Caddy 2.8 or newer; the default image is.
 
 Caddy runs as the server user, so its files can be backed up and removed without root. Hosts and paths no app uses get a 404. When an app is deployed, Caddy is reloaded, not restarted; a site that fails `caddy validate` is rolled back and fails the deploy.
 
@@ -152,6 +157,72 @@ shared:
 | `configuration.database.instance` | – | The database to use, when several match |
 
 Its data lives in that database: back them up and restore them together. Apps reach it on network `compost-oidc-<name>` at `http://<name>:8080`. Keycloak gets 180 s to start. See [Applications](Applications.md#oidc-links) for linking apps to it.
+
+### openobserve (`monitoring`)
+
+Collects logs, metrics and traces of apps and shared apps, and shows them in [OpenObserve](https://openobserve.ai)'s UI. It runs two containers:
+- **openobserve** stores the data in `shared/monitoring/<name>/data/` and serves the UI. Only the collector and the ingress reach it.
+- **collector**, an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), receives what apps send and forwards it to OpenObserve. Apps reach it on network `compost-monitoring-<name>` at host name `<name>`, without credentials; only the collector knows OpenObserve's password.
+
+```yaml
+shared:
+  monitoring:
+    - name: monitoring
+      type: openobserve
+      version: 1
+      configuration:
+        url: https://logs.example.com
+        retention_days: 30
+        root_password: …    # in .compost-server.secrets.yaml
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `1` | Major version |
+| `image` | `openobserve/openobserve:vX.Y.Z` for 1 | Required for other versions |
+| `configuration.url` | – | Public URL of the UI, `https://<domain>` or `http://<domain>[:port]`, no path. compost routes its domain through the ingress. Without it, the UI is not reachable |
+| `configuration.root_email` | `admin@compost.local` | Login of the root user. Can't change after the first deploy |
+| `configuration.root_password` | generated | Secret. 8 or more characters with a lowercase and an uppercase letter, a digit and a special character, as OpenObserve requires. Can't change after the first deploy |
+| `configuration.retention_days` | OpenObserve's (10 years) | Days data is kept |
+| `configuration.forward_port` | `24224` | Port on the server's `127.0.0.1` where Docker delivers the output of linked containers. Each monitoring app needs its own |
+| `configuration.container_metrics` | `true` | CPU, memory, network and disk I/O of every container on the server. The collector reads them from the Docker socket, mounted read-only; that gives the collector control over Docker, like root on the server. `false` leaves the socket out |
+| `configuration.collector_image` | `otel/opentelemetry-collector-contrib:X.Y.Z` | |
+
+What ends up in OpenObserve (organization `default`):
+- **Logs** stream `docker`: the output of linked containers, with `fluent_tag` (`<instance>.<service>`, e.g. `myapp-prod.backend` or `compost-ingress-caddy-main.caddy`), `container_name`, `source` (`stdout`/`stderr`) and the Compose project and service.
+- **Logs** stream `default`, **traces** and **metrics** that apps send with OpenTelemetry (OTLP).
+- **Metrics** scraped from the Prometheus endpoints of links, labeled `compost_app`, `compost_prefix` and `compost_service`, and the `container_*` metrics.
+
+Log in with `root_email` and `root_password`; compost writes both to `connectors/monitoring/<name>/root-connector.yaml` on the server. Apps link to it with [`services.monitoring`](Applications.md#monitoring-links).
+
+The log driver sends asynchronously: linked containers start and run while the collector is down, and `docker logs` keeps working.
+
+## Monitoring shared apps
+
+`monitoring` on a shared app sends its output, and the metrics it serves, to a monitoring app:
+
+```yaml
+shared:
+  ingress:
+    - name: caddy-main
+      type: caddy
+      configuration:
+        access_log: true
+      monitoring: {}
+  database:
+    - name: postgres18
+      type: postgres
+      version: 18
+      monitoring: {metrics: false}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `monitoring.instance` | – | The monitoring app to use, when there are several |
+| `monitoring.logs` | `true` | Collect the output of its containers |
+| `monitoring.metrics` | `true` | Scrape its metrics, if it serves any: Caddy does |
+
+Caddy, Postgres and Keycloak can be monitored. External shared apps and monitoring apps can't. It works in both directions: OpenObserve's domain is served by the Caddy that sends its logs to it. On the first deploy, Caddy starts before OpenObserve, and Docker keeps Caddy's output in a small buffer and sends it once the collector runs.
 
 ## External databases
 

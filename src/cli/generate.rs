@@ -396,6 +396,10 @@ fn app_files(
 #       targets: [{first}]
 #       environment:
 #         DATABASE_URL: db_url
+#   monitoring:
+#     - name: telemetry
+#       optional: true    # skipped when the server runs no monitoring app
+#       targets: [{first}]
 
 # Names that links refer to, mapped to services in {compose_file}.
 "
@@ -589,7 +593,7 @@ mod tests {
         let overlay = write(dir.path(), "secrets.yaml", &uncomment(&secrets));
         let loaded = AppConfig::load(&[compost, overlay], None)
             .unwrap_or_else(|e| panic!("{e:#}\n{}", uncomment(&config)));
-        assert_eq!(loaded.config.links().count(), 2);
+        assert_eq!(loaded.config.links().count(), 3);
     }
 
     #[test]

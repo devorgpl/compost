@@ -198,7 +198,7 @@ pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<
             None => "not running".to_string(),
         };
         out!(
-            "  {:<9} {:<16} {} {version}  {running}",
+            "  {:<10} {:<16} {} {version}  {running}",
             app.kind,
             app.name,
             app.type_name

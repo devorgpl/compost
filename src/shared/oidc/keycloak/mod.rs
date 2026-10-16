@@ -14,7 +14,7 @@ use super::{KIND, OidcType};
 use crate::config::app::AppService;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Generated, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
+    AppCtx, Generated, Monitored, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
     connectors_dir, generate_password, project_name, render_template, shared_dir,
 };
 
@@ -79,6 +79,13 @@ impl OidcType for Keycloak {
 
     fn secret_keys(&self) -> &'static [&'static str] {
         &["admin_password"]
+    }
+
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        Ok(Monitored {
+            services: vec![SERVICE],
+            metrics: Vec::new(),
+        })
     }
 
     fn generate(&self) -> Generated {

@@ -9,8 +9,8 @@ use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Exposed, Generated, ItemWriter, Kind, Rendered, Resolution, ServerCtx,
-    SharedAppConfig, SharedLinks, parse_link,
+    AppCtx, Contribution, Exposed, Generated, ItemWriter, Kind, Monitored, Rendered, Resolution,
+    ServerCtx, SharedAppConfig, SharedLinks, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::{Endpoint, OidcLink, OidcRecord};
@@ -65,6 +65,14 @@ pub trait OidcType: Sync {
         base::exposed_routes(ctx, link, &self.ingress_upstream(ctx.shared))
     }
 
+    /// Services and metrics endpoints, for `monitoring` of the shared app.
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        bail!(
+            "oidc shared apps of type `{}` cannot be monitored",
+            self.type_name()
+        )
+    }
+
     // Type-specific, no default.
 
     /// `<host>:<port>` of the provider on the ingress network.
@@ -117,6 +125,10 @@ impl Kind for OidcKind {
 
     fn secret_keys(&self, config: &SharedAppConfig) -> Result<&'static [&'static str]> {
         Ok(find_type(&config.type_name)?.secret_keys())
+    }
+
+    fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
+        find_type(&config.type_name)?.monitored(config)
     }
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {

@@ -185,6 +185,38 @@ services:
 
 That domain serves only `/realms/<realm>` and `/resources`; the admin console and other realms get a 404 there. The issuer and login pages use `public_url`. Links that share a realm must agree on it.
 
+## Monitoring links
+
+A monitoring link sends the output of services to a [monitoring app](Servers-and-Shared-Apps.md#openobserve-monitoring), has their Prometheus metrics scraped, and passes the collector's address to services that send OpenTelemetry data themselves:
+
+```yaml
+services:
+  monitoring:
+    - name: telemetry
+      optional: true                   # skip (with a notice) when the server runs no monitoring app
+      instance: monitoring             # optional: this shared app, when there are several
+      targets: [web, backend]          # their output is collected; they get the variables
+      logs: true                       # false: only variables and metrics
+      metrics:                         # Prometheus endpoints, on any app service
+        - {target: backend, port: 9100, path: /metrics}   # path "/metrics" by default
+      environment:
+        OTEL_EXPORTER_OTLP_ENDPOINT: otlp_endpoint
+        OTEL_SERVICE_NAME: service_name
+        OTEL_RESOURCE_ATTRIBUTES: resource_attributes
+```
+
+| Link value | Example |
+|---|---|
+| `otlp_endpoint` | `http://monitoring:4318`, OTLP over HTTP |
+| `otlp_grpc_endpoint` | `http://monitoring:4317` |
+| `otlp_protocol` | `http/protobuf` |
+| `service_name` | `backend`: the compose service of each target |
+| `resource_attributes` | `service.namespace=myapp-staging,deployment.environment=staging` |
+
+Services in `targets` and `metrics` join the monitoring network as `<instance>-<service>`. The collector picks up a metrics endpoint once the app runs, without a restart.
+
+compost collects the output with Docker's `fluentd` log driver, set in its override file, so `docker logs` keeps working. A service that sets its own `logging` in the compose file can't be a target with `logs: true`: the deploy fails and says so.
+
 ## Deploying
 
 ```sh
@@ -203,7 +235,7 @@ A deploy:
 
 The result is shown as by `app state`. Running the same deploy again keeps data and passwords and doesn't recreate unchanged containers.
 
-**Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record and routing go, its data stays. Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
+**Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record, routing and scraping go, its data stays (collected logs and metrics stay in the monitoring app). Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
 
 ## Inspecting
 

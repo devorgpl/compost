@@ -14,3 +14,7 @@ shared:
     - name: keycloak
       configuration:
         url: http://auth.localhost:18080
+  monitoring:
+    - name: monitoring
+      configuration:
+        url: http://logs.localhost:18080

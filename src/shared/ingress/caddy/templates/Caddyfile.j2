@@ -7,6 +7,20 @@
 }
 {%- endif %}
 
+# Imported by every site.
+(compost_site) {
+{%- if access_log %}
+	log
+{%- endif %}
+}
+{%- if metrics_port %}
+
+# Metrics for the monitoring app; not published on the host.
+http://:{{ metrics_port }} {
+	metrics
+}
+{%- endif %}
+
 # One file per application instance, written by `compost app deploy`.
 import /etc/caddy/sites/*.caddy
 {%- if custom_sites %}

@@ -53,6 +53,7 @@ infra/
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml
+│   │   ├── compose.override.yaml     from its `monitoring`, if set
 │   │   ├── conf/Caddyfile
 │   │   ├── conf/sites/<instance>-<entry>.caddy
 │   │   ├── conf/custom/<site>.caddy  `sites` of compost-server.yaml
@@ -62,15 +63,24 @@ infra/
 │   │   ├── compose.yaml
 │   │   ├── data/                     PGDATA
 │   │   └── secrets/postgres.env      root password
-│   └── oidc/keycloak/
-│       ├── compose.yaml
-│       ├── compose.override.yaml     networks and database settings from its links
-│       └── secrets/keycloak.env      admin user and password
+│   ├── oidc/keycloak/
+│   │   ├── compose.yaml
+│   │   ├── compose.override.yaml     networks and database settings from its links
+│   │   └── secrets/keycloak.env      admin user and password
+│   └── monitoring/monitoring/
+│       ├── compose.yaml              openobserve and collector
+│       ├── compose.override.yaml     ingress network, if `url` is set
+│       ├── data/                     OpenObserve's data
+│       ├── collector/config.yaml
+│       ├── collector/targets/<instance>-<entry>.yaml   metrics endpoints of a link
+│       └── secrets/                  openobserve.env, collector.env: root email and password
 ├── connectors/                       link records, one per instance and entry
 │   ├── ingress/caddy-main/<instance>-<entry>.yaml
 │   ├── database/postgres18/root-connector.yaml, <instance>-<entry>.yaml
 │   │                                 (for an external database: how to reach it, and root credentials)
-│   └── oidc/keycloak/root-connector.yaml, <instance>-<entry>.yaml
+│   ├── oidc/keycloak/root-connector.yaml, <instance>-<entry>.yaml
+│   └── monitoring/monitoring/root-connector.yaml, <instance>-<entry>.yaml
+│                                     (root-connector.yaml: URL and root login)
 └── apps/<app>/<prefix>/
     ├── sources/                      uploaded files; .compost/ holds the compose_overrides
     ├── compose/compost.override.yaml networks and variables added to your services
@@ -78,7 +88,7 @@ infra/
     └── compost-env.yaml              shared apps this instance uses; links still to remove
 ```
 
-Files with secrets (`secrets/`, connector records of databases and OIDC, `compost.override.yaml`) have mode `0600`, their folders `0700`. Only compost writes `state.yaml`.
+Files with secrets (`secrets/`, connector records of databases and OIDC, `root-connector.yaml` files, `compost.override.yaml`) have mode `0600`, their folders `0700`. Only compost writes `state.yaml`.
 
 ## Docker names
 
@@ -89,7 +99,8 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `compos
 | Ingress network | `compost-ingress` |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
-| A service's name on the ingress network | `<app>-<prefix>-<service>` |
+| Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
+| A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app `compost-<kind>-<name>-<service>` |
 
 So you can use plain Docker commands:
 

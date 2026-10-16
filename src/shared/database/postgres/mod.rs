@@ -10,7 +10,7 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Generated, ItemReader, ItemWriter, Rendered, RenderedFile, Role, ServerCtx,
+    AppCtx, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role, ServerCtx,
     SharedAppConfig, connectors_dir, generate_password, project_name, render_template, shared_dir,
 };
 
@@ -51,6 +51,13 @@ struct ExternalRecord {
 impl DatabaseType for Postgres {
     fn type_name(&self) -> &'static str {
         "postgres"
+    }
+
+    fn monitored(&self, _config: &SharedAppConfig) -> Result<Monitored> {
+        Ok(Monitored {
+            services: vec!["postgres"],
+            metrics: Vec::new(),
+        })
     }
 
     fn generate(&self) -> Generated {

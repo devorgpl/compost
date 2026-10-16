@@ -2,8 +2,8 @@
 
 | Folder | What |
 |---|---|
-| [`server/`](server) | Shared applications: Caddy (ingress), Postgres (database) and Keycloak (OIDC) |
-| [`sampleapp/`](sampleapp) | Web page + Python API + migration, linked to the ingress and the database; [a login](#log-in-with-keycloak) can be added |
+| [`server/`](server) | Shared applications: Caddy (ingress), Postgres (database), Keycloak (OIDC) and OpenObserve (monitoring) |
+| [`sampleapp/`](sampleapp) | Web page + Python API + migration, linked to the ingress, the database and [monitoring](#logs-and-metrics); [a login](#log-in-with-keycloak) can be added |
 
 ```
 sampleapp/
@@ -19,7 +19,7 @@ Files with secrets are committed only as `*.example.yaml`. compost never loads t
 
 ## Try it on this machine
 
-Needs Docker with compose v2. Uses port 18080 and plain HTTP.
+Needs Docker with compose v2. Uses port 18080 and plain HTTP, and port 24224 on `127.0.0.1` for collecting container output.
 
 ```sh
 compost init
@@ -50,7 +50,19 @@ Clean up (with `--purge oidc` too if you [added the login](#log-in-with-keycloak
 compost app remove --app sampleapp --prefix local --purge database --yes
 ```
 
-The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down`, `docker compose -p compost-database-postgres18 down` and `docker compose -p compost-oidc-keycloak down`. Their files are in `~/.compost-server/shared/`.
+The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down`, `docker compose -p compost-database-postgres18 down` and `docker compose -p compost-oidc-keycloak down` and `docker compose -p compost-monitoring-monitoring down`. Their files are in `~/.compost-server/shared/`.
+
+## Logs and metrics
+
+The server samples include OpenObserve (`shared.monitoring`). Caddy, Postgres and Keycloak send their output to it (`monitoring: {}`), and Caddy its access log and metrics. The sample app's `telemetry` link sends the output of `web`, `backend` and `migrate`; it is `optional`, so the app deploys on servers without monitoring too.
+
+Open http://logs.localhost:18080/ and log in with the root email and password compost generated:
+
+```sh
+grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml
+```
+
+Under Logs, pick the stream `docker`, e.g. with the filter `fluent_tag = 'sampleapp-local.backend'`. Under Metrics are Caddy's `caddy_http_*` and the containers' `container_*` metrics. The backend also gets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME`, for an OpenTelemetry SDK it doesn't use.
 
 ## Log in with Keycloak
 
@@ -136,7 +148,7 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
 ## Deploy to a real server
 
 1. On the server: Linux with Docker and compose v2, and a user `compostuser` in the `docker` group who can log in with your SSH key. Connect once with `ssh compostuser@<host>` to accept the host key.
-2. Point your domains (here `staging.example.com`, `www.staging.example.com`, and `auth.example.com` for Keycloak) to the server. In `server/compost-server.yaml`, change `acme_email` and Keycloak's `url`.
+2. Point your domains (here `staging.example.com`, `www.staging.example.com`, `auth.example.com` for Keycloak and `logs.example.com` for OpenObserve) to the server. In `server/compost-server.yaml`, change `acme_email` and the `url` of Keycloak and OpenObserve.
 3. Deploy:
 
    ```sh
@@ -144,7 +156,7 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
    compost connect prod
 
    cd samples/server
-   cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set real passwords (postgres, keycloak admin)
+   cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set real passwords (postgres, keycloak admin, openobserve root)
    compost server deploy --apply          # loads compost-server.yaml + .compost-server.secrets.yaml
 
    cd ../sampleapp
@@ -161,5 +173,6 @@ Caddy then gets certificates from Let's Encrypt for the domains, and https://sta
   - gives `backend` and `migrate` a `DATABASE_URL` and puts them on the database network.
 - **Startup:** runs `migrate` once. Compose starts `backend` only after it finished.
 - **Routing:** `/api/*` goes to the backend and everything else to `web`, both through Caddy.
+- **Monitoring:** sends the output of all three services to OpenObserve and gives them the OpenTelemetry variables.
 - **Login** (when added): creates realm `sampleapp` with a client and the user `alice` in Keycloak before `backend` starts, gives `backend` the `OIDC_*` variables, and routes `login.localhost` to that realm only.
 - **Upload:** sends the project folder without `.git`, the `.compost-*.yaml` files and the patterns in [`sampleapp/.compostignore`](sampleapp/.compostignore).
