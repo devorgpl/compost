@@ -2001,3 +2001,171 @@ app_services:
             "realm `shop` has public_url https://login.example.com in myapp/main (login), here https://other.example.com",
         ));
 }
+
+/// APP_CONFIG with the ingress entry `ui-front` renamed to `web`, and with or
+/// without the database link.
+fn renamed_app(database: bool) -> (String, String) {
+    let mut config = APP_CONFIG.replace("- name: ui-front", "- name: web");
+    let mut overlay = APP_OVERLAY.replace("- name: ui-front", "- name: web");
+    if !database {
+        let start = config.find("  database:").unwrap();
+        let end = config.find("  ingress:").unwrap();
+        config.replace_range(start..end, "");
+        let start = overlay.find("  database:").unwrap();
+        let end = overlay.find("  ingress:").unwrap();
+        overlay.replace_range(start..end, "");
+    }
+    (config, overlay)
+}
+
+#[test]
+fn dropped_links_are_removed_once_the_app_runs() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let files = "app/compost.yaml,app/.compost-staging.yaml";
+    let sites = server
+        .server_home
+        .join("shared/ingress/caddy-main/conf/sites");
+    let db_record = server
+        .server_home
+        .join("connectors/database/postgres16/myapp-staging-system-data.yaml");
+    assert!(sites.join("myapp-staging-ui-front.caddy").exists());
+
+    // The domain moves to the renamed entry; the database link is dropped.
+    let (config, overlay) = renamed_app(false);
+    server.write_work_file("app/compost.yaml", &config);
+    server.write_work_file("app/.compost-staging.yaml", &overlay);
+
+    server
+        .run(&["app", "deploy", "--dry-run", "-f", files, "--purge", "database"], &running)
+        .success()
+        .stdout(contains(
+            "link database system-data (postgres16): no longer configured, would be removed with its data (--purge)",
+        ))
+        .stdout(contains(
+            "link ingress ui-front (caddy-main): no longer configured, would be removed; its data is kept",
+        ));
+
+    // Without --apply nothing is removed, and the links stay pending.
+    server
+        .run(&["app", "deploy", "--no-apply", "-f", files], &running)
+        .success()
+        .stdout(contains(
+            "link ingress ui-front (caddy-main) is no longer configured; the next deploy with --apply removes it",
+        ));
+    assert!(sites.join("myapp-staging-ui-front.caddy").exists());
+    server
+        .run(&["app", "state", "myapp-staging"], &running)
+        .stdout(contains(
+            "no longer configured (removed by the next deploy with --apply):",
+        ))
+        .stdout(contains("database  system-data      postgres16"));
+    server.take_docker_log();
+
+    // With --apply: the old site goes before the new one is validated (same
+    // domain), and the database keeps its data.
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success()
+        .stdout(contains("removing link ingress ui-front (caddy-main)\n"))
+        .stdout(contains(
+            "removing link database system-data (postgres16)\n",
+        ))
+        .stdout(contains(
+            "ingress   web              caddy-main: staging.example.com",
+        ))
+        .stdout(contains("no longer configured").not());
+    let log = server.take_docker_log();
+    let reload = log.find("caddy reload").unwrap();
+    let validate = log.find("caddy validate").unwrap();
+    assert!(reload < validate, "{log}");
+    assert!(!log.contains("DROP DATABASE"), "{log}");
+    assert!(!sites.join("myapp-staging-ui-front.caddy").exists());
+    assert!(sites.join("myapp-staging-web.caddy").exists());
+    assert!(!db_record.exists());
+    let pinned = server.read_server_file("apps/myapp/staging/compost-env.yaml");
+    assert!(!pinned.contains("removing"), "{pinned}");
+
+    // Back again, then dropped with --purge: the data goes too.
+    let (config, overlay) = renamed_app(true);
+    server.write_work_file("app/compost.yaml", &config);
+    server.write_work_file("app/.compost-staging.yaml", &overlay);
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success();
+    let (config, overlay) = renamed_app(false);
+    server.write_work_file("app/compost.yaml", &config);
+    server.write_work_file("app/.compost-staging.yaml", &overlay);
+    server.take_docker_log();
+    server
+        .run(
+            &[
+                "app", "deploy", "--apply", "-f", files, "--purge", "database",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "removing link database system-data (postgres16), and its data",
+        ));
+    assert!(
+        server
+            .take_docker_log()
+            .contains("DROP DATABASE IF EXISTS \"myapp_staging_system_data\" WITH (FORCE);")
+    );
+
+    server
+        .run(
+            &["app", "deploy", "-f", files, "--purge", "ingress"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("ingress links have no data to purge"));
+}
+
+#[test]
+fn stored_secrets_keep_links_when_deploying_compost_yaml_only() {
+    let server = server_with_shared_apps();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    // Domains and database credentials only in the stored overlay.
+    server.write_work_file(
+        "app/.compost.secrets.yaml",
+        &format!("name: myapp\n{APP_OVERLAY}"),
+    );
+    server
+        .run(&["secret", "deploy", "app/.compost.secrets.yaml"], &[])
+        .success();
+    let deploy = || {
+        server.run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &running,
+        )
+    };
+    deploy().success();
+    deploy()
+        .success()
+        .stdout(contains("removing").not())
+        .stdout(contains(
+            "ingress   ui-front         caddy-main: staging.example.com",
+        ))
+        .stdout(contains("database  system-data      postgres16"));
+    assert!(
+        server
+            .server_home
+            .join("shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy")
+            .exists()
+    );
+}

@@ -66,6 +66,9 @@ pub struct AppDeployArgs {
     /// Instance prefix (overrides the one from the config files)
     #[arg(long)]
     pub prefix: Option<String>,
+    /// Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
+    #[arg(long, value_delimiter = ',')]
+    pub purge: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -309,6 +312,7 @@ fn deploy(
     let AppDeployArgs {
         deploy: args,
         prefix,
+        purge,
     } = args;
     let files = config_files(&args.files)?;
     let (name, instance_prefix) = instance_id(&files, prefix.as_deref())?;
@@ -336,6 +340,7 @@ fn deploy(
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
         restore: None,
+        purge,
     };
     deploy::deploy(
         connector.as_ref(),

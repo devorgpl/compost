@@ -9,7 +9,7 @@ use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
 use super::restore::RestorePlan;
 use super::sources;
-use crate::config::app::{LoadedApp, env_value, link_name};
+use crate::config::app::{AppConfig, LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
 use crate::error::CompostError;
@@ -26,6 +26,8 @@ pub struct Options<'a> {
     pub force_unlock: bool,
     /// Load data from a backup before the services start (`app restore`).
     pub restore: Option<&'a RestorePlan<'a, 'a>>,
+    /// Kinds whose data is deleted with links dropped from the config.
+    pub purge: Vec<String>,
 }
 
 /// A link of the app, resolved to a shared app on the server.
@@ -37,6 +39,16 @@ struct Link<'a> {
 }
 
 impl Link<'_> {
+    fn pinned(&self) -> PinnedLink {
+        PinnedLink {
+            kind: self.kind.name().to_string(),
+            entry: self.name.to_string(),
+            instance: self.shared.name.clone(),
+            type_name: self.shared.type_name.clone(),
+            version: self.shared.version,
+        }
+    }
+
     fn peer(&self) -> Peer<'_> {
         Peer {
             kind: self.kind,
@@ -61,6 +73,7 @@ pub fn deploy(
     options: &Options,
 ) -> Result<()> {
     let app = &loaded.config;
+    super::remove::check_purge(&options.purge)?;
 
     // 1. Preflight: the server must already run shared apps.
     let report = state::check(connector, server_home, manager_key)?;
@@ -85,6 +98,8 @@ pub fn deploy(
     };
     let mut state_file = StateFile::load(&ctx)?;
     let links = resolve_links(&ctx, loaded, &report, &state_file)?;
+    let pinned_links: Vec<PinnedLink> = links.iter().map(Link::pinned).collect();
+    let dropped = dropped_links(&ctx, app, &pinned_links)?;
     let files = sources::collect(&loaded.base_dir, &app.deployment, config_files)?;
 
     let project = app.instance();
@@ -97,6 +112,15 @@ pub fn deploy(
                 link.path(),
                 link.shared.type_name,
                 link.shared.name
+            );
+        }
+        for link in &dropped {
+            out!(
+                "  link {} {} ({}): no longer configured, {}",
+                link.kind,
+                link.entry,
+                link.instance,
+                removal(link, &options.purge)
             );
         }
         return Ok(());
@@ -140,34 +164,45 @@ pub fn deploy(
         &serde_yaml_ng::to_string(&stored_config)?,
         0o644,
     )?;
-    let pinned = PinnedLinks {
-        links: links
-            .iter()
-            .map(|link| PinnedLink {
-                kind: link.kind.name().to_string(),
-                entry: link.name.to_string(),
-                instance: link.shared.name.clone(),
-                type_name: link.shared.type_name.clone(),
-                version: link.shared.version,
-            })
-            .collect(),
+    // Dropped links stay listed until a deploy with --apply removes them.
+    let write_pinned = |removing: &[PinnedLink]| {
+        let pinned = PinnedLinks {
+            links: pinned_links.clone(),
+            removing: removing.to_vec(),
+        };
+        write(
+            instance::LINKS_FILE,
+            &serde_yaml_ng::to_string(&pinned)?,
+            0o644,
+        )
     };
-    write(
-        instance::LINKS_FILE,
-        &serde_yaml_ng::to_string(&pinned)?,
-        0o644,
-    )?;
+    write_pinned(&dropped)?;
 
     state_file.set_app(&app.name, &app.prefix, DeployStatus::Candidate);
     state_file.save(&ctx)?;
     if !options.apply {
+        for link in &dropped {
+            out!(
+                "  link {} {} ({}) is no longer configured; the next deploy with --apply removes it",
+                link.kind,
+                link.entry,
+                link.instance
+            );
+        }
         out!("Files are on the server. Run again with --apply to start {project}.");
         return Ok(());
     }
 
     // 3. Apply. On failure the instance is marked `failed`.
-    match apply(&ctx, loaded, &links, options.restore) {
-        Ok(()) => {
+    let dropped = Dropped {
+        links: &dropped,
+        purge: &options.purge,
+    };
+    match apply(&ctx, loaded, &links, &dropped, options.restore) {
+        Ok(kept) => {
+            if kept.len() != dropped.links.len() {
+                write_pinned(&kept)?;
+            }
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
             out!();
@@ -175,7 +210,8 @@ pub fn deploy(
                 &ctx,
                 &Instance {
                     app: stored_config,
-                    links: pinned.links,
+                    links: pinned_links,
+                    removing: kept,
                 },
             )?;
             Ok(())
@@ -186,6 +222,41 @@ pub fn deploy(
             Err(not_ready(&format!("{project} failed: {err:#}")))
         }
     }
+}
+
+/// Links of the last deploy (or still waiting for removal) that the config
+/// no longer has, or that now use another shared app.
+fn dropped_links(
+    ctx: &ServerCtx,
+    app: &AppConfig,
+    current: &[PinnedLink],
+) -> Result<Vec<PinnedLink>> {
+    let Some(previous) = instance::load(ctx, &app.name, &app.prefix)? else {
+        return Ok(Vec::new());
+    };
+    let mut dropped: Vec<PinnedLink> = Vec::new();
+    for link in previous.links.into_iter().chain(previous.removing) {
+        let gone = !current.iter().any(|c| c.same(&link));
+        if gone && !dropped.iter().any(|d| d.same(&link)) {
+            dropped.push(link);
+        }
+    }
+    Ok(dropped)
+}
+
+/// What happens to a dropped link, for messages.
+fn removal(link: &PinnedLink, purge: &[String]) -> &'static str {
+    if purge.contains(&link.kind) {
+        "would be removed with its data (--purge)"
+    } else {
+        "would be removed; its data is kept"
+    }
+}
+
+/// Links to remove during apply.
+struct Dropped<'a> {
+    links: &'a [PinnedLink],
+    purge: &'a [String],
 }
 
 /// Pick a shared app for every link; links skipped by their kind are left out.
@@ -243,12 +314,16 @@ fn resolve_links<'a>(
 
 /// Run hooks and docker compose. A restore loads its data after the links
 /// are ready and before the services start.
+/// Dropped links are removed once the app runs, before the other links'
+/// `after_apply_application`: an ingress route moved to another entry must
+/// leave its old site first. Returns the dropped links that stay.
 fn apply(
     ctx: &ServerCtx,
     loaded: &LoadedApp,
     links: &[Link],
+    dropped: &Dropped,
     restore: Option<&RestorePlan>,
-) -> Result<()> {
+) -> Result<Vec<PinnedLink>> {
     let app = &loaded.config;
     let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
     for link in links {
@@ -291,6 +366,7 @@ fn apply(
         .exec(&format!("{compose} up -d --remove-orphans"))?;
     wait_until_ready(ctx.connector, &project)?;
 
+    let kept = super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true)?;
     for link in links {
         let link_ctx = AppCtx {
             server: ctx,
@@ -302,7 +378,7 @@ fn apply(
             .after_apply_application(&link_ctx, link.entry)
             .with_context(|| link.path())?;
     }
-    Ok(())
+    Ok(kept)
 }
 
 fn not_ready(message: &str) -> anyhow::Error {

@@ -351,6 +351,9 @@ fn check_domain_conflicts(ctx: &AppCtx, link: &IngressLink) -> Result<()> {
         };
         let other: IngressRecord =
             serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?;
+        if ctx.is_dropped(KIND, &other.app, &other.prefix, &other.entry) {
+            continue;
+        }
         if let Some(domain) = link.domains.iter().find(|d| other.domains.contains(d)) {
             bail!(
                 "domain `{domain}` is already used by {}/{} ({})",

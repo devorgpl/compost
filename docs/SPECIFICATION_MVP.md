@@ -376,7 +376,7 @@ $COMPOST_SERVER_HOME/
     ├── compose/
     │   └── compost.override.yaml       # generated compose override, includes variables (0600)
     ├── compost.yaml                    # effective app config, secrets removed
-    └── compost-env.yaml                # pinned shared apps used by this instance
+    └── compost-env.yaml                # pinned shared apps used by this instance; `removing:` dropped links not removed yet
 ```
 
 ### 8.1 Docker naming
@@ -713,7 +713,7 @@ Without `--apply` or `--no-apply`, `deploy.apply` from `servers.yaml` or `config
 
 Shared apps missing from the new config are reported as `orphaned` and left running. Removing them comes in a later release.
 
-### 10.8 `compost app deploy [--apply | --no-apply] [-f …] [--prefix <prefix>] [--dry-run]`
+### 10.8 `compost app deploy [--apply | --no-apply] [-f …] [--prefix <prefix>] [--purge <kind>]… [--dry-run]`
 1. Load, merge and validate the app config (§6, §7), including the instance's overlay stored on the server (§10.21). `--prefix` replaces the `prefix` from the files and selects the stored overlay. Parse the compose file to check service names.
 2. Preflight and lock. The server MUST be `OK` or `DEGRADED`, and every shared app this instance needs MUST be `deployed` and running.
 3. Pick the shared apps for each link (§6.3). Write the pinned names and versions to `compost-env.yaml`.
@@ -727,8 +727,16 @@ Shared apps missing from the new config are reported as `orphaned` and left runn
       - `C build` if `build: true`, otherwise `C pull`
       - `C up -d --remove-orphans`
    3. Wait up to 60 s until every container is running (healthy, if it has a healthcheck) or has exited with code 0. An exit with another code fails at once.
-   4. `after_apply_application` for each link.
-   5. Mark `deployed`, or `failed` and exit 3.
+   4. Remove the dropped links (below), in reverse `apply_order`.
+   5. `after_apply_application` for each link.
+   6. Mark `deployed`, or `failed` and exit 3.
+
+**Dropped links.** A link of the last deploy is dropped when the effective config no longer has it: its entry was removed or renamed, an optional ingress entry has no domains any more, or it now resolves to another shared app (it is then removed from the old one and created on the new one). The effective config includes the stored overlay (§10.21), so links whose values live there are kept by a deploy of `compost.yaml` alone.
+- Render phase: nothing is removed. Dropped links are written to `compost-env.yaml` under `removing:`, so a deploy without `--apply` keeps track of them; `app state` lists them. `--dry-run` shows them.
+- Apply phase: they are removed after the containers run and before `after_apply_application`, so an ingress domain can move to another entry in one deploy (the old site goes before the new one is validated). If the app does not start, nothing is removed.
+- Removal is `remove_application`, as in `app remove`: the link record and what serves it (e.g. the Caddy site). Data stays: a dropped database link keeps its database. `--purge <kind>` (rules as in §10.10) also deletes the data of the dropped links of that kind. Default database names come from the entry name, so a renamed database entry gets a new, empty database unless `db_name`/`db_user` are pinned.
+- A dropped link whose shared app is no longer configured stays under `removing:`, with a warning.
+- Conflict checks (domains, a realm's `public_url`) skip records of the instance's dropped links.
 7. Print the same view as `app state`.
 
 Generated `compost.override.yaml` for the API example (§12.4):
@@ -778,7 +786,7 @@ Exit 0 if all services are healthy, 4 otherwise. A service is healthy when it ru
 The instance is selected as in `app state`. `--purge <kind>` is generic: it can be repeated or comma-separated (`--purge database,s3` in later releases) and names a kind from the registry. Each named kind's `remove_application` gets `purge = true` and deletes the instance's data held by that shared app. Naming a kind whose `supports_purge()` is false (ingress in 0.1), or an unknown kind, is a usage error (exit 2) before anything runs.
 
 1. Validate the `--purge` values. Preflight and lock. Ask for confirmation unless `--yes`. The prompt lists what will be purged.
-2. `remove_application` for each link, in reverse `apply_order` (ingress first, so traffic stops before containers go). The hook gets the link's name, not its config: with `--app`/`--prefix` no config files are given, so kinds work from their link records. A link whose shared app is no longer configured is left as it is, with a warning. Postgres purges with `DROP DATABASE … WITH (FORCE)` because the app is still connected at this point (requires postgres 13+).
+2. `remove_application` for each link, including dropped links not removed yet (§10.8), in reverse `apply_order` (ingress first, so traffic stops before containers go). The hook gets the link's name, not its config: with `--app`/`--prefix` no config files are given, so kinds work from their link records. A link whose shared app is no longer configured is left as it is, with a warning. Postgres purges with `DROP DATABASE … WITH (FORCE)` because the app is still connected at this point (requires postgres 13+).
 3. `C down --remove-orphans` (plus `-v` with `--volumes`).
 4. Delete `apps/<app>/<prefix>/` and the `state.yaml` entry.
 
@@ -891,7 +899,7 @@ Compose services whose names are not valid names (§3.1) are listed in a comment
 ### 10.21 `compost secret deploy <file> [--prefix <prefix>]` / `secret list` / `secret remove --app <name> [--prefix <prefix>]`
 `deploy` stores a deployment overlay (§6.2) that names its app (`name:`) at `secrets/apps/<app>/<prefix>.yaml` on the server, mode 0600. The prefix is `--prefix`, else the file's `prefix`, else `main`. The stored copy always has the `prefix`. The server must be initialized. Takes the lock.
 
-`app deploy` then needs only `compost.yaml` (§7). `app backup` saves the overlay and `app restore` puts it back (§10.14, §10.15). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
+`app deploy` then needs only `compost.yaml` (§7). `secret deploy` replaces the stored overlay as a whole: a link that only the overlay defined is dropped by the next `app deploy` when the new overlay leaves it out (§10.8), while a link of `compost.yaml` that needs the missing values fails validation and nothing changes. `--dry-run` shows the effect first. `app backup` saves the overlay and `app restore` puts it back (§10.14, §10.15). `app remove` keeps the stored overlay, so a later deploy of the same instance uses it again. `secret remove` deletes it (default prefix `main`), and `secret list` shows the stored ones.
 
 ### 10.22 `compost config set <key> <value> [--for-server <name>]` / `config unset <key> [--for-server <name>]` / `config show`
 Edits `config.yaml` (§4.3), or with `--for-server` the server's entry in `servers.yaml`. The only key is `deploy.apply` (`true`/`false`). `server define --force` keeps a server's settings.

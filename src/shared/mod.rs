@@ -105,6 +105,19 @@ pub struct ExposedRoute {
 }
 
 impl<'a> AppCtx<'a> {
+    /// A link record of this instance for an entry it no longer deploys: the
+    /// deploy removes it, so conflict checks skip it. Only known during a
+    /// deploy, when `peers` are set.
+    pub fn is_dropped(&self, kind: &str, app: &str, prefix: &str, entry: &str) -> bool {
+        !self.peers.is_empty()
+            && app == self.app.name
+            && prefix == self.app.prefix
+            && !self
+                .peers
+                .iter()
+                .any(|peer| peer.kind.name() == kind && peer.name == entry)
+    }
+
     /// The context of another link of the app (`kind/entry`), if it is deployed with it.
     pub fn peer(&self, kind: &str, entry: &str) -> Option<(&'a Peer<'a>, AppCtx<'a>)> {
         let peer = self

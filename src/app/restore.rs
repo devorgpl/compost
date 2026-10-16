@@ -247,6 +247,7 @@ fn restore_deployment(
         dry_run: false,
         force_unlock: options.force_unlock,
         restore: Some(plan),
+        purge: Vec::new(),
     };
     deploy::deploy(
         ctx.connector,

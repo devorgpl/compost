@@ -98,6 +98,12 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
             );
         }
     }
+    if !instance.removing.is_empty() {
+        out!("  no longer configured (removed by the next deploy with --apply):");
+        for link in &instance.removing {
+            out!("    {:<9} {:<16} {}", link.kind, link.entry, link.instance);
+        }
+    }
     Ok(healthy)
 }
 

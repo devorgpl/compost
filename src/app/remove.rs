@@ -2,8 +2,9 @@
 
 use anyhow::{Context, Result};
 
-use super::instance::{self, Instance, Selector};
+use super::instance::{self, PinnedLink, Selector};
 use super::state::{initialized_server, not_deployed};
+use crate::config::app::AppConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::server::lock::Lock;
@@ -44,7 +45,7 @@ pub fn remove(
     if options.volumes {
         out!("  volumes of the compose project");
     }
-    for link in &instance.links {
+    for link in instance.links.iter().chain(&instance.removing) {
         let purged = if options.purge.contains(&link.kind) {
             ", and delete its data"
         } else {
@@ -63,7 +64,13 @@ pub fn remove(
     }
 
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
-    remove_links(&ctx, &instance, &options.purge)?;
+    let links: Vec<PinnedLink> = instance
+        .links
+        .iter()
+        .chain(&instance.removing)
+        .cloned()
+        .collect();
+    remove_links(&ctx, &instance.app, &links, &options.purge, false)?;
 
     let volumes = if options.volumes { " -v" } else { "" };
     connector
@@ -90,7 +97,7 @@ pub fn remove(
 }
 
 /// `--purge` values must be kinds that support it (spec §10.10).
-fn check_purge(kinds: &[String]) -> Result<()> {
+pub fn check_purge(kinds: &[String]) -> Result<()> {
     for name in kinds {
         match shared::find_kind(name) {
             Some(kind) if kind.supports_purge() => {}
@@ -111,32 +118,50 @@ fn check_purge(kinds: &[String]) -> Result<()> {
 }
 
 /// Undo links in reverse deploy order: ingress first, so traffic stops before
-/// anything else goes away.
-fn remove_links(ctx: &ServerCtx, instance: &Instance, purge: &[String]) -> Result<()> {
+/// anything else goes away. Returns the links that could not be removed
+/// because their shared app is no longer configured.
+pub fn remove_links(
+    ctx: &ServerCtx,
+    app: &AppConfig,
+    links: &[PinnedLink],
+    purge: &[String],
+    report: bool,
+) -> Result<Vec<PinnedLink>> {
     let server_config = instance::server_config(ctx)?;
-    let mut links: Vec<_> = instance
-        .links
+    let mut sorted: Vec<_> = links
         .iter()
         .filter_map(|link| Some((shared::find_kind(&link.kind)?, link)))
         .collect();
-    links.sort_by_key(|(kind, _)| std::cmp::Reverse(kind.apply_order()));
+    sorted.sort_by_key(|(kind, _)| std::cmp::Reverse(kind.apply_order()));
 
-    for (kind, link) in links {
+    let mut kept = Vec::new();
+    for (kind, link) in sorted {
         let Some(shared) = link.shared_app(&server_config) else {
             eprintln!(
                 "warning: {} {} is no longer configured; link {} left as it is",
                 link.kind, link.instance, link.entry
             );
+            kept.push(link.clone());
             continue;
         };
+        let purge = purge.contains(&link.kind);
+        if report {
+            let data = if purge { ", and its data" } else { "" };
+            out!(
+                "  removing link {} {} ({}){data}",
+                link.kind,
+                link.entry,
+                link.instance
+            );
+        }
         let link_ctx = AppCtx {
             server: ctx,
-            app: &instance.app,
+            app,
             shared: &shared,
             peers: &[],
         };
-        kind.remove_application(&link_ctx, &link.entry, purge.contains(&link.kind))
+        kind.remove_application(&link_ctx, &link.entry, purge)
             .with_context(|| format!("removing link {} {}", link.kind, link.entry))?;
     }
-    Ok(())
+    Ok(kept)
 }

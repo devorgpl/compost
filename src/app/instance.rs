@@ -25,6 +25,9 @@ pub fn dir(name: &str, prefix: &str) -> String {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PinnedLinks {
     pub links: Vec<PinnedLink>,
+    /// Links dropped from the config, removed by the next deploy with `--apply`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removing: Vec<PinnedLink>,
 }
 
 /// One link and the shared app it was resolved to.
@@ -40,6 +43,11 @@ pub struct PinnedLink {
 }
 
 impl PinnedLink {
+    /// The same link of the same shared app.
+    pub fn same(&self, other: &PinnedLink) -> bool {
+        self.kind == other.kind && self.entry == other.entry && self.instance == other.instance
+    }
+
     /// The shared app from the server config, if it is still configured.
     pub fn shared_app(&self, server_config: &ServerConfig) -> Option<SharedAppConfig> {
         server_config
@@ -93,6 +101,8 @@ pub fn resolve(ctx: &ServerCtx, selector: &Selector) -> Result<(String, String)>
 pub struct Instance {
     pub app: AppConfig,
     pub links: Vec<PinnedLink>,
+    /// Dropped links not removed yet.
+    pub removing: Vec<PinnedLink>,
 }
 
 /// The stored instance, or `None` if it was never deployed (or is removed).
@@ -104,11 +114,18 @@ pub fn load(ctx: &ServerCtx, name: &str, prefix: &str) -> Result<Option<Instance
     };
     let app: AppConfig = serde_yaml_ng::from_str(&text)
         .with_context(|| format!("invalid {} on the server", ctx.path(&config_path)))?;
-    let links = match ctx.read(&format!("{dir}/{LINKS_FILE}"))? {
-        Some(text) => serde_yaml_ng::from_str::<PinnedLinks>(&text)?.links,
-        None => Vec::new(),
+    let pinned = match ctx.read(&format!("{dir}/{LINKS_FILE}"))? {
+        Some(text) => serde_yaml_ng::from_str::<PinnedLinks>(&text)?,
+        None => PinnedLinks {
+            links: Vec::new(),
+            removing: Vec::new(),
+        },
     };
-    Ok(Some(Instance { app, links }))
+    Ok(Some(Instance {
+        app,
+        links: pinned.links,
+        removing: pinned.removing,
+    }))
 }
 
 /// The server's config of shared apps, or an empty one.

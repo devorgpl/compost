@@ -352,6 +352,9 @@ pub fn realm_used_elsewhere(ctx: &AppCtx, entry: &str, realm: &str) -> Result<bo
 /// A realm has one public URL: links sharing a realm must agree on it.
 fn check_public_url(ctx: &AppCtx, record: &OidcRecord) -> Result<()> {
     for other in other_records(ctx, &record.entry)? {
+        if ctx.is_dropped(KIND, &other.app, &other.prefix, &other.entry) {
+            continue;
+        }
         if other.realm == record.realm && other.public_url != record.public_url {
             let show = |url: &Option<String>| url.clone().unwrap_or_else(|| "none".to_string());
             bail!(
