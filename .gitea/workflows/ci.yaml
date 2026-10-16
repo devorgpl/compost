@@ -23,6 +23,8 @@ jobs:
             ~/.cargo/git
             target
           key: ci-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          # Every version bump changes Cargo.lock: start from the latest cache.
+          restore-keys: ci-${{ runner.os }}-
 
       - name: Formatting, clippy and tests
         run: just ci

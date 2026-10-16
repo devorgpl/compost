@@ -24,11 +24,15 @@ fi
 
 rm -rf dist
 mkdir -p dist
+# One cargo run for all targets, so they build in parallel.
+set --
 for target in $targets; do
-    echo "== $target"
     rustup target add "$target" >/dev/null
-    cargo zigbuild --release --locked --target "$target"
+    set -- "$@" --target "$target"
+done
+cargo zigbuild --release --locked "$@"
 
+for target in $targets; do
     name="compost-$tag-$target"
     mkdir "dist/$name"
     cp "target/$target/release/compost" README.md "dist/$name/"

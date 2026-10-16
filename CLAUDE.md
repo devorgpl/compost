@@ -21,7 +21,7 @@ When a change is visible to users (a command, option, config key, default, outpu
   | Files in `~/.compost`, the app repo or `~/.compost-server`, Docker names | `Files-and-Folders.md` |
   | `config`, env vars, merge rules | `Configuration.md` |
   | Install, release artifacts | `Installation.md` |
-| `agent *`, `docs/agents` | `AI-Agents.md` |
+  | `agent *`, `docs/agents` | `AI-Agents.md` |
   | A new feature worth a walkthrough | `Examples.md`, and `Home.md` if it changes what compost is |
 
 - `docs/agents` is the same documentation for AI agents, built into the binary (`compost agent`) and attached to releases. `just docs` generates `llms.txt`, `llms-full.txt` and the skill's `references/` from `docs/wiki`; never edit them by hand. Two files are written by hand:

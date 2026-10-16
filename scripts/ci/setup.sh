@@ -35,7 +35,7 @@ if ! command -v rustup >/dev/null; then
 fi
 export PATH="$HOME/.cargo/bin:$PATH"
 rustup toolchain install
-# Later workflow steps find cargo, just and zig here.
+# Later workflow steps find cargo, just, zig and cargo-zigbuild here.
 if [ -n "${GITHUB_PATH:-}" ]; then
     echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
 fi
@@ -44,8 +44,10 @@ if ! command -v just >/dev/null; then
     curl -sSf https://just.systems/install.sh | bash -s -- --tag "$JUST_VERSION" --to "$HOME/.cargo/bin"
 fi
 
+# zig and cargo-zigbuild live in ~/.local/zig and ~/.local/zigbuild, which the
+# release workflow caches.
 if [ "${1:-}" = release ]; then
-    if ! command -v zig >/dev/null; then
+    if [ ! -x "$HOME/.local/zig/zig" ]; then
         arch="$(uname -m)"
         index="$(curl -sSf https://ziglang.org/download/index.json)"
         url="$(printf '%s\n' "$index" | jq -r --arg v "$ZIG_VERSION" --arg a "$arch-linux" '.[$v][$a].tarball')"
@@ -54,11 +56,13 @@ if [ "${1:-}" = release ]; then
         echo "$sum  /tmp/zig.tar.xz" | sha256sum -c -
         mkdir -p "$HOME/.local/zig"
         tar -xJf /tmp/zig.tar.xz -C "$HOME/.local/zig" --strip-components=1
-        ln -sf "$HOME/.local/zig/zig" "$HOME/.cargo/bin/zig"
         rm /tmp/zig.tar.xz
     fi
-    command -v cargo-zigbuild >/dev/null ||
-        cargo install --locked "cargo-zigbuild@$ZIGBUILD_VERSION"
+    ln -sf "$HOME/.local/zig/zig" "$HOME/.cargo/bin/zig"
+    if [ ! -x "$HOME/.local/zigbuild/bin/cargo-zigbuild" ]; then
+        cargo install --locked --root "$HOME/.local/zigbuild" "cargo-zigbuild@$ZIGBUILD_VERSION"
+    fi
+    ln -sf "$HOME/.local/zigbuild/bin/cargo-zigbuild" "$HOME/.cargo/bin/cargo-zigbuild"
 fi
 
 rustc --version
