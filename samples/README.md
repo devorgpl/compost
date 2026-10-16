@@ -3,7 +3,7 @@
 | Folder | What |
 |---|---|
 | [`server/`](server) | Shared applications: Caddy (ingress), Postgres (database) and Keycloak (OIDC) |
-| [`sampleapp/`](sampleapp) | Web page + Python API + migration, linked to both |
+| [`sampleapp/`](sampleapp) | Web page + Python API + migration, linked to the ingress and the database; [a login](#log-in-with-keycloak) can be added |
 
 ```
 sampleapp/
@@ -35,8 +35,6 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml
 
 curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits   # {"hits": 1, "mode": "local"}
 # Browsers resolve *.localhost to this machine: open http://sampleapp.localhost:18080/
-# Keycloak: http://auth.localhost:18080/, user `admin`, password in
-# ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
 ```
 
 Look around:
@@ -46,7 +44,7 @@ compost app state -f compost.yaml,.compost-local.yaml
 compost connector list
 ```
 
-Clean up:
+Clean up (with `--purge oidc` too if you [added the login](#log-in-with-keycloak)):
 
 ```sh
 compost app remove --app sampleapp --prefix local --purge database --yes
@@ -54,10 +52,91 @@ compost app remove --app sampleapp --prefix local --purge database --yes
 
 The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down`, `docker compose -p compost-database-postgres18 down` and `docker compose -p compost-oidc-keycloak down`. Their files are in `~/.compost-server/shared/`.
 
+## Log in with Keycloak
+
+The server samples include Keycloak, an OpenID Connect provider (`shared.oidc` in [`server/compost-server.yaml`](server/compost-server.yaml)). The deploy above started it:
+- its data is in its own database `compost_oidc_keycloak_db` in `postgres18` (Keycloak needs postgres 18 or newer);
+- Caddy serves it on the domain of its `url`, here http://auth.localhost:18080/;
+- the first start takes a minute or two while Keycloak creates its tables.
+
+Open the admin console at http://auth.localhost:18080/admin/ and log in as `admin`. compost generated the password on the first deploy:
+
+```sh
+grep PASSWORD ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
+```
+
+### Give the sample app a login
+
+An `oidc` link creates a realm, a client and test users, and passes the client's settings to app services. Add it to `sampleapp/compost.yaml`, next to `database` and `ingress`:
+
+```yaml
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      targets: [backend]
+      environment:
+        OIDC_ISSUER: oidc_issuer
+        OIDC_INTERNAL_URL: oidc_internal_url    # for server-to-server calls, on Keycloak's network
+        OIDC_CLIENT_ID: oidc_client_id
+        OIDC_CLIENT_SECRET: oidc_client_secret  # generated on the first deploy, then kept
+```
+
+The values that differ per instance go in `.compost-local.yaml`. Here the realm also gets its own domain, `login.localhost`: an ingress route with `link: oidc/login` serves only that realm there. The admin console, the `master` realm and other realms are not reachable on it.
+
+```yaml
+services:
+  oidc:
+    - name: login
+      realm: sampleapp                          # default: sampleapp-local
+      public_url: http://login.localhost:18080  # issuer and login pages use this domain
+      redirect_uris: ["http://sampleapp.localhost:18080/*"]
+      users:
+        - {username: alice, email: alice@example.com, first_name: Alice, last_name: Doe, password: alice-password}
+  ingress:
+    - name: login
+      domains: ["login.localhost"]
+      routes:
+        - {name: realm, link: oidc/login}
+```
+
+Deploy and check:
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml
+
+curl -H 'Host: login.localhost' http://localhost:18080/realms/sampleapp/.well-known/openid-configuration
+# {"issuer":"http://login.localhost:18080/realms/sampleapp", ...}
+curl -o /dev/null -w '%{http_code}\n' -H 'Host: login.localhost' http://localhost:18080/admin/   # 404
+docker exec sampleapp-local-backend-1 env | grep OIDC_
+```
+
+Log in as `alice` on the realm's account page: http://login.localhost:18080/realms/sampleapp/account/. The sample backend does not use the variables itself; an app would hand them to its OIDC library.
+
+### Keep the values on the server
+
+The overlay can also be stored on the server. Later deploys then need only `compost.yaml`, and the stored values are merged in every time, so the links stay as they are:
+
+```sh
+printf 'name: sampleapp\n' | cat - .compost-local.yaml > .compost-local.secrets.yaml   # stored overlays name their app
+compost secret deploy .compost-local.secrets.yaml      # stored for sampleapp-local
+compost app deploy --apply --prefix local              # compost.yaml from this folder + the stored values
+```
+
+`secret deploy` replaces the stored overlay as a whole. When a new one leaves out a link (say the `login` ingress entry), the next `app deploy` removes it. Run `app deploy --dry-run` first to see what would change.
+
+### Remove the login
+
+Delete the `oidc` entry and the `login` ingress entry, then deploy again. If you stored the overlay, store the edited one again with `secret deploy`, or delete it with `compost secret remove --app sampleapp --prefix local`: the stored values would otherwise bring the login back. compost removes the route and the link record. The realm, client and users stay in Keycloak, unless you add `--purge oidc`:
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
+```
+
 ## Deploy to a real server
 
 1. On the server: Linux with Docker and compose v2, and a user `compostuser` in the `docker` group who can log in with your SSH key. Connect once with `ssh compostuser@<host>` to accept the host key.
-2. Point your domains (here `staging.example.com`, `www.staging.example.com`) to the server, and change `acme_email` in `server/compost-server.yaml`.
+2. Point your domains (here `staging.example.com`, `www.staging.example.com`, and `auth.example.com` for Keycloak) to the server. In `server/compost-server.yaml`, change `acme_email` and Keycloak's `url`.
 3. Deploy:
 
    ```sh
@@ -65,7 +144,7 @@ The shared apps keep running. Stop them with `docker compose -p compost-ingress-
    compost connect prod
 
    cd samples/server
-   cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set a real password
+   cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set real passwords (postgres, keycloak admin)
    compost server deploy --apply          # loads compost-server.yaml + .compost-server.secrets.yaml
 
    cd ../sampleapp
@@ -82,4 +161,5 @@ Caddy then gets certificates from Let's Encrypt for the domains, and https://sta
   - gives `backend` and `migrate` a `DATABASE_URL` and puts them on the database network.
 - **Startup:** runs `migrate` once. Compose starts `backend` only after it finished.
 - **Routing:** `/api/*` goes to the backend and everything else to `web`, both through Caddy.
+- **Login** (when added): creates realm `sampleapp` with a client and the user `alice` in Keycloak before `backend` starts, gives `backend` the `OIDC_*` variables, and routes `login.localhost` to that realm only.
 - **Upload:** sends the project folder without `.git`, the `.compost-*.yaml` files and the patterns in [`sampleapp/.compostignore`](sampleapp/.compostignore).
