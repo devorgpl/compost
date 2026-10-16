@@ -1,0 +1,188 @@
+# Examples
+
+The repository's [`samples/`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples) folder has a server setup (Caddy, Postgres, Keycloak) and an app (web page, Python API, migration). [Quick start](Quick-Start.md) deploys them on this machine.
+
+## Static site
+
+```yaml
+# docker-compose.yaml
+services:
+  web:
+    build: .             # e.g. FROM nginxinc/nginx-unprivileged:alpine, listens on 8080
+```
+
+```yaml
+# compost.yaml
+name: mysite
+deployment:
+  build: true
+services:
+  ingress:
+    - name: site
+      routes:
+        - {name: main, target: web, port: 8080}
+app_services:
+  - {name: web, service: web}
+```
+
+```yaml
+# .compost-prod.yaml
+prefix: prod
+services:
+  ingress:
+    - name: site
+      domains: [example.com, www.example.com]
+```
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+```
+
+## API with a database and a migration
+
+From [`samples/sampleapp`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.
+
+```yaml
+# docker-compose.yaml
+services:
+  web:
+    build: ./web
+    restart: unless-stopped
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    volumes: [visits:/data]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  migrate:
+    build: ./backend
+    command: ["python", "migrate.py"]
+volumes:
+  visits:
+```
+
+```yaml
+# compost.yaml
+name: sampleapp
+deployment:
+  build: true
+services:
+  database:
+    - name: main-db
+      type: postgres
+      version: ">=16"
+      targets: [backend, migrate]
+      environment:
+        DATABASE_URL: db_url
+  ingress:
+    - name: site
+      routes:
+        - {name: api, target: backend, port: 5000, path: /api}
+        - {name: web, target: web, port: 8080}
+app_services:
+  - {name: web, service: web}
+  - {name: backend, service: backend, environment: {APP_MODE: production}}
+  - {name: migrate, service: migrate}
+backup:
+  volumes: [visits]
+```
+
+```yaml
+# .compost-staging.yaml
+prefix: staging
+services:
+  database:
+    - name: main-db
+      db_name: sampleapp_staging
+      db_user: sampleapp
+      db_password: change-me-to-a-long-random-string
+  ingress:
+    - name: site
+      domains: [staging.example.com, www.staging.example.com]
+app_services:
+  - name: backend
+    environment:
+      APP_MODE: staging
+```
+
+## Staging and production from one repository
+
+Each overlay is an instance. They share `compost.yaml` and the server's shared apps, with separate domains, databases and containers.
+
+```sh
+compost secret deploy .compost-staging.yaml
+compost secret deploy .compost-prod.yaml
+compost app deploy --apply --prefix staging
+compost app deploy --apply --prefix prod
+compost app list
+```
+
+Or on two servers: `-s staging-server` and `-s prod-server`.
+
+## Log in with Keycloak
+
+With Keycloak in `compost-server.yaml` (see [Servers and shared apps](Servers-and-Shared-Apps.md#keycloak-oidc)), add an OIDC link to the sample app:
+
+```yaml
+# compost.yaml
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      targets: [backend]
+      environment:
+        OIDC_ISSUER: oidc_issuer
+        OIDC_INTERNAL_URL: oidc_internal_url
+        OIDC_CLIENT_ID: oidc_client_id
+        OIDC_CLIENT_SECRET: oidc_client_secret
+```
+
+Per instance, give the realm its own domain and a test user:
+
+```yaml
+# .compost-local.yaml
+services:
+  oidc:
+    - name: login
+      realm: sampleapp
+      public_url: http://login.localhost:18080
+      redirect_uris: ["http://sampleapp.localhost:18080/*"]
+      users:
+        - {username: alice, email: alice@example.com, first_name: Alice, last_name: Doe, password: alice-password}
+  ingress:
+    - name: login
+      domains: [login.localhost]
+      routes:
+        - {name: realm, link: oidc/login}
+```
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml
+curl -H 'Host: login.localhost' http://localhost:18080/realms/sampleapp/.well-known/openid-configuration
+# {"issuer":"http://login.localhost:18080/realms/sampleapp", ...}
+```
+
+`alice` can log in at http://login.localhost:18080/realms/sampleapp/account/. The Keycloak admin console is at the provider's own URL (http://auth.localhost:18080/admin/), as `admin` with the password from `~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env`.
+
+To remove the login, delete both entries and deploy with `--purge oidc`; without it the realm, client and users stay in Keycloak.
+
+## A review copy of production
+
+```sh
+compost app backup myapp-prod -o prod.compost.tar.gz
+compost app restore prod.compost.tar.gz --prefix review -f review-domains.yaml
+# … test …
+compost app remove myapp-review --purge database --volumes --yes
+```
+
+`review-domains.yaml` gives the copy its own domains. Its database is a new one named after the `review` prefix, filled from production's dump.
+
+## Nightly backups
+
+```sh
+# crontab on your machine
+30 2 * * *  compost -s prod app backup --all --target server
+45 2 * * *  compost -s prod server backup --target server
+```
+
+`compost -s prod backup list` shows what's there.

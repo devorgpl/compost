@@ -4,7 +4,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # The tag must match the version in Cargo.toml. Tags with a `-` (v0.2.0-rc.1)
-# become pre-releases.
+# become pre-releases. Other tags also publish docs/wiki to the repository's
+# wiki.
 name: Release
 
 on:
@@ -53,3 +54,13 @@ jobs:
         run: >
           scripts/gitea-release.sh "${{ github.ref_name }}" dist/RELEASE_NOTES.md
           dist/*.tar.gz dist/SHA256SUMS
+
+      - name: Publish the documentation to the wiki
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_REPO: ${{ github.repository }}
+          # Pushing to the wiki may need a token with repository write access
+          # as WIKI_TOKEN, if the job's own token is not allowed to.
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN || secrets.GITHUB_TOKEN }}
+        run: scripts/publish-wiki.sh "${{ github.ref_name }}"

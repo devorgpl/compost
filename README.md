@@ -1,42 +1,18 @@
 # compost
 
-Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS) and Postgres.
+Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS), Postgres and Keycloak.
 
-compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers. See [the MVP specification](docs/SPECIFICATION_MVP.md) and the [samples](samples/README.md).
+compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers.
+
+**Documentation:** the [wiki](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md).
 
 ## Install
-
-compost is a single portable binary with no dependencies. Linux builds are static and run on any distribution. It needs `ssh` on your machine; servers need Docker with compose v2.
-
-**With the install script:** detects your system, verifies the checksum, and installs to `~/.local/bin`.
 
 ```sh
 curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
 ```
 
-For a specific release or another directory, pass options after `sh -s --`, e.g. `... | sh -s -- --version v0.1.0 --to /usr/local/bin`.
-
-**By hand:** download the archive for your system and `SHA256SUMS` from the [releases page](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases), then:
-
-```sh
-sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf compost-v0.1.0-x86_64-unknown-linux-musl.tar.gz
-install -m 755 compost-v0.1.0-x86_64-unknown-linux-musl/compost ~/.local/bin/compost
-compost --version
-```
-
-| System | Target |
-|---|---|
-| Linux x86_64 | `x86_64-unknown-linux-musl` |
-| Linux arm64 | `aarch64-unknown-linux-musl` |
-
-**macOS:** there are no prebuilt binaries yet, because linking for macOS needs Apple's SDK, which only a macOS machine has. Build from source with Rust instead:
-
-```sh
-cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/compost --tag v0.1.0
-```
-
-To update, install again. To uninstall, delete the binary and `~/.compost`.
+Linux x86_64 and arm64, static binaries. Other options and macOS: [Installation](docs/wiki/Installation.md).
 
 ## Quick start
 
@@ -44,38 +20,18 @@ To update, install again. To uninstall, delete the binary and `~/.compost`.
 compost init
 compost server define prod --address 203.0.113.10   # SSH user compostuser by default
 compost connect prod
-compost server state
-```
 
-Then follow [samples/README.md](samples/README.md).
-
-## Starting a new setup
-
-```sh
 # Infrastructure folder: shared apps of the server
-compost server generate --with caddy,postgres   # or without --with to choose interactively
-compost server deploy --apply                   # this machine; see the printed notes for prod
+compost server generate --with caddy,postgres
+compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml
 
 # Application folder: reads docker-compose.yaml
 compost app generate
-cp .compost.secrets.example.yaml .compost.secrets.yaml      # domains, passwords
-compost secret deploy .compost.secrets.yaml --prefix staging  # kept on the server
-compost app deploy --apply --prefix staging
-
-compost config set deploy.apply true            # optional: deploy without --apply
+cp .compost.secrets.example.yaml .compost-staging.yaml        # prefix, domains, passwords
+compost app deploy --apply -f compost.yaml,.compost-staging.yaml
 ```
 
-## Backup and restore
-
-```sh
-compost app backup myapp-prod                       # links, sources and volumes → myapp-prod-<time>.compost.tar.gz
-compost app backup myapp-prod --link main-db --format raw   # just the SQL dump
-compost app restore myapp-prod-….compost.tar.gz --prefix review -f review.yaml   # a copy of the app
-compost server backup --target server               # shared apps, kept in the server's backups/ folder
-compost server restore prod-….compost.tar.gz          # on a new server, then `compost app restore`
-```
-
-See §10.13–§10.18 of [docs/SPECIFICATION_MVP.md](docs/SPECIFICATION_MVP.md).
+To try it on this machine first, follow [Quick start](docs/wiki/Quick-Start.md) with the [samples](samples/README.md).
 
 ## Development
 
@@ -83,15 +39,18 @@ Needs Rust, plus [just](https://just.systems), `rustfmt` and `clippy`.
 
 ```sh
 just            # list recipes
-just ci         # formatting, clippy, tests: run before committing
+just ci         # formatting, clippy, tests, docs check: run before committing
 just try init   # run compost with a throwaway home in target/
+just docs       # regenerate docs/wiki/CLI-Reference.md after changing commands or options
 ```
+
+User-visible changes update the matching page in [`docs/wiki`](docs/wiki/Home.md) in the same commit.
 
 ## Releases
 
 Gitea Actions ([`.gitea/workflows`](.gitea/workflows)):
 - **Every branch push and pull request:** runs `just ci`.
-- **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag.
+- **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag. For tags without a `-`, it also publishes `docs/wiki` to the repository's wiki (`scripts/publish-wiki.sh`; `just wiki v0.3.0` does the same by hand).
 
 Between releases, master carries the next version with a `-dev` suffix (e.g. `0.2.0-dev`), so builds from master never pass for a release. To release it:
 
@@ -104,6 +63,6 @@ git push
 
 The tag must match the version in Cargo.toml. Release notes leave out the `Version …` commits.
 
-The workflows need a Gitea Actions runner with the `ubuntu-latest` label. They install everything else themselves.
+The workflows need a Gitea Actions runner with the `ubuntu-latest` label. They install everything else themselves. The wiki must exist (enable it and create a first page once). If the job's token can't push to it, add a token with repository write access as the `WIKI_TOKEN` Actions secret.
 
 To build the release archives locally, run `scripts/ci/setup.sh release`, which needs rustup, then `just dist`.

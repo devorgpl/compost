@@ -45,7 +45,19 @@ lint:
     cargo clippy --all-targets -- -D warnings
 
 # Everything that should pass before committing
-ci: lint test
+ci: lint test docs-check
+
+# Regenerate docs/wiki/CLI-Reference.md from the commands' help
+docs:
+    scripts/docs.sh
+
+# Fail if the CLI reference is out of date or a link in docs/wiki is broken
+docs-check:
+    scripts/docs.sh --check
+
+# Publish docs/wiki to the Gitea wiki, e.g. `just wiki v0.3.0` (needs GITEA_URL, GITEA_REPO, WIKI_TOKEN)
+wiki tag:
+    scripts/publish-wiki.sh {{tag}}
 
 # Install compost into ~/.cargo/bin
 install:
