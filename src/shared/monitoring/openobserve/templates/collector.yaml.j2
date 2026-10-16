@@ -30,6 +30,12 @@ receivers:
 {%- endif %}
 processors:
   batch: {}
+  # A line that is a JSON object (e.g. Caddy's log) becomes a map, so
+  # OpenObserve stores its keys as fields (body_level, body_request_method).
+  transform/json:
+    error_mode: silent
+    log_statements:
+      - 'set(log.body, ParseJSON(log.body)) where IsString(log.body) and IsMatch(log.body, "^\\s*\\{")'
 exporters:
   otlp_http/openobserve:
     endpoint: http://{{ openobserve }}:5080/api/default
@@ -43,7 +49,7 @@ service:
   pipelines:
     logs/docker:
       receivers: [fluent_forward]
-      processors: [batch]
+      processors: [transform/json, batch]
       exporters: [otlp_http/docker]
     logs:
       receivers: [otlp]

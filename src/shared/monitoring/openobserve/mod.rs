@@ -494,6 +494,14 @@ mod tests {
                 collector_yaml["service"]["pipelines"]["metrics"]["receivers"],
                 serde_yaml_ng::from_str::<Value>("[otlp, prometheus]").unwrap()
             );
+            assert_eq!(
+                collector_yaml["service"]["pipelines"]["logs/docker"]["processors"],
+                serde_yaml_ng::from_str::<Value>("[transform/json, batch]").unwrap()
+            );
+            assert_eq!(
+                collector_yaml["processors"]["transform/json"]["log_statements"][0],
+                r#"set(log.body, ParseJSON(log.body)) where IsString(log.body) and IsMatch(log.body, "^\\s*\\{")"#
+            );
 
             let paths: Vec<_> = rendered
                 .files
