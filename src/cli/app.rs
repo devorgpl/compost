@@ -339,6 +339,8 @@ fn deploy(
         apply: args.apply(home, server)?,
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
+        pull: args.pull,
+        recreate: args.recreate,
         restore: None,
         purge,
     };

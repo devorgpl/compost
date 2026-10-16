@@ -42,7 +42,7 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve] [--force]
-compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--dry-run]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. `--list` shows the available types.
@@ -55,6 +55,8 @@ compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
 4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
 Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
+
+`up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
 When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 

@@ -360,6 +360,26 @@ fn server_deploy_then_apply() {
         "{log}"
     );
     assert!(!log.contains("--force-recreate"), "{log}");
+
+    // --pull and --recreate: pulled again and recreated without changes.
+    server
+        .run(&["server", "deploy", "--pull", "--recreate"], &running)
+        .code(2)
+        .stderr(contains("add --apply"));
+    server
+        .run(
+            &["server", "deploy", "--apply", "--pull", "--recreate"],
+            &running,
+        )
+        .success();
+    let log = server.take_docker_log();
+    let pulled = log
+        .find("docker compose -p compost-database-postgres16 pull -q")
+        .unwrap_or_else(|| panic!("{log}"));
+    let started = log
+        .find("compost-database-postgres16 up -d --quiet-pull --remove-orphans --force-recreate")
+        .unwrap_or_else(|| panic!("{log}"));
+    assert!(pulled < started, "{log}");
 }
 
 #[test]
@@ -1061,6 +1081,52 @@ fn server_with_app() -> LocalServer {
         .success();
     server.take_docker_log();
     server
+}
+
+#[test]
+fn app_deploy_pull_and_recreate() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let files = "app/compost.yaml,app/.compost-staging.yaml";
+
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success();
+    let log = server.take_docker_log();
+    assert!(log.contains(" build -q\n"), "{log}");
+    assert!(!log.contains(" pull -q"), "{log}");
+    assert!(!log.contains("--force-recreate"), "{log}");
+
+    server
+        .run(
+            &["app", "deploy", "--no-apply", "--recreate", "-f", files],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("add --apply"));
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "--pull",
+                "--recreate",
+                "-f",
+                files,
+            ],
+            &running,
+        )
+        .success();
+    let log = server.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    let pulled = position(" pull -q --ignore-buildable");
+    let built = position(" build -q --pull");
+    let started = position(" up -d --remove-orphans --force-recreate");
+    assert!(pulled < built && built < started, "{log}");
 }
 
 #[test]

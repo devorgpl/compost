@@ -1253,7 +1253,7 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run]
+compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run]
 ```
 
 `-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
@@ -1267,6 +1267,11 @@ A deploy:
 5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes.
 
 The result is shown as by `app state`. Running the same deploy again keeps data and passwords and doesn't recreate unchanged containers.
+
+**Updating images and recreating containers.** Without `build: true`, every deploy with `--apply` pulls, so a new image behind the same tag (`:latest`, `:2`) is picked up and its containers are recreated. Two options, both needing `--apply`, do more:
+
+- `--pull`: with `build: true`, also pulls the images of services without `build` and builds with `--pull`, which fetches newer base images. Without `build: true` it changes nothing.
+- `--recreate`: recreates every container (`up -d --force-recreate`), even unchanged ones. Volumes, databases and passwords are kept.
 
 **Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record, routing and scraping go, its data stays (collected logs and metrics stay in the monitoring app). Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
 
@@ -1341,7 +1346,7 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve] [--force]
-compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--dry-run]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. `--list` shows the available types.
@@ -1354,6 +1359,8 @@ compost server deploy [--apply | --no-apply] [-f files] [--dry-run]
 4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
 Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
+
+`up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
 When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 
@@ -2367,6 +2374,8 @@ Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
       --dry-run          Validate and show what would happen without changing the server
       --force-unlock     Remove a lock left behind by an interrupted compost command
+      --pull             Pull images again, even when their tags did not change (needs `--apply`)
+      --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
   -h, --help             Print help
 ```
 
@@ -2550,6 +2559,8 @@ Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
       --dry-run          Validate and show what would happen without changing the server
       --force-unlock     Remove a lock left behind by an interrupted compost command
+      --pull             Pull images again, even when their tags did not change (needs `--apply`)
+      --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
       --purge <PURGE>    Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
   -h, --help             Print help

@@ -237,6 +237,8 @@ pub fn deploy(
         apply,
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
+        pull: args.pull,
+        recreate: args.recreate,
     };
     deploy::deploy(
         connector.as_ref(),

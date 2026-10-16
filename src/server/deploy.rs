@@ -23,6 +23,10 @@ pub struct Options {
     pub apply: bool,
     pub dry_run: bool,
     pub force_unlock: bool,
+    /// Pull images before starting, even when their tags did not change.
+    pub pull: bool,
+    /// Recreate every container, even unchanged ones.
+    pub recreate: bool,
 }
 
 /// One shared app, rendered and ready to be written to the server.
@@ -83,7 +87,7 @@ pub fn deploy(
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
     if options.dry_run {
-        print_dry_run(&ctx, report.status, &plans, options.apply);
+        print_dry_run(&ctx, report.status, &plans, options);
         return Ok(());
     }
 
@@ -181,9 +185,9 @@ pub fn deploy(
         let deployed = state_file
             .shared(kind, &plan.app.name)
             .is_some_and(|r| r.status == DeployStatus::Deployed);
-        let recreate = !deployed && !reloaded(&ctx, plan)?;
+        let recreate = options.recreate || (!deployed && !reloaded(&ctx, plan)?);
 
-        match apply(&ctx, plan, recreate) {
+        match apply(&ctx, plan, options.pull, recreate) {
             Ok(()) => {
                 state_file.set_shared(kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
             }
@@ -494,7 +498,7 @@ fn remove_dropped_links(ctx: &ServerCtx, previous: &ServerConfig, plans: &[Plan]
 }
 
 /// Start a shared app, with the hooks of its links around it.
-fn apply(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
+fn apply(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()> {
     run_link_hooks(ctx, plan, Hook::BeforeApply)?;
     if plan.app.is_external() {
         out!(
@@ -505,7 +509,7 @@ fn apply(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
     } else {
         out_part!("  starting {} {} ... ", plan.kind_name(), plan.app.name);
     }
-    match start(ctx, plan, recreate) {
+    match start(ctx, plan, pull, recreate) {
         Ok(()) if plan.app.is_external() => {}
         Ok(()) => out!("running"),
         Err(err) => {
@@ -543,12 +547,20 @@ fn run_link_hooks(ctx: &ServerCtx, plan: &Plan, hook: Hook) -> Result<()> {
     Ok(())
 }
 
-fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
+fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()> {
     if plan.app.is_external() {
         return Ok(());
     }
     let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind_name(), &plan.app.name)));
     let project = shared::project_name(plan.kind_name(), &plan.app.name);
+    // `up` pulls only missing images; a new image behind the same tag needs
+    // its own pull, after which `up` recreates the containers that use it.
+    if pull {
+        ctx.connector.exec(&format!(
+            "cd {dir} && docker compose -p {} pull -q",
+            shell_quote(&project)
+        ))?;
+    }
     let recreate = if recreate { " --force-recreate" } else { "" };
     // --remove-orphans: a service that was renamed (e.g. `postgres` before
     // services were named `compost-shared-<name>`) must not keep running.
@@ -560,7 +572,7 @@ fn start(ctx: &ServerCtx, plan: &Plan, recreate: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
+fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], options: &Options) {
     out!(
         "Dry run: nothing is changed on the server ({status}, home {}).",
         ctx.home
@@ -596,7 +608,15 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], apply: bool) {
             out!("      {}  {:o}{secret}", file.path, file.mode);
         }
     }
-    if apply {
-        out!("  then: docker compose up -d for each shared app, and wait until it runs");
+    if options.apply {
+        let pull = if options.pull { "pull and " } else { "" };
+        let recreate = if options.recreate {
+            " --force-recreate"
+        } else {
+            ""
+        };
+        out!(
+            "  then: docker compose {pull}up -d{recreate} for each shared app, and wait until it runs"
+        );
     }
 }

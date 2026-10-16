@@ -227,6 +227,8 @@ pub fn restore(
         apply: true,
         dry_run: false,
         force_unlock: false,
+        pull: false,
+        recreate: false,
     };
     let providers = without_consumers(&config, &selected)?;
     let later = providers.shared_apps().count() != config.shared_apps().count()

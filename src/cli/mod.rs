@@ -17,6 +17,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::backup::Format;
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
+use crate::error::config_err;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -120,15 +121,28 @@ pub struct DeployArgs {
     /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
+    /// Pull images again, even when their tags did not change (needs `--apply`)
+    #[arg(long)]
+    pub pull: bool,
+    /// Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
+    #[arg(long)]
+    pub recreate: bool,
 }
 
 impl DeployArgs {
     /// `--apply`/`--no-apply`, else the configured default.
     pub fn apply(&self, home: &CompostHome, server: &ServerEntry) -> Result<bool> {
-        if self.apply || self.no_apply {
-            return Ok(self.apply);
+        let apply = if self.apply || self.no_apply {
+            self.apply
+        } else {
+            home.apply_default(server)?
+        };
+        if !apply && (self.pull || self.recreate) {
+            return Err(config_err(
+                "--pull and --recreate start services: add --apply",
+            ));
         }
-        home.apply_default(server)
+        Ok(apply)
     }
 }
 

@@ -252,6 +252,8 @@ fn restore_deployment(
         apply: true,
         dry_run: false,
         force_unlock: options.force_unlock,
+        pull: false,
+        recreate: false,
         restore: Some(plan),
         purge: Vec::new(),
     };

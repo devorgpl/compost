@@ -24,6 +24,11 @@ pub struct Options<'a> {
     pub apply: bool,
     pub dry_run: bool,
     pub force_unlock: bool,
+    /// Also pull images that `build: true` would not: base images and
+    /// services without `build`.
+    pub pull: bool,
+    /// Recreate every container, even unchanged ones.
+    pub recreate: bool,
     /// Load data from a backup before the services start (`app restore`).
     pub restore: Option<&'a RestorePlan<'a, 'a>>,
     /// Kinds whose data is deleted with links dropped from the config.
@@ -198,7 +203,7 @@ pub fn deploy(
         links: &dropped,
         purge: &options.purge,
     };
-    match apply(&ctx, loaded, &links, &dropped, options.restore) {
+    match apply(&ctx, loaded, &links, &dropped, options) {
         Ok(kept) => {
             if kept.len() != dropped.links.len() {
                 write_pinned(&kept)?;
@@ -322,9 +327,10 @@ fn apply(
     loaded: &LoadedApp,
     links: &[Link],
     dropped: &Dropped,
-    restore: Option<&RestorePlan>,
+    options: &Options,
 ) -> Result<Vec<PinnedLink>> {
     let app = &loaded.config;
+    let restore = options.restore;
     let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
     for link in links {
         let link_ctx = AppCtx {
@@ -350,20 +356,27 @@ fn apply(
     };
     // With restored images, `up` still builds or pulls the ones that are missing.
     if !images_restored {
-        if app.deployment.build {
-            out!("  building images ...");
-            ctx.connector.exec(&format!("{compose} build -q"))?;
-        } else {
+        if !app.deployment.build || options.pull {
             ctx.connector
                 .exec(&format!("{compose} pull -q --ignore-buildable"))?;
+        }
+        if app.deployment.build {
+            out!("  building images ...");
+            let pull = if options.pull { " --pull" } else { "" };
+            ctx.connector.exec(&format!("{compose} build -q{pull}"))?;
         }
     }
     if let Some(plan) = restore {
         plan.restore_volumes(ctx, app, &loaded.compose, true)?;
     }
     out!("  starting {project} ...");
+    let recreate = if options.recreate {
+        " --force-recreate"
+    } else {
+        ""
+    };
     ctx.connector
-        .exec(&format!("{compose} up -d --remove-orphans"))?;
+        .exec(&format!("{compose} up -d --remove-orphans{recreate}"))?;
     wait_until_ready(ctx.connector, &project)?;
 
     let kept = super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true)?;
