@@ -41,11 +41,11 @@ The user must have connected with `ssh` once to accept the host key; compost nev
 ```sh
 compost server generate --with caddy,postgres         # --list shows the types; caddysecurebuild instead of caddy adds CrowdSec bans, AppSec and rate limits
 # edit compost-server.prod.yaml (acme_email), copy .compost-server.secrets.example.yaml to .compost-server.secrets.yaml
-compost server deploy --dry-run -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
-compost server deploy --apply   -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
+compost server deploy --dry-run -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml
+compost server deploy --apply   -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml
 ```
 
-Or keep the secrets on the server with `--secret .compost-server.secrets.yaml` in place of the last `-f` file: later `server deploy` runs use the stored copy, and a new `--secret` replaces it.
+`--secret` stores the file on the server: later `server deploy` runs need only the two committed files, and a new `--secret` replaces the stored copy.
 
 **An app**, next to its compose file ([Applications](references/Applications.md)):
 

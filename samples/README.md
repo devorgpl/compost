@@ -156,7 +156,7 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
 
    cd samples/server
    cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set real passwords (postgres, keycloak admin, openobserve root)
-   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
+   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml   # stores it on the server and deploys
 
    cd ../sampleapp
    cp .compost-staging.example.yaml .compost-staging.yaml                 # set domains and password
@@ -165,11 +165,14 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
 
 Caddy then gets certificates from Let's Encrypt for the domains, and https://staging.example.com/ shows the page.
 
-The overlay is now stored on the server, so later deploys, from any machine, need only `compost.yaml`:
+The secrets are now stored on the server, so later deploys, from any machine, need only the committed files:
 
 ```sh
-compost app deploy --apply --prefix staging
+cd samples/server && compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml
+cd ../sampleapp   && compost app deploy --apply --prefix staging
 ```
+
+To change a secret, edit the file and deploy again with `--secret`: it replaces the stored copy.
 
 ## What compost does with the sample
 

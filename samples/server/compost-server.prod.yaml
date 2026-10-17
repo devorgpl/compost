@@ -1,6 +1,7 @@
 # Overrides for a real server, merged by `name` over compost-server.yaml:
 #
-#   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
+#   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml
+#   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml   # later: the stored secrets
 shared:
   ingress:
     - name: caddy-main

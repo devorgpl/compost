@@ -284,11 +284,11 @@ Set `acme_email` in `compost-server.prod.yaml`. Then copy the secrets example an
 
 ```sh
 cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # never commit this one
-compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
+compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml
 compost server state
 ```
 
-Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. To keep the secrets file on the server as well, so other machines deploy without it, pass it with `--secret .compost-server.secrets.yaml` instead of `-f` ([Secrets](Secrets.md#stored-on-the-server)).
+Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. `--secret` also stores the file on the server, so later deploys, from any machine, need only `-f compost-server.yaml,compost-server.prod.yaml`; deploy with `--secret` again to replace it ([Secrets](Secrets.md#stored-on-the-server)).
 
 ## 4. Your app
 

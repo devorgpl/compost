@@ -103,7 +103,7 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
     out!();
     out!("On this machine:   compost server deploy --apply");
     out!(
-        "On a real server:  compost server deploy --apply -f {SERVER_FILE},{SERVER_PROD_FILE},.compost-server.secrets.yaml"
+        "On a real server:  compost server deploy --apply -f {SERVER_FILE},{SERVER_PROD_FILE} --secret .compost-server.secrets.yaml"
     );
     print_notes(&files.notes);
     Ok(())
@@ -244,14 +244,16 @@ fn server_files(selected: &[&Choice]) -> Result<ServerFiles> {
         prod: shared_file(
             "# Overrides for a real server, merged by `name` over compost-server.yaml:\n\
              #\n\
-             #   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml\n",
+             #   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml --secret .compost-server.secrets.yaml\n\
+             #   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml   # later: the stored secrets\n",
             &by_kind,
             |g| g.prod,
         ),
         secrets: shared_file(
             "# Secrets of the shared applications. Copy to .compost-server.secrets.yaml,\n\
              # which `compost server deploy` loads next to compost-server.yaml. Never commit\n\
-             # the copy. Merged by `name`, so only the secret keys are repeated here.\n",
+             # the copy. On a real server, store it there with --secret; later deploys use\n\
+             # the stored copy. Merged by `name`, so only the secret keys are repeated here.\n",
             &by_kind,
             |g| g.secrets,
         ),
