@@ -1781,6 +1781,7 @@ Simple, but every machine that deploys needs the file.
 ```sh
 compost secret deploy .compost-staging.yaml [--prefix staging]
 compost app deploy --apply --prefix staging      # compost.yaml + the stored overlay
+compost app deploy --apply --secret .compost-staging.yaml   # store it and deploy, in one step
 compost secret list
 compost secret remove --app myapp --prefix staging
 ```
@@ -1789,7 +1790,9 @@ The stored overlay must name its app (`name: myapp`). The prefix is `--prefix`, 
 
 `app deploy` merges it right after the first file: `compost.yaml` → stored overlay → other `-f` files. Local overlays can still override stored values.
 
-- `secret deploy` replaces the stored overlay as a whole. If the new one leaves out a link that only the old one defined (say an ingress entry with its domains), the next `app deploy` drops that link. Run `app deploy --dry-run` first to see the effect.
+`app deploy --secret <file>` uses the file in place of the stored overlay and stores it with the instance's files, so later deploys need only `compost.yaml`. The file may leave out `name`: the app is the one of the `-f` files, and a different `name` is an error. The prefix is `--prefix`, else the file's, else the other files'. With `--dry-run` nothing is stored. Like `-f` files, it is never uploaded with the sources.
+
+- `secret deploy` and `app deploy --secret` replace the stored overlay as a whole. If the new one leaves out a link that only the old one defined (say an ingress entry with its domains), the next `app deploy` drops that link. Run `app deploy --dry-run` first to see the effect.
 - `app remove` keeps the stored overlay, so deploying the instance again restores it as it was. `secret remove` deletes it.
 - `app backup` saves it in the archive and `app restore` puts it back; such an archive then holds secrets.
 
@@ -2170,7 +2173,7 @@ app_services:
       APP_MODE: staging
 ```
 
-An overlay stored with `secret deploy` also needs `name`. See [Secrets](Secrets.md).
+An overlay stored with `secret deploy` also needs `name` (`app deploy --secret` adds it). See [Secrets](Secrets.md#overlays-stored-on-the-server).
 
 ## compost-server.yaml
 
@@ -2301,7 +2304,7 @@ infra/
 ├── lock/                             exists while a command changes the server
 ├── tmp/                              short-lived files, e.g. client credentials for external databases
 ├── backups/                          archives of the `server` backup target
-├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy`
+├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml
@@ -2716,6 +2719,7 @@ Options:
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
       --purge <PURGE>    Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
+      --secret <FILE>    Overlay with secrets (e.g. .compost.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
   -h, --help             Print help
 ```
 

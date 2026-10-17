@@ -2038,6 +2038,79 @@ fn stored_secrets_are_used_by_app_deploy() {
 }
 
 #[test]
+fn app_deploy_stores_the_secret_file() {
+    let server = server_with_shared_apps();
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    // No `name`, and the prefix comes from the file.
+    server.write_work_file("app/.compost.secrets.yaml", APP_OVERLAY);
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let deploy_with_secret = |extra: &[&str]| {
+        let mut args = vec![
+            "app",
+            "deploy",
+            "-f",
+            "app/compost.yaml",
+            "--secret",
+            "app/.compost.secrets.yaml",
+        ];
+        args.extend_from_slice(extra);
+        server.run(&args, &running)
+    };
+    let stored = server.server_home.join("secrets/apps/myapp/staging.yaml");
+
+    deploy_with_secret(&["--dry-run"])
+        .success()
+        .stdout(contains("Deploying myapp-staging"))
+        .stdout(contains("secrets: would be stored in"));
+    assert!(!stored.exists());
+
+    deploy_with_secret(&["--apply"])
+        .success()
+        .stdout(contains("using secrets app/.compost.secrets.yaml"))
+        .stdout(contains("stored secrets in"))
+        .stdout(contains("caddy-main: staging.example.com"))
+        .stdout(contains("uploaded 1 files"));
+    let text = fs::read_to_string(&stored).unwrap();
+    assert!(text.contains("name: myapp"), "{text}");
+    assert!(text.contains("prefix: staging"), "{text}");
+
+    // Later deploys need only compost.yaml.
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml",
+                "--prefix",
+                "staging",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("using stored secrets"))
+        .stdout(contains("caddy-main: staging.example.com"));
+    let override_yaml = server.read_server_file("apps/myapp/staging/compose/compost.override.yaml");
+    assert!(
+        override_yaml.contains("APP_MODE: staging"),
+        "{override_yaml}"
+    );
+
+    server.write_work_file(
+        "app/.compost.secrets.yaml",
+        &format!("name: other\n{APP_OVERLAY}"),
+    );
+    deploy_with_secret(&[])
+        .code(2)
+        .stderr(contains("must be the app name `myapp`"));
+}
+
+#[test]
 fn app_backup_and_restore_keep_stored_secrets() {
     let server = server_with_shared_apps();
     server.write_work_file("app/compost.yaml", APP_CONFIG);

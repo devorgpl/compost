@@ -340,6 +340,7 @@ Options:
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
       --purge <PURGE>    Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
+      --secret <FILE>    Overlay with secrets (e.g. .compost.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
   -h, --help             Print help
 ```
 

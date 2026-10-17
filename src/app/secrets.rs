@@ -34,8 +34,34 @@ pub struct Overlay {
 /// Read `name` and `prefix` of an overlay; `prefix` replaces the file's own.
 /// The stored copy always names its prefix.
 pub fn prepare(text: &str, prefix: Option<&str>) -> Result<Overlay> {
-    let mut value: Value =
-        serde_yaml_ng::from_str(text).map_err(|e| config_err(format!("secrets file: {e}")))?;
+    prepare_value(parse(text)?, prefix)
+}
+
+/// The overlay of `app deploy --secret` for instance `name`-`prefix`. It may
+/// leave out `name`, but cannot name another app.
+pub fn for_instance(text: &str, name: &str, prefix: &str) -> Result<Overlay> {
+    let mut value = parse(text)?;
+    if let Value::Mapping(map) = &mut value {
+        match map.get("name") {
+            None => {
+                map.insert("name".into(), Value::String(name.to_string()));
+            }
+            Some(other) if other.as_str() != Some(name) => {
+                return Err(config_err(format!(
+                    "secrets file: `name` must be the app name `{name}`"
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    prepare_value(value, Some(prefix))
+}
+
+fn parse(text: &str) -> Result<Value> {
+    serde_yaml_ng::from_str(text).map_err(|e| config_err(format!("secrets file: {e}")))
+}
+
+fn prepare_value(mut value: Value, prefix: Option<&str>) -> Result<Overlay> {
     let Value::Mapping(map) = &mut value else {
         return Err(config_err("secrets file: expected a mapping with `name`"));
     };
@@ -192,6 +218,24 @@ mod tests {
         let overlay = prepare("name: app", None).unwrap();
         assert_eq!(overlay.prefix, "main");
         assert!(overlay.text.contains("prefix: main"), "{}", overlay.text);
+    }
+
+    #[test]
+    fn instance_overlay_gets_the_app_name_and_prefix() {
+        let overlay = for_instance("{prefix: other, domain: x}", "app", "staging").unwrap();
+        assert_eq!(
+            (overlay.name.as_str(), overlay.prefix.as_str()),
+            ("app", "staging")
+        );
+        assert!(overlay.text.contains("name: app"), "{}", overlay.text);
+        assert!(overlay.text.contains("prefix: staging"), "{}", overlay.text);
+
+        assert!(for_instance("name: app", "app", "main").is_ok());
+        let err = format!(
+            "{:#}",
+            for_instance("name: other", "app", "main").unwrap_err()
+        );
+        assert!(err.contains("`app`"), "{err}");
     }
 
     #[test]

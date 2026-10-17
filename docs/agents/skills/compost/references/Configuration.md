@@ -152,7 +152,7 @@ app_services:
       APP_MODE: staging
 ```
 
-An overlay stored with `secret deploy` also needs `name`. See [Secrets](Secrets.md).
+An overlay stored with `secret deploy` also needs `name` (`app deploy --secret` adds it). See [Secrets](Secrets.md#overlays-stored-on-the-server).
 
 ## compost-server.yaml
 

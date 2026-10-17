@@ -18,7 +18,7 @@ The `references/` folder holds the full user documentation of the compost versio
 ## Safety rules
 
 - **Dry-run first.** Before any `server deploy` or `app deploy`, run it with `--dry-run` and show the user what would change. `--dry-run` never changes the server.
-- **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `server restore`, `secret deploy` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data.
+- **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `server restore`, `secret deploy`, `app deploy --secret` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data.
 - `compost config set deploy.apply true` makes every deploy apply. Check it with `compost config show`, and pass `--no-apply` when you only want to upload.
 - **Secrets.** Overlays (`.compost-*.yaml`, `.compost.*.yaml`, `.compost-server.secrets.yaml`) hold passwords: never commit them, print them or paste them into chat. Commit only `*.example.yaml`. Leave passwords out to have compost generate and keep them. Postgres `root_password`, Keycloak `admin_password` and OpenObserve's `root_password` can't change after the first deploy. See [Secrets](references/Secrets.md).
 - Your compose file is never changed: compost adds networks and variables in an override file on the server. Don't edit files in `~/.compost-server` on a server by hand.
@@ -55,7 +55,7 @@ compost app deploy --apply   -f compost.yaml,.compost-staging.yaml
 compost app state myapp-staging
 ```
 
-Or store the overlay on the server, so any machine or CI deploys with `compost.yaml` alone: `compost secret deploy .compost-staging.yaml`, then `compost app deploy --apply --prefix staging`.
+Or store the overlay on the server, so any machine or CI deploys with `compost.yaml` alone: `compost secret deploy .compost-staging.yaml`, then `compost app deploy --apply --prefix staging`; or both at once with `compost app deploy --apply --secret .compost-staging.yaml`, which replaces the stored overlay.
 
 **Update images or recreate containers:** add `--pull` (pull images again, even with unchanged tags; rebuild images built on the server) or `--recreate` (recreate every container; volumes are kept) to `server deploy --apply` or `app deploy --apply`. Shared apps are never pulled without `--pull` unless `version` or `image` changes; recreating them restarts what every app uses.
 

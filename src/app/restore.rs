@@ -256,6 +256,7 @@ fn restore_deployment(
         recreate: false,
         restore: Some(plan),
         purge: Vec::new(),
+        secrets: None,
     };
     deploy::deploy(
         ctx.connector,

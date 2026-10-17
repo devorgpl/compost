@@ -50,7 +50,7 @@ infra/
 ├── lock/                             exists while a command changes the server
 ├── tmp/                              short-lived files, e.g. client credentials for external databases
 ├── backups/                          archives of the `server` backup target
-├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy`
+├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml

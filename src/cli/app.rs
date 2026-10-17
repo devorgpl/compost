@@ -1,8 +1,9 @@
 //! `compost app …` commands (spec §10.8–§10.10, §10.12).
 
+use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::Deserialize;
 
@@ -69,6 +70,10 @@ pub struct AppDeployArgs {
     /// Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
     #[arg(long, value_delimiter = ',')]
     pub purge: Vec<String>,
+    /// Overlay with secrets (e.g. .compost.secrets.yaml) to store on the server and
+    /// deploy with, replacing the stored one; later deploys use it without the file
+    #[arg(long, value_name = "FILE")]
+    pub secret: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -313,18 +318,42 @@ fn deploy(
         deploy: args,
         prefix,
         purge,
+        secret,
     } = args;
-    let files = config_files(&args.files)?;
-    let (name, instance_prefix) = instance_id(&files, prefix.as_deref())?;
+    let mut files = config_files(&args.files)?;
+    // The name comes from the files; the prefix may come from --secret, which
+    // takes the place of the stored overlay: right after the first file.
+    let (name, mut instance_prefix) = instance_id(&files, prefix.as_deref())?;
+    if secret.is_some() {
+        let mut id_files = files.clone();
+        id_files.splice(1..1, secret.clone());
+        instance_prefix = instance_id(&id_files, prefix.as_deref())?.1;
+    }
+    let overlay = match &secret {
+        Some(file) => {
+            let text = fs::read_to_string(file)
+                .with_context(|| format!("cannot read {}", file.display()))?;
+            Some(secrets::for_instance(&text, &name, &instance_prefix)?)
+        }
+        None => None,
+    };
     let connector = connector::open(server, home, verbose)?;
-    let stored = secrets::read(
-        connector.as_ref(),
-        server.server_home(),
-        &name,
-        &instance_prefix,
-    )?;
-    let (stored_path, stored) = stored.unzip();
+    let (stored_path, stored) = match (&overlay, &secret) {
+        (Some(overlay), Some(file)) => (
+            Some(file.display().to_string()),
+            Some(serde_yaml_ng::from_str(&overlay.text)?),
+        ),
+        _ => secrets::read(
+            connector.as_ref(),
+            server.server_home(),
+            &name,
+            &instance_prefix,
+        )?
+        .unzip(),
+    };
     let loaded = AppConfig::load_with(&files, stored, prefix.as_deref())?;
+    // Like the -f files, the secrets file is never uploaded with the sources.
+    files.extend(secret);
 
     out!(
         "Deploying {} to {} ({})",
@@ -333,7 +362,12 @@ fn deploy(
         connector.target()
     );
     if let Some(path) = stored_path {
-        out!("  using stored secrets {path}");
+        let what = if overlay.is_some() {
+            "secrets"
+        } else {
+            "stored secrets"
+        };
+        out!("  using {what} {path}");
     }
     let options = deploy::Options {
         apply: args.apply(home, server)?,
@@ -343,6 +377,7 @@ fn deploy(
         recreate: args.recreate,
         restore: None,
         purge,
+        secrets: overlay.as_ref(),
     };
     deploy::deploy(
         connector.as_ref(),

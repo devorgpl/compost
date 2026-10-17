@@ -8,6 +8,7 @@ use serde_yaml_ng::Value;
 use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
 use super::restore::RestorePlan;
+use super::secrets::{self, Overlay};
 use super::sources;
 use crate::config::app::{AppConfig, LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
@@ -33,6 +34,8 @@ pub struct Options<'a> {
     pub restore: Option<&'a RestorePlan<'a, 'a>>,
     /// Kinds whose data is deleted with links dropped from the config.
     pub purge: Vec<String>,
+    /// Overlay stored as the instance's secrets with its files (`--secret`).
+    pub secrets: Option<&'a Overlay>,
 }
 
 /// A link of the app, resolved to a shared app on the server.
@@ -128,6 +131,12 @@ pub fn deploy(
                 removal(link, &options.purge)
             );
         }
+        if options.secrets.is_some() {
+            out!(
+                "  secrets: would be stored in {}",
+                ctx.path(&secrets::path(&app.name, &app.prefix))
+            );
+        }
         return Ok(());
     }
 
@@ -169,6 +178,10 @@ pub fn deploy(
         &serde_yaml_ng::to_string(&stored_config)?,
         0o644,
     )?;
+    if let Some(overlay) = options.secrets {
+        let path = secrets::store(&ctx, overlay)?;
+        out!("  stored secrets in {path}");
+    }
     // Dropped links stay listed until a deploy with --apply removes them.
     let write_pinned = |removing: &[PinnedLink]| {
         let pinned = PinnedLinks {
