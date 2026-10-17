@@ -1,4 +1,4 @@
-//! End-to-end tests of the compost binary. Each test uses its own COMPOST_HOME.
+//! End-to-end tests of the compost binary. Each test uses its own `COMPOST_HOME`.
 
 use std::fs;
 
@@ -107,8 +107,8 @@ fn define_list_connect_disconnect() {
 }
 
 /// A `docker` stand-in, so tests do not need Docker. Every call is appended to
-/// $FAKE_DOCKER_LOG. Set FAKE_DOCKER_RUNNING=1 to report containers as running,
-/// FAKE_DOCKER_DOWN=1 to fail like a missing daemon, FAKE_DOCKER_NETWORKS to the
+/// `$FAKE_DOCKER_LOG`. Set `FAKE_DOCKER_RUNNING=1` to report containers as running,
+/// `FAKE_DOCKER_DOWN=1` to fail like a missing daemon, `FAKE_DOCKER_NETWORKS` to the
 /// networks that exist.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
@@ -150,7 +150,7 @@ shared:
     - {name: postgres16, type: postgres, version: 16}
 ";
 
-/// A local server whose COMPOST_SERVER_HOME is a temp dir, with fake docker on PATH.
+/// A local server whose `COMPOST_SERVER_HOME` is a temp dir, with fake docker on PATH.
 struct LocalServer {
     env: Env,
     server_home: std::path::PathBuf,
@@ -2805,7 +2805,7 @@ app_services:
         ));
 }
 
-/// APP_CONFIG with the ingress entry `ui-front` renamed to `web`, and with or
+/// `APP_CONFIG` with the ingress entry `ui-front` renamed to `web`, and with or
 /// without the database link.
 fn renamed_app(database: bool) -> (String, String) {
     let mut config = APP_CONFIG.replace("- name: ui-front", "- name: web");

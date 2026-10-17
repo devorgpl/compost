@@ -20,7 +20,7 @@ use serde_yaml_ng::Value;
 
 pub use crate::app::contribution::Contribution;
 pub use crate::backup::{ItemReader, ItemWriter, Role};
-use crate::config::app::{AppConfig, AppService};
+use crate::config::app::{AppConfig, AppService, BackupConfig, Deployment};
 use crate::connector::Connector;
 use semver::{Version, VersionReq};
 
@@ -98,10 +98,10 @@ impl SharedAppConfig {
     }
 }
 
-/// Access to the server while rendering. Paths are relative to COMPOST_SERVER_HOME.
+/// Access to the server while rendering. Paths are relative to `COMPOST_SERVER_HOME`.
 pub struct ServerCtx<'a> {
     pub connector: &'a dyn Connector,
-    /// COMPOST_SERVER_HOME as an absolute path.
+    /// `COMPOST_SERVER_HOME` as an absolute path.
     pub home: String,
 }
 
@@ -242,7 +242,7 @@ pub struct Rendered {
 
 #[derive(Debug)]
 pub struct RenderedFile {
-    /// Relative to COMPOST_SERVER_HOME.
+    /// Relative to `COMPOST_SERVER_HOME`.
     pub path: String,
     pub contents: String,
     /// Unix permissions; 0o600 marks a file holding secrets.
@@ -499,17 +499,17 @@ pub fn consumer_app(kind: &str, config: &SharedAppConfig, links: SharedLinks) ->
     AppConfig {
         name: format!("{CONSUMER_PREFIX}{kind}"),
         prefix: config.name.clone(),
-        deployment: Default::default(),
+        deployment: Deployment::default(),
         services: links.services,
         app_services: links.app_services,
-        backup: Default::default(),
+        backup: BackupConfig::default(),
     }
 }
 
 /// The kind of a shared app whose link records use `app`, if `app` is one.
 pub fn consumer_kind(app: &str) -> Option<&'static str> {
     let kind = app.strip_prefix(CONSUMER_PREFIX)?;
-    find_kind(kind).map(|kind| kind.name())
+    find_kind(kind).map(Kind::name)
 }
 
 /// The one shared app of `type_name` whose major version matches `version`

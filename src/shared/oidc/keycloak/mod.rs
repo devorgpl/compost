@@ -578,7 +578,7 @@ mod tests {
             realm: "a-main".into(),
             client_id: "a-main-login".into(),
             client_secret: Some("s3cret".into()),
-            users: users.iter().map(|u| u.to_string()).collect(),
+            users: users.iter().map(ToString::to_string).collect(),
             public_url: None,
         }
     }

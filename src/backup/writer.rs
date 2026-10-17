@@ -107,7 +107,7 @@ impl<'c> Backup<'c> {
                     .with_context(|| format!("backing up {path}"))?;
                 writer
                     .into_inner()
-                    .map_err(|e| e.into_error())?
+                    .map_err(std::io::IntoInnerError::into_error)?
                     .metadata()?
                     .len()
             }

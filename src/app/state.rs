@@ -59,7 +59,7 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         let keeps_running = compose
             .services
             .get(&container.service)
-            .is_some_and(|s| s.keeps_running());
+            .is_some_and(crate::config::app::ComposeService::keeps_running);
         let ok = container.is_healthy(keeps_running);
         healthy &= ok;
         let mark = if ok { "" } else { "  ← not healthy" };

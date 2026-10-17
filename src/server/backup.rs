@@ -1,5 +1,6 @@
 //! `compost server backup`, `server restore` and `backup list` (spec §10.15–§10.17).
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -334,7 +335,7 @@ fn merged_config(
         apps.push(app.clone());
     }
     if config.backup.is_none() {
-        config.backup = archived.backup.clone();
+        config.backup.clone_from(&archived.backup);
     }
     // Validate the result, e.g. a second ingress.
     ServerConfig::parse(&serde_yaml_ng::to_string(&config)?)
@@ -353,11 +354,12 @@ fn restore_records(
     );
     for (kind, app) in selected {
         let dir = shell_quote(&connectors_dir(kind, &app.name));
-        script.push_str(&format!(
+        let _ = write!(
+            script,
             " && if [ -d {staging}/{dir} ]; then mkdir -p \"$(dirname {dir})\" && rm -rf {dir} && mv {staging}/{dir} {dir}; fi"
-        ));
+        );
     }
-    script.push_str(&format!(" && rm -rf {staging}"));
+    let _ = write!(script, " && rm -rf {staging}");
     archive.feed(CONNECTORS_ITEM, b"", &script)
 }
 

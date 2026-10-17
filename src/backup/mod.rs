@@ -18,7 +18,7 @@ use crate::config::server::{BackupSettings, BackupTarget};
 use crate::error::config_err;
 use crate::shared::ServerCtx;
 
-/// Default archive folder of the `server` target, relative to COMPOST_SERVER_HOME.
+/// Default archive folder of the `server` target, relative to `COMPOST_SERVER_HOME`.
 const DEFAULT_SERVER_PATH: &str = "backups";
 
 /// `compost`: archive with a manifest, restorable by compost. `raw`: the plain

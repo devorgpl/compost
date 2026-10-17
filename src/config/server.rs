@@ -130,7 +130,7 @@ pub struct BackupSettings {
     #[serde(default)]
     pub target: BackupTarget,
     /// Archive folder of the `server` target: absolute, or relative to
-    /// COMPOST_SERVER_HOME. Default `backups`.
+    /// `COMPOST_SERVER_HOME`. Default `backups`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_path: Option<String>,
     /// Settings of the `s3` target (not implemented yet).
@@ -310,18 +310,17 @@ impl ServerConfig {
             let next = (0..apps.len()).find(|i| {
                 !order.contains(i) && waits_for[*i].iter().all(|before| order.contains(before))
             });
-            match next {
-                Some(i) => order.push(i),
-                None => {
-                    let stuck: Vec<String> = (0..apps.len())
-                        .filter(|i| !order.contains(i))
-                        .map(|i| format!("{}[{}]", apps[i].0, apps[i].1.name))
-                        .collect();
-                    anyhow::bail!(
-                        "shared apps link to each other in a cycle: {}",
-                        stuck.join(", ")
-                    );
-                }
+            if let Some(i) = next {
+                order.push(i);
+            } else {
+                let stuck: Vec<String> = (0..apps.len())
+                    .filter(|i| !order.contains(i))
+                    .map(|i| format!("{}[{}]", apps[i].0, apps[i].1.name))
+                    .collect();
+                anyhow::bail!(
+                    "shared apps link to each other in a cycle: {}",
+                    stuck.join(", ")
+                );
             }
         }
         Ok(order.into_iter().map(|i| apps[i]).collect())

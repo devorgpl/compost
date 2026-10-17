@@ -1,0 +1,2 @@
+# Product names in doc comments that are not code (`clippy::doc_markdown`).
+doc-valid-idents = ["AppSec", "CrowdSec", "OpenObserve", ".."]

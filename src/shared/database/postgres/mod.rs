@@ -1,5 +1,7 @@
 //! Postgres database type (spec §5.3, §9.3).
 
+use std::fmt::Write as _;
+
 use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::{Deserialize, Serialize};
@@ -255,7 +257,7 @@ impl DatabaseType for Postgres {
         Ok(())
     }
 
-    /// Without ON_ERROR_STOP: a dump of all databases recreates the `postgres`
+    /// Without `ON_ERROR_STOP`: a dump of all databases recreates the `postgres`
     /// role, which always exists. Other errors fail the restore.
     fn restore_shared_data(
         &self,
@@ -524,13 +526,14 @@ impl<'a> Client<'a> {
             .context("version is required for databases")?;
         let mut env = format!("PGHOST={}\nPGPORT={}\n", record.host, record.port);
         if let Some(mode) = &record.sslmode {
-            env.push_str(&format!("PGSSLMODE={mode}\n"));
+            let _ = writeln!(env, "PGSSLMODE={mode}");
         }
         if let Some(login) = login {
-            env.push_str(&format!(
+            let _ = write!(
+                env,
                 "PGUSER={}\nPGPASSWORD={}\nPGDATABASE={}\n",
                 login.user, login.password, login.database
-            ));
+            );
         }
         let env_file = ctx.path(&format!("tmp/pg-{}.env", uuid::Uuid::new_v4().simple()));
         ctx.connector.write_file(&env_file, env.as_bytes(), 0o600)?;

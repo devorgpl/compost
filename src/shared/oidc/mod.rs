@@ -212,11 +212,10 @@ impl Kind for OidcKind {
 }
 
 fn find_type(name: &str) -> Result<&'static dyn OidcType> {
-    match TYPES.iter().copied().find(|t| t.type_name() == name) {
-        Some(found) => Ok(found),
-        None => {
-            let known: Vec<_> = TYPES.iter().map(|t| t.type_name()).collect();
-            bail!("unknown oidc type `{name}` (known: {})", known.join(", "))
-        }
+    if let Some(found) = TYPES.iter().copied().find(|t| t.type_name() == name) {
+        Ok(found)
+    } else {
+        let known: Vec<_> = TYPES.iter().map(|t| t.type_name()).collect();
+        bail!("unknown oidc type `{name}` (known: {})", known.join(", "))
     }
 }

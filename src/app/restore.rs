@@ -80,20 +80,17 @@ pub fn open_archive<'c>(
     path: &str,
 ) -> Result<Archive<'c>> {
     let settings = server_config.backup.as_ref();
-    match backup::resolve_target(source, settings)? {
-        BackupTarget::Server => {
-            let path = if path.starts_with('/') {
-                path.to_string()
-            } else {
-                format!("{}/{path}", backup::server_dir(ctx, settings))
-            };
-            out!("Unpacking {path} on the server ...");
-            Archive::open_server(ctx.connector, &path)
-        }
-        _ => {
-            out!("Reading {path} ...");
-            Archive::open_local(ctx.connector, Path::new(path))
-        }
+    if backup::resolve_target(source, settings)? == BackupTarget::Server {
+        let path = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("{}/{path}", backup::server_dir(ctx, settings))
+        };
+        out!("Unpacking {path} on the server ...");
+        Archive::open_server(ctx.connector, &path)
+    } else {
+        out!("Reading {path} ...");
+        Archive::open_local(ctx.connector, Path::new(path))
     }
 }
 
@@ -204,24 +201,21 @@ fn restore_deployment(
     // stored for the target once it is deployed.
     let (name, prefix) = (&loaded.config.name, &loaded.config.prefix);
     let mut restored_secrets = None;
-    let stored = match secrets::read_in(ctx, name, prefix)? {
-        Some((path, value)) => {
-            out!("  using stored secrets {path}");
-            Some(value)
-        }
-        None => {
-            let item = format!("{}/{}", plan.dir, secrets::ARCHIVE_ITEM);
-            if plan.archive.has(&item) {
-                let overlay = secrets::prepare(&plan.archive.read(&item)?, Some(prefix))?;
-                if overlay.name != *name {
-                    bail!("the archived secrets are not for app `{name}`");
-                }
-                let value = serde_yaml_ng::from_str(&overlay.text)?;
-                restored_secrets = Some(overlay);
-                Some(value)
-            } else {
-                None
+    let stored = if let Some((path, value)) = secrets::read_in(ctx, name, prefix)? {
+        out!("  using stored secrets {path}");
+        Some(value)
+    } else {
+        let item = format!("{}/{}", plan.dir, secrets::ARCHIVE_ITEM);
+        if plan.archive.has(&item) {
+            let overlay = secrets::prepare(&plan.archive.read(&item)?, Some(prefix))?;
+            if overlay.name != *name {
+                bail!("the archived secrets are not for app `{name}`");
             }
+            let value = serde_yaml_ng::from_str(&overlay.text)?;
+            restored_secrets = Some(overlay);
+            Some(value)
+        } else {
+            None
         }
     };
     let loaded = match stored {

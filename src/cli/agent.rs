@@ -2,7 +2,7 @@
 //! the binary so it always matches this version.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
@@ -39,12 +39,12 @@ pub fn run(command: AgentCommand) -> Result<()> {
             out!("{}", if full { LLMS_FULL } else { LLMS }.trim_end());
             Ok(())
         }
-        AgentCommand::Skill { dir } => install_skill(dir),
+        AgentCommand::Skill { dir } => install_skill(&dir),
     }
 }
 
 /// Write SKILL.md and references/ to `<dir>/compost`, replacing an older copy.
-fn install_skill(dir: PathBuf) -> Result<()> {
+fn install_skill(dir: &Path) -> Result<()> {
     let skill_dir = dir.join("compost");
     let skill_file = skill_dir.join("SKILL.md");
     if let Ok(existing) = fs::read_to_string(&skill_file) {

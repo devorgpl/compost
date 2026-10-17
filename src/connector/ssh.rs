@@ -1,5 +1,5 @@
 //! Runs scripts on a remote server through the system `ssh` client, so the
-//! user's ~/.ssh/config, agent and known_hosts apply unchanged.
+//! user's `~/.ssh/config`, agent and `known_hosts` apply unchanged.
 
 use std::path::Path;
 use std::process::Command;

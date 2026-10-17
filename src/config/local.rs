@@ -1,4 +1,4 @@
-//! Files in COMPOST_HOME on the operator's machine (spec §4).
+//! Files in `COMPOST_HOME` on the operator's machine (spec §4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,7 +43,7 @@ pub struct ServerEntry {
     pub deploy: DeploySettings,
 }
 
-/// Preferences of the operator, `config.yaml` in COMPOST_HOME.
+/// Preferences of the operator, `config.yaml` in `COMPOST_HOME`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {

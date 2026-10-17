@@ -13,12 +13,11 @@ pub fn connect(home: &CompostHome, name: &str) -> Result<()> {
 
 pub fn disconnect(home: &CompostHome) -> Result<()> {
     home.require_manager()?;
-    match home.current_context()? {
-        Some(name) => {
-            home.set_current_context(None)?;
-            out!("Disconnected from {name}");
-        }
-        None => out!("Not connected"),
+    if let Some(name) = home.current_context()? {
+        home.set_current_context(None)?;
+        out!("Disconnected from {name}");
+    } else {
+        out!("Not connected");
     }
     Ok(())
 }

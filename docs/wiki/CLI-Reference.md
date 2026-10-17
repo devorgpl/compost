@@ -27,7 +27,7 @@ Commands:
   help        Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
   -V, --version          Print version
@@ -42,7 +42,7 @@ Usage: compost init [OPTIONS]
 
 Options:
       --key <KEY>        Use this manager key (a UUID) instead of a new one, e.g. to manage the servers of another compost installation from this machine
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --force            Replace the manager key of an initialized home
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
@@ -66,7 +66,7 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -80,7 +80,7 @@ Usage: compost server generate [OPTIONS]
 
 Options:
       --list             List the shared app types that can be generated
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
       --with <WITH>      Shared app types to include, e.g. `caddy,postgres` (asked when not given)
       --force            Overwrite existing files
@@ -99,7 +99,7 @@ Arguments:
 
 Options:
       --address <ADDRESS>              Host name or IP address (SSH)
-  -s, --server <SERVER>                Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>                Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --user <USER>                    SSH user [default: compostuser]
   -v, --verbose                        Print every command run on the server
       --port <PORT>                    SSH port
@@ -118,7 +118,7 @@ List defined servers
 Usage: compost server list [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -131,7 +131,7 @@ Check and display server state
 Usage: compost server state [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -145,7 +145,7 @@ Usage: compost server deploy [OPTIONS]
 
 Options:
       --apply            Also start or restart services (default: `deploy.apply`, see `compost config`)
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
@@ -166,7 +166,7 @@ Usage: compost server backup [OPTIONS]
 
 Options:
   -s, --server <SERVER>
-          Target server (default: COMPOST_SERVER, then the current context)
+          Target server (default: `COMPOST_SERVER`, then the current context)
           
           [env: COMPOST_SERVER=]
 
@@ -213,7 +213,7 @@ Arguments:
 
 Options:
   -s, --server <SERVER>
-          Target server (default: COMPOST_SERVER, then the current context)
+          Target server (default: `COMPOST_SERVER`, then the current context)
           
           [env: COMPOST_SERVER=]
 
@@ -252,7 +252,7 @@ Arguments:
   <NAME>  
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -265,7 +265,7 @@ Forget the default server
 Usage: compost disconnect [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -288,7 +288,7 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -302,7 +302,7 @@ Usage: compost app generate [OPTIONS]
 
 Options:
       --compose-file <COMPOSE_FILE>  Compose file to read services from [default: docker-compose.yaml]
-  -s, --server <SERVER>              Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>              Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --name <NAME>                  Application name (default: the current directory's name)
   -v, --verbose                      Print every command run on the server
       --force                        Overwrite existing files
@@ -317,7 +317,7 @@ List the application instances deployed on the server
 Usage: compost app list [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -331,7 +331,7 @@ Usage: compost app deploy [OPTIONS]
 
 Options:
       --apply            Also start or restart services (default: `deploy.apply`, see `compost config`)
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
@@ -357,7 +357,7 @@ Arguments:
 
 Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>        Application name (instead of config files)
   -v, --verbose          Print every command run on the server
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
@@ -376,7 +376,7 @@ Arguments:
 
 Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>        Application name (instead of config files)
   -v, --verbose          Print every command run on the server
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
@@ -403,7 +403,7 @@ Options:
           Config files merged in order (repeatable or comma-separated)
 
   -s, --server <SERVER>
-          Target server (default: COMPOST_SERVER, then the current context)
+          Target server (default: `COMPOST_SERVER`, then the current context)
           
           [env: COMPOST_SERVER=]
 
@@ -474,7 +474,7 @@ Options:
           Instance in the archive, e.g. `myapp-staging` (needed when it has several)
 
   -s, --server <SERVER>
-          Target server (default: COMPOST_SERVER, then the current context)
+          Target server (default: `COMPOST_SERVER`, then the current context)
           
           [env: COMPOST_SERVER=]
 
@@ -535,7 +535,7 @@ Commands:
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -548,7 +548,7 @@ Show shared apps and the applications linked to them
 Usage: compost connector list [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -565,7 +565,7 @@ Commands:
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -579,7 +579,7 @@ Usage: compost backup list [OPTIONS]
 
 Options:
   -s, --server <SERVER>
-          Target server (default: COMPOST_SERVER, then the current context)
+          Target server (default: `COMPOST_SERVER`, then the current context)
           
           [env: COMPOST_SERVER=]
 
@@ -612,7 +612,7 @@ Commands:
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -629,7 +629,7 @@ Arguments:
 
 Options:
       --prefix <PREFIX>  Instance prefix (overrides the one in the file; default `main`)
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --force-unlock     Remove a lock left behind by an interrupted compost command
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
@@ -643,7 +643,7 @@ List the instances with stored secrets, and the shared apps' secrets
 Usage: compost secret list [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -657,7 +657,7 @@ Usage: compost secret remove [OPTIONS]
 
 Options:
       --app <APP>        Application name
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --prefix <PREFIX>  Instance prefix [default: main]
   -v, --verbose          Print every command run on the server
       --shared           The shared apps' secrets, stored by `server deploy --secret`
@@ -679,7 +679,7 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -697,7 +697,7 @@ Arguments:
 
 Options:
       --for-server <FOR_SERVER>  Only for this server (overrides the global value)
-  -s, --server <SERVER>          Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>          Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose                  Print every command run on the server
   -h, --help                     Print help
 ```
@@ -714,7 +714,7 @@ Arguments:
 
 Options:
       --for-server <FOR_SERVER>  Only for this server
-  -s, --server <SERVER>          Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>          Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose                  Print every command run on the server
   -h, --help                     Print help
 ```
@@ -727,7 +727,7 @@ Show the preferences
 Usage: compost config show [OPTIONS]
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -745,7 +745,7 @@ Commands:
   help   Print this message or the help of the given subcommand(s)
 
 Options:
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -759,7 +759,7 @@ Usage: compost agent llms [OPTIONS]
 
 Options:
       --full             Print llms-full.txt instead: the whole documentation of this version in one file
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```
@@ -773,7 +773,7 @@ Usage: compost agent skill [OPTIONS]
 
 Options:
       --dir <DIR>        Skills folder; the skill goes in its `compost` subfolder, e.g. `~/.claude/skills` for all your projects or `.agents/skills` [default: .claude/skills]
-  -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose          Print every command run on the server
   -h, --help             Print help
 ```

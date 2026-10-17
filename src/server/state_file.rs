@@ -78,11 +78,24 @@ impl Default for StateFile {
 
 impl StateFile {
     pub fn load(ctx: &ServerCtx) -> Result<Self> {
-        match ctx.read(STATE_FILE)? {
-            None => Ok(Self::default()),
-            Some(text) => serde_yaml_ng::from_str(&text)
-                .with_context(|| format!("invalid {} on the server", ctx.path(STATE_FILE))),
-        }
+        let Some(text) = ctx.read(STATE_FILE)? else {
+            return Ok(Self::default());
+        };
+        let path = ctx.path(STATE_FILE);
+        let state: Self = serde_yaml_ng::from_str(&text)
+            .with_context(|| format!("invalid {path} on the server"))?;
+        // An older compost would misread a newer layout and save it back.
+        anyhow::ensure!(
+            state.schema == SCHEMA,
+            "{path} has schema {} (written by compost {}), this compost supports {SCHEMA}; upgrade compost",
+            state.schema,
+            if state.compost_version.is_empty() {
+                "unknown"
+            } else {
+                &state.compost_version
+            }
+        );
+        Ok(state)
     }
 
     pub fn save(&mut self, ctx: &ServerCtx) -> Result<()> {
@@ -153,4 +166,33 @@ impl StateFile {
 
 fn now() -> String {
     humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connector::local::Local;
+    use tempfile::TempDir;
+
+    #[test]
+    fn load_refuses_another_schema() {
+        let dir = TempDir::new().unwrap();
+        let connector = Local { verbose: false };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: dir.path().to_str().unwrap().to_string(),
+        };
+        assert_eq!(StateFile::load(&ctx).unwrap().schema, SCHEMA);
+
+        let mut state = StateFile::default();
+        state.set_app("app", "main", DeployStatus::Deployed);
+        state.save(&ctx).unwrap();
+        assert_eq!(StateFile::load(&ctx).unwrap().apps.len(), 1);
+
+        let path = dir.path().join(STATE_FILE);
+        std::fs::write(&path, "schema: 2\ncompost_version: 9.0.0\n").unwrap();
+        let err = format!("{:#}", StateFile::load(&ctx).unwrap_err());
+        assert!(err.contains("schema 2 (written by compost 9.0.0)"), "{err}");
+        assert!(err.contains("upgrade compost"), "{err}");
+    }
 }

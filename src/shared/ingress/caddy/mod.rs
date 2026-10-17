@@ -4,6 +4,7 @@
 mod security;
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
@@ -560,9 +561,10 @@ impl IngressType for Caddy {
             "mkdir -p -- {dir} && cd {dir} && rm -rf .restore && mkdir .restore && tar -xf - -C .restore"
         );
         for name in RESTORE_DIRS {
-            script.push_str(&format!(
+            let _ = write!(
+                script,
                 " && if [ -d .restore/{name} ]; then rm -rf {name} && mv .restore/{name} {name}; fi"
-            ));
+            );
         }
         script.push_str(" && rm -rf .restore");
         from.feed(BACKUP_ITEM, b"", &script)

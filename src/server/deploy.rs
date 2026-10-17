@@ -53,6 +53,13 @@ impl Plan<'_> {
     fn kind_name(&self) -> &'static str {
         self.kind.name()
     }
+
+    /// Set `changed` and `was_deployed` from the record of the last deploy.
+    fn compare(&mut self, state_file: &StateFile) {
+        let record = state_file.shared(self.kind_name(), &self.app.name);
+        self.changed = record.is_none_or(|record| record.config_hash != self.hash);
+        self.was_deployed = record.is_some_and(|record| record.status == DeployStatus::Deployed);
+    }
 }
 
 pub fn deploy(
@@ -81,12 +88,7 @@ pub fn deploy(
     };
 
     // 2. Render everything before changing anything on the server.
-    let mut state_file = StateFile::load(&ctx)?;
-    let previous = match ctx.read(SERVER_CONFIG_FILE)? {
-        Some(text) => ServerConfig::parse(&text).ok(),
-        None => None,
-    };
-    let mut plans = render_all(&ctx, config, &state_file)?;
+    let mut plans = render_all(&ctx, config, &StateFile::load(&ctx)?)?;
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
     if options.dry_run {
@@ -105,6 +107,16 @@ pub fn deploy(
         connector.write_file(&ctx.path(MANAGER_KEY_FILE), key.as_bytes(), 0o644)?;
         out!("Initialized {}", ctx.home);
     }
+    // Read under the lock: a command that finished since the preflight may have
+    // changed them, and saving an older copy would undo its changes.
+    let mut state_file = StateFile::load(&ctx)?;
+    for plan in &mut plans {
+        plan.compare(&state_file);
+    }
+    let previous = match ctx.read(SERVER_CONFIG_FILE)? {
+        Some(text) => ServerConfig::parse(&text).ok(),
+        None => None,
+    };
 
     // 4. Write networks and files.
     check_existing_networks(connector, &plans)?;
@@ -225,21 +237,18 @@ fn render_all<'a>(
         let rendered = kind
             .render(ctx, app)
             .with_context(|| format!("shared.{kind_name}[{}]", app.name))?;
-        let hash = hash_rendered(&rendered);
-        let record = state_file.shared(kind.name(), &app.name);
-        let changed = record.is_none_or(|record| record.config_hash != hash);
-        let was_deployed = record.is_some_and(|record| record.status == DeployStatus::Deployed);
-        let consumer = config.consumer(kind_name, app)?;
-        plans.push(Plan {
+        let mut plan = Plan {
             kind,
             app,
+            hash: hash_rendered(&rendered),
             rendered,
-            hash,
-            changed,
-            was_deployed,
+            changed: true,
+            was_deployed: false,
             compose_changed: true,
-            consumer,
-        });
+            consumer: config.consumer(kind_name, app)?,
+        };
+        plan.compare(state_file);
+        plans.push(plan);
     }
     Ok(plans)
 }

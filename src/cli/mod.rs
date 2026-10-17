@@ -26,7 +26,7 @@ use crate::error::config_err;
     about = "Manage docker-based server deployments"
 )]
 pub struct Cli {
-    /// Target server (default: COMPOST_SERVER, then the current context)
+    /// Target server (default: `COMPOST_SERVER`, then the current context)
     #[arg(short, long, global = true, env = "COMPOST_SERVER")]
     pub server: Option<String>,
 

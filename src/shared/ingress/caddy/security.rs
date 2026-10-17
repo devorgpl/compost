@@ -162,7 +162,7 @@ impl ServerSecurity {
 
     /// Hub collections for the agent's `COLLECTIONS`.
     pub fn collections(&self) -> Vec<String> {
-        let mut all: Vec<String> = BASE_COLLECTIONS.iter().map(|c| c.to_string()).collect();
+        let mut all: Vec<String> = BASE_COLLECTIONS.iter().map(ToString::to_string).collect();
         if self.appsec.crs {
             all.push(CRS_COLLECTION.to_string());
         }

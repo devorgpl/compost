@@ -94,7 +94,7 @@ infra/
     └── compost-env.yaml              shared apps this instance uses; links still to remove
 ```
 
-Files with secrets (`secrets/`, connector records of databases and OIDC, `root-connector.yaml` files, `compost.override.yaml`) have mode `0600`, their folders `0700`. Only compost writes `state.yaml`.
+Files with secrets (`secrets/`, connector records of databases and OIDC, `root-connector.yaml` files, `compost.override.yaml`) have mode `0600`, their folders `0700`. Only compost writes `state.yaml`; a compost that does not know its layout (its `schema`) refuses to use it and asks to be upgraded.
 
 ## Docker names
 

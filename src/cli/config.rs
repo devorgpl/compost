@@ -1,4 +1,4 @@
-//! `compost config …`: preferences in COMPOST_HOME, globally or per server.
+//! `compost config …`: preferences in `COMPOST_HOME`, globally or per server.
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -70,28 +70,26 @@ fn parse_bool(key: &str, value: &str) -> Result<bool> {
 fn update(home: &CompostHome, key: &str, server: Option<&str>, value: Option<bool>) -> Result<()> {
     check_key(key)?;
     home.require_manager()?;
-    let scope = match server {
-        Some(name) => {
-            let mut servers = home.servers()?;
-            let entry = servers
-                .servers
-                .iter_mut()
-                .find(|s| s.name == name)
-                .ok_or_else(|| config_err(format!("unknown server `{name}`")))?;
-            entry.deploy.apply = value;
-            home.save_servers(&servers)?;
-            format!(" for {name}")
-        }
-        None => {
-            let mut settings = home.settings()?;
-            settings.deploy.apply = value;
-            home.save_settings(&settings)?;
-            String::new()
-        }
+    let scope = if let Some(name) = server {
+        let mut servers = home.servers()?;
+        let entry = servers
+            .servers
+            .iter_mut()
+            .find(|s| s.name == name)
+            .ok_or_else(|| config_err(format!("unknown server `{name}`")))?;
+        entry.deploy.apply = value;
+        home.save_servers(&servers)?;
+        format!(" for {name}")
+    } else {
+        let mut settings = home.settings()?;
+        settings.deploy.apply = value;
+        home.save_settings(&settings)?;
+        String::new()
     };
-    match value {
-        Some(value) => out!("{key} = {value}{scope}"),
-        None => out!("{key} unset{scope}"),
+    if let Some(value) = value {
+        out!("{key} = {value}{scope}");
+    } else {
+        out!("{key} unset{scope}");
     }
     Ok(())
 }

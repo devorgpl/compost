@@ -104,8 +104,7 @@ pub fn deploy(
             .clone()
             .context("server home was not resolved")?,
     };
-    let mut state_file = StateFile::load(&ctx)?;
-    let links = resolve_links(&ctx, loaded, &report, &state_file)?;
+    let links = resolve_links(&ctx, loaded, &report, &StateFile::load(&ctx)?)?;
     let pinned_links: Vec<PinnedLink> = links.iter().map(Link::pinned).collect();
     let dropped = dropped_links(&ctx, app, &pinned_links)?;
     let files = sources::collect(loaded, config_files)?;
@@ -142,6 +141,9 @@ pub fn deploy(
 
     // 2. Upload and render.
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
+    // Read under the lock: a command that finished since the preflight may have
+    // changed it, and saving an older copy would undo its changes.
+    let mut state_file = StateFile::load(&ctx)?;
     let dir = instance::dir(&app.name, &app.prefix);
     let archive = sources::pack(&files)?;
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;

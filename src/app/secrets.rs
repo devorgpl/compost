@@ -13,7 +13,7 @@ use crate::server::lock::Lock;
 use crate::server::secrets as server_secrets;
 use crate::shared::ServerCtx;
 
-/// Relative to COMPOST_SERVER_HOME. Outside `apps/`, so `app remove` keeps them.
+/// Relative to `COMPOST_SERVER_HOME`. Outside `apps/`, so `app remove` keeps them.
 const DIR: &str = "secrets/apps";
 
 /// The stored overlay in an app archive, next to the instance's `compost.yaml`.
@@ -200,12 +200,23 @@ pub fn remove(
         )));
     }
     let _lock = Lock::acquire(connector, &ctx.home, force_unlock)?;
-    let dir = shell_quote(&ctx.path(&format!("{DIR}/{name}")));
-    connector.exec(&format!(
-        "rm -f -- {} && rmdir -- {dir} 2>/dev/null || true",
-        shell_quote(&ctx.path(&relative))
-    ))?;
+    remove_file(
+        connector,
+        &ctx.path(&relative),
+        &ctx.path(&format!("{DIR}/{name}")),
+    )
+    .with_context(|| format!("cannot remove the stored secrets of {name}-{prefix}"))?;
     out!("Removed the stored secrets of {name}-{prefix}");
+    Ok(())
+}
+
+/// Remove `file`, then `dir` if that left it empty. Only a failed `rm` is an error.
+fn remove_file(connector: &dyn Connector, file: &str, dir: &str) -> Result<()> {
+    connector.exec(&format!(
+        "rm -f -- {} && {{ rmdir -- {} 2>/dev/null || true; }}",
+        shell_quote(file),
+        shell_quote(dir)
+    ))?;
     Ok(())
 }
 
@@ -259,6 +270,28 @@ mod tests {
             let err = format!("{:#}", prepare(text, None).unwrap_err());
             assert!(err.contains(expected), "{text}: {err}");
         }
+    }
+
+    #[test]
+    fn remove_file_fails_when_rm_fails() {
+        let connector = crate::connector::local::Local { verbose: false };
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = home.path().join("app");
+        let path = |name: &str| dir.join(name).to_str().unwrap().to_string();
+        let dir_path = dir.to_str().unwrap();
+
+        // `rm -f` cannot remove a folder, whoever runs the test.
+        std::fs::create_dir_all(dir.join("main.yaml")).unwrap();
+        assert!(remove_file(&connector, &path("main.yaml"), dir_path).is_err());
+
+        std::fs::remove_dir(dir.join("main.yaml")).unwrap();
+        std::fs::write(dir.join("main.yaml"), "name: app\n").unwrap();
+        std::fs::write(dir.join("staging.yaml"), "name: app\n").unwrap();
+        remove_file(&connector, &path("main.yaml"), dir_path).unwrap();
+        assert!(!dir.join("main.yaml").exists());
+        assert!(dir.exists(), "a folder with other overlays stays");
+        remove_file(&connector, &path("staging.yaml"), dir_path).unwrap();
+        assert!(!dir.exists(), "an empty folder is removed");
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub struct Report {
     pub detail: Option<String>,
     /// e.g. `docker 29.7.2, compose 2.40.0`
     pub docker: Option<String>,
-    /// COMPOST_SERVER_HOME as an absolute path.
+    /// `COMPOST_SERVER_HOME` as an absolute path.
     pub home: Option<String>,
     pub shared: Vec<SharedAppState>,
 }

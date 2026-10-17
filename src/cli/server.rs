@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
-use crate::config::local::{CompostHome, ConnectorConfig, ServerEntry};
+use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry};
 use crate::config::server::BackupTarget;
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector;
@@ -105,7 +105,7 @@ pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
         name: args.name,
         connector,
         server_home: args.server_home,
-        deploy: Default::default(),
+        deploy: DeploySettings::default(),
     };
 
     match servers.servers.iter_mut().find(|s| s.name == entry.name) {

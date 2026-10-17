@@ -17,7 +17,7 @@ pub const CONFIG_FILE: &str = "compost.yaml";
 /// The shared apps the instance's links use.
 pub const LINKS_FILE: &str = "compost-env.yaml";
 
-/// `apps/<app>/<prefix>`, relative to COMPOST_SERVER_HOME.
+/// `apps/<app>/<prefix>`, relative to `COMPOST_SERVER_HOME`.
 pub fn dir(name: &str, prefix: &str) -> String {
     format!("apps/{name}/{prefix}")
 }

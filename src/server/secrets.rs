@@ -10,7 +10,7 @@ use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::shared::ServerCtx;
 
-/// Relative to COMPOST_SERVER_HOME, next to the apps' `secrets/apps`.
+/// Relative to `COMPOST_SERVER_HOME`, next to the apps' `secrets/apps`.
 pub const PATH: &str = "secrets/server.yaml";
 
 /// Check an overlay before it is stored: a mapping, as compost-server.yaml.

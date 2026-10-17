@@ -19,7 +19,7 @@ pub fn run(ctx: &ServerCtx, app: &AppConfig, key: &str, steps: &[Step]) -> Resul
         let args: Vec<String> = step
             .command
             .iter()
-            .flat_map(|c| c.args())
+            .flat_map(crate::config::app::StepCommand::args)
             .map(|arg| shell_quote(&arg))
             .collect();
         let script = format!(
