@@ -10,7 +10,7 @@ use serde::Deserialize;
 use super::{BackupOutputArgs, DeployArgs};
 use crate::app::backup::{self, Component, Which};
 use crate::app::instance::Selector;
-use crate::app::{deploy, list, remove, restore, secrets, state};
+use crate::app::{deploy, list, remove, restore, rollback, secrets, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
@@ -36,6 +36,10 @@ pub enum AppCommand {
     Backup(AppBackupArgs),
     /// Restore an application instance from a compost backup
     Restore(AppRestoreArgs),
+    /// List the releases of an application instance kept for rollback
+    Releases(InstanceArgs),
+    /// Deploy an earlier release of an application instance again, with the images it ran
+    Rollback(AppRollbackArgs),
 }
 
 /// Selects an instance from config files, by name and prefix, or as `app list` shows it.
@@ -154,6 +158,24 @@ pub struct AppRestoreArgs {
     pub force_unlock: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct AppRollbackArgs {
+    #[command(flatten)]
+    pub instance: InstanceArgs,
+    /// Release to deploy, as `app releases` shows it (default: the one before the current release)
+    #[arg(long, value_name = "RELEASE")]
+    pub to: Option<u32>,
+    /// Show what would change without changing anything
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Do not ask for confirmation
+    #[arg(long)]
+    pub yes: bool,
+    /// Remove a lock left behind by an interrupted compost command
+    #[arg(long)]
+    pub force_unlock: bool,
+}
+
 /// Just enough of the app config to identify an instance.
 #[derive(Deserialize)]
 struct InstanceId {
@@ -259,6 +281,33 @@ pub fn run(
                 connector.as_ref(),
                 server.server_home(),
                 &manager.manager_key,
+                &options,
+            )
+        }
+        AppCommand::Releases(args) => {
+            let selector = selector(&args)?;
+            let connector = connector::open(&server, home, verbose)?;
+            rollback::releases(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &selector,
+            )
+        }
+        AppCommand::Rollback(args) => {
+            let selector = selector(&args.instance)?;
+            let options = rollback::Options {
+                to: args.to,
+                dry_run: args.dry_run,
+                yes: args.yes,
+                force_unlock: args.force_unlock,
+            };
+            let connector = connector::open(&server, home, verbose)?;
+            rollback::rollback(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &selector,
                 &options,
             )
         }
@@ -378,6 +427,7 @@ fn deploy(
         restore: None,
         purge,
         secrets: overlay.as_ref(),
+        pinned: None,
     };
     deploy::deploy(
         connector.as_ref(),

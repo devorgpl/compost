@@ -109,7 +109,9 @@ fn define_list_connect_disconnect() {
 /// A `docker` stand-in, so tests do not need Docker. Every call is appended to
 /// `$FAKE_DOCKER_LOG`. Set `FAKE_DOCKER_RUNNING=1` to report containers as running,
 /// `FAKE_DOCKER_DOWN=1` to fail like a missing daemon, `FAKE_DOCKER_NETWORKS` to the
-/// networks that exist.
+/// networks that exist. Containers of a compose project run `FAKE_DOCKER_IMAGE_ID`;
+/// `FAKE_DOCKER_TAGS` lists the tags `image ls` shows, and
+/// `FAKE_DOCKER_MISSING_TAGS=1` makes pinned release images missing.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
@@ -134,7 +136,13 @@ case "$*" in
     for network in $FAKE_DOCKER_NETWORKS; do [ "$*" = "network inspect $network" ] && exit 0; done
     exit 1 ;;
   "network create "*) ;;
+  "ps -aq --filter label=com.docker.compose.project="*) echo c0ffee ;;
   "ps "*) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
+  "inspect -f "*) echo "app nginx:1 ${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}" ;;
+  "tag "*) ;;
+  "image inspect compost-release/"*) [ -z "$FAKE_DOCKER_MISSING_TAGS" ] ;;
+  "image ls "*) for tag in $FAKE_DOCKER_TAGS; do echo "$tag"; done ;;
+  "image rm "*) ;;
   "run "*" pg_dump "*) echo "-- dump" ;;
   "run "*" pg_isready"*) echo "accepting connections" ;;
   "run "*) cat >> "$FAKE_DOCKER_LOG" ;;
@@ -1240,6 +1248,169 @@ fn app_deploy_pull_and_recreate() {
     let built = position(" build -q --pull");
     let started = position(" up -d --remove-orphans --force-recreate");
     assert!(pulled < built && built < started, "{log}");
+}
+
+/// A server with shared apps and `web/`: an app without links whose compose
+/// file runs `nginx:<tag>`.
+fn server_with_web_app(config: &str) -> LocalServer {
+    let server = server_with_shared_apps();
+    server.write_work_file("web/compost.yaml", config);
+    server
+}
+
+fn deploy_web(server: &LocalServer, tag: &str, image_id: &str) -> assert_cmd::assert::Assert {
+    server.write_work_file(
+        "web/docker-compose.yaml",
+        &format!("services: {{app: {{image: 'nginx:{tag}'}}}}"),
+    );
+    server.run(
+        &["app", "deploy", "--apply", "-f", "web/compost.yaml"],
+        &[
+            ("FAKE_DOCKER_RUNNING", "1"),
+            ("FAKE_DOCKER_IMAGE_ID", image_id),
+        ],
+    )
+}
+
+#[test]
+fn app_rollback_deploys_an_earlier_release_with_its_images() {
+    let server = server_with_web_app("name: web\n");
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    deploy_web(&server, "1", "sha256:aaaaaaaaaaaaaaaa")
+        .success()
+        .stdout(contains("recorded release 1"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker tag sha256:aaaaaaaaaaaaaaaa compost-release/web-main:1-app"),
+        "{log}"
+    );
+    deploy_web(&server, "2", "sha256:bbbbbbbbbbbbbbbb")
+        .success()
+        .stdout(contains("recorded release 2"));
+    server.take_docker_log();
+
+    server
+        .run(&["app", "releases", "web-main"], &[])
+        .success()
+        .stdout(contains("app=bbbbbbbbbbbb  (current)"))
+        .stdout(contains("app=aaaaaaaaaaaa\n"));
+
+    let compose = "apps/web/main/sources/docker-compose.yaml";
+    server
+        .run(&["app", "rollback", "web-main", "--dry-run"], &running)
+        .success()
+        .stdout(contains("Rolling back web-main to release 1"))
+        .stdout(contains(
+            "image app nginx:1 aaaaaaaaaaaa (now bbbbbbbbbbbb)",
+        ))
+        .stdout(contains("databases and volumes are not rolled back"))
+        .stdout(contains("Dry run"));
+    assert!(server.read_server_file(compose).contains("nginx:2"));
+    server
+        .run(&["app", "rollback", "web-main"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+
+    server
+        .run(&["app", "rollback", "web-main", "--yes"], &running)
+        .success()
+        .stdout(contains("recorded release 3"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker tag compost-release/web-main:1-app nginx:1"),
+        "{log}"
+    );
+    assert!(!log.contains(" pull -q"), "{log}");
+    assert!(server.read_server_file(compose).contains("nginx:1"));
+    assert!(
+        server
+            .read_server_file("apps/web/main/releases/3/release.yaml")
+            .contains("rollback_of: 1")
+    );
+    server
+        .run(&["app", "releases", "web-main"], &[])
+        .success()
+        .stdout(contains("(current, rollback of 1)"));
+    server
+        .run(&["app", "state", "web-main"], &running)
+        .success()
+        .stdout(contains("  release: 3 ("));
+
+    server
+        .run(
+            &["app", "rollback", "web-main", "--to", "9", "--yes"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("web-main has no release 9"));
+    server
+        .run(
+            &["app", "rollback", "web-main", "--to", "3", "--yes"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("release 3 is the current release"));
+}
+
+#[test]
+fn app_releases_are_pruned_and_removed_with_the_app() {
+    let server = server_with_web_app("name: web\ndeployment: {releases: 2}\n");
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let tags = ("FAKE_DOCKER_TAGS", "1-app 2-app 3-app");
+    deploy_web(&server, "1", "sha256:1").success();
+    server
+        .run(&["app", "rollback", "web-main", "--yes"], &running)
+        .code(2)
+        .stderr(contains("no earlier release to roll back to"));
+    deploy_web(&server, "2", "sha256:2").success();
+    server.take_docker_log();
+    server.write_work_file(
+        "web/docker-compose.yaml",
+        "services: {app: {image: 'nginx:3'}}",
+    );
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "web/compost.yaml"],
+            &[running[0], tags],
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker image rm compost-release/web-main:1-app"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("image rm compost-release/web-main:2-app"),
+        "{log}"
+    );
+    let mut releases: Vec<String> = fs::read_dir(server.server_home.join("apps/web/main/releases"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    releases.sort();
+    assert_eq!(releases, ["2", "3"]);
+
+    // Missing pinned images: the rollback pulls instead.
+    server
+        .run(
+            &["app", "rollback", "web-main", "--yes"],
+            &[running[0], ("FAKE_DOCKER_MISSING_TAGS", "1")],
+        )
+        .success()
+        .stderr(contains("images of release 2 are missing"));
+    let log = server.take_docker_log();
+    assert!(log.contains(" pull -q"), "{log}");
+
+    server
+        .run(&["app", "remove", "web-main", "--yes"], &[running[0], tags])
+        .success();
+    let log = server.take_docker_log();
+    for tag in ["1-app", "2-app", "3-app"] {
+        assert!(
+            log.contains(&format!("docker image rm compost-release/web-main:{tag}")),
+            "{log}"
+        );
+    }
 }
 
 #[test]

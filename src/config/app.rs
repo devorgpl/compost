@@ -15,6 +15,8 @@ use crate::shared;
 const DEFAULT_PREFIX: &str = "main";
 const DEFAULT_COMPOSE_FILE: &str = "docker-compose.yaml";
 const DEFAULT_SOURCE_DIR: &str = ".";
+/// Default of `deployment.releases`.
+const DEFAULT_RELEASES: u32 = 5;
 /// Folder in the uploaded sources that holds copies of `compose_overrides`.
 pub const OVERRIDES_DIR: &str = ".compost";
 
@@ -175,10 +177,17 @@ pub struct Deployment {
     pub compose_overrides: Vec<String>,
     pub build: bool,
     pub attach_sources: bool,
+    /// Releases kept on the server for `app rollback`; 0 keeps none.
+    #[serde(skip_serializing_if = "is_default_releases")]
+    pub releases: u32,
 }
 
 fn is_default_source_dir(dir: &str) -> bool {
     dir == DEFAULT_SOURCE_DIR
+}
+
+fn is_default_releases(releases: &u32) -> bool {
+    *releases == DEFAULT_RELEASES
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
@@ -197,6 +206,7 @@ impl Default for Deployment {
             compose_overrides: Vec::new(),
             build: false,
             attach_sources: false,
+            releases: DEFAULT_RELEASES,
         }
     }
 }

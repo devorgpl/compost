@@ -39,7 +39,7 @@ pub fn remove(
 
     out!("Removing {project}:");
     out!(
-        "  containers and the folder {}",
+        "  containers, the folder {} and the images kept for rollback",
         ctx.path(&instance::dir(name, prefix))
     );
     if options.volumes {
@@ -79,6 +79,7 @@ pub fn remove(
             instance::compose_command(&ctx, &instance.app)
         ))
         .context("docker compose down failed")?;
+    super::release::remove_images(&ctx, &project, None)?;
 
     let dir = ctx.path(&instance::dir(name, prefix));
     let app_dir = ctx.path(&format!("apps/{name}"));

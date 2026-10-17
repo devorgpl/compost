@@ -91,7 +91,8 @@ infra/
     ├── sources/                      uploaded files; .compost/ holds the compose_overrides
     ├── compose/compost.override.yaml networks and variables added to your services
     ├── compost.yaml                  effective app config, without secrets
-    └── compost-env.yaml              shared apps this instance uses; links still to remove
+    ├── compost-env.yaml              shared apps this instance uses; links still to remove
+    └── releases/<n>/                 a release for `app rollback`: sources/, compost.yaml, release.yaml (time, images)
 ```
 
 Files with secrets (`secrets/`, connector records of databases and OIDC, `root-connector.yaml` files, `compost.override.yaml`) have mode `0600`, their folders `0700`. Only compost writes `state.yaml`; a compost that does not know its layout (its `schema`) refuses to use it and asks to be upgraded.
@@ -105,6 +106,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
 | Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
 | Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress |
+| Release image | `compost-release/<app>-<prefix>:<n>-<service>`: the image a service ran in release `<n>`, kept for `app rollback` |
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |

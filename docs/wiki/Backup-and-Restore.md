@@ -52,7 +52,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |
 
-The default is `links,sources,volumes`. The stored config is always saved, and the overlay stored with `secret deploy`, if any. `--link main-db` or `--link database:main-db` saves only that link.
+The default is `links,sources,volumes`. The stored config is always saved, and the overlay stored with `secret deploy`, if any. [Releases](Applications.md#releases-and-rollback) are not saved. `--link main-db` or `--link database:main-db` saves only that link.
 
 Volumes must be listed to be saved:
 

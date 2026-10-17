@@ -7,6 +7,7 @@ use serde_yaml_ng::Value;
 
 use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
+use super::release::{self, Release};
 use super::restore::RestorePlan;
 use super::secrets::{self, Overlay};
 use super::sources;
@@ -36,6 +37,8 @@ pub struct Options<'a> {
     pub purge: Vec<String>,
     /// Overlay stored as the instance's secrets with its files (`--secret`).
     pub secrets: Option<&'a Overlay>,
+    /// Start the images of this release instead of pulling or building (`app rollback`).
+    pub pinned: Option<&'a Release>,
 }
 
 /// A link of the app, resolved to a shared app on the server.
@@ -223,6 +226,13 @@ pub fn deploy(
             if kept.len() != dropped.links.len() {
                 write_pinned(&kept)?;
             }
+            // The services run; a release that cannot be recorded does not undo that.
+            let rollback_of = options.pinned.map(|release| release.number);
+            match release::record(&ctx, app, rollback_of) {
+                Ok(Some(number)) => out!("  recorded release {number}"),
+                Ok(None) => {}
+                Err(err) => eprintln!("warning: could not record a release: {err:#}"),
+            }
             state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
             state_file.save(&ctx)?;
             out!();
@@ -365,11 +375,12 @@ fn apply(
 
     let project = app.instance();
     let compose = instance::compose_command(ctx, app);
-    let images_restored = match restore {
-        Some(plan) => plan.load_images(ctx, app)?,
-        None => false,
+    let images_restored = match (restore, options.pinned) {
+        (Some(plan), _) => plan.load_images(ctx, app)?,
+        (None, Some(release)) => release::retag(ctx, &project, release)?,
+        (None, None) => false,
     };
-    // With restored images, `up` still builds or pulls the ones that are missing.
+    // With restored or pinned images, `up` still builds or pulls the ones that are missing.
     if !images_restored {
         if !app.deployment.build || options.pull {
             ctx.connector

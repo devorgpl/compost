@@ -42,6 +42,9 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         |r| format!("{} ({})", r.status, r.updated_at),
     );
     out!("{}: {status}", app.instance());
+    if let Some(release) = super::release::list(ctx, &app.name, &app.prefix)?.last() {
+        out!("  release: {} ({})", release.number, release.created_at);
+    }
 
     let containers = compose::ps(ctx.connector, &app.instance())?;
     out!("  services:");

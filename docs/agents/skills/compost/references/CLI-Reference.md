@@ -285,6 +285,8 @@ Commands:
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
+  releases  List the releases of an application instance kept for rollback
+  rollback  Deploy an earlier release of an application instance again, with the images it ran
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -521,6 +523,48 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## `compost app releases`
+
+```text
+List the releases of an application instance kept for rollback
+
+Usage: compost app releases [OPTIONS] [INSTANCE]
+
+Arguments:
+  [INSTANCE]  Instance as shown by `app list`, e.g. `myapp-staging`
+
+Options:
+  -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>        Application name (instead of config files)
+  -v, --verbose          Print every command run on the server
+      --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
+  -h, --help             Print help
+```
+
+## `compost app rollback`
+
+```text
+Deploy an earlier release of an application instance again, with the images it ran
+
+Usage: compost app rollback [OPTIONS] [INSTANCE]
+
+Arguments:
+  [INSTANCE]  Instance as shown by `app list`, e.g. `myapp-staging`
+
+Options:
+  -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>        Application name (instead of config files)
+  -v, --verbose          Print every command run on the server
+      --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
+      --to <RELEASE>     Release to deploy, as `app releases` shows it (default: the one before the current release)
+      --dry-run          Show what would change without changing anything
+      --yes              Do not ask for confirmation
+      --force-unlock     Remove a lock left behind by an interrupted compost command
+  -h, --help             Print help
 ```
 
 ## `compost connector`

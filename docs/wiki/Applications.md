@@ -253,7 +253,7 @@ A deploy:
 2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken);
 3. uploads the sources: the whole folder with `build: true` or `attach_sources: true`, otherwise only the compose file. Left out: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and patterns in `.compostignore` (gitignore syntax);
 4. writes the override file and link records. **Without `--apply` it stops here.**
-5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes.
+5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
 
 The result is shown as by `app state`. Running the same deploy again keeps data and passwords and doesn't recreate unchanged containers.
 
@@ -264,6 +264,25 @@ The result is shown as by `app state`. Running the same deploy again keeps data 
 
 **Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record, routing and scraping go, its data stays (collected logs and metrics stay in the monitoring app). Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
 
+## Releases and rollback
+
+Every deploy with `--apply` whose services start is recorded as a numbered **release** on the server: a copy of the uploaded sources, the effective config (without secrets) and the image each service runs. The image is also tagged `compost-release/<instance>:<n>-<service>`, so a later pull of the same tag or `docker image prune` doesn't remove it. `app restore` and `app rollback` record releases too; a deploy without `--apply` doesn't.
+
+```sh
+compost app releases myapp-staging              # or: -f compost.yaml,… / --app myapp --prefix staging
+compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
+```
+
+`app releases` lists them newest first, with the time, who deployed (`user@host`), the compost version and short image IDs. The newest is the `current` one.
+
+`app rollback` deploys the release before the current one, or `--to <n>`, as `app deploy --apply` would: it starts the images that release ran (by ID, without pulling or building) with its compose file and config. First it shows the images and links that change and asks for confirmation unless `--yes`; `--dry-run` stops after that. The rollback becomes a new release (`rollback of <n>`), so you can roll it back too.
+
+- **Data is not rolled back.** Databases and volumes stay as they are; a migration the newer release ran is not undone. Take an `app backup` before deploys that change data.
+- **Links follow the release.** A link that the release doesn't have is removed like any [dropped link](#deploying) (its data is kept); a link it has but the current deploy doesn't is created again. Passwords and the stored overlay ([Secrets](Secrets.md)) are the current ones.
+- **Missing images.** If a pinned image was removed by hand, the rollback warns and pulls or builds as a deploy would.
+
+`deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags.
+
 ## Inspecting
 
 ```sh
@@ -271,7 +290,7 @@ compost app list                                 # every instance: status, runni
 compost app state myapp-staging                  # or: -f compost.yaml,.compost-staging.yaml / --app myapp --prefix staging
 ```
 
-`app state` shows the instance's status, each compose service (running, exited, health), domains and routes, and databases (never passwords). It exits 4 if something is not healthy. A service that exited with code 0, like a migration, counts as healthy, unless it has `restart: always` or `unless-stopped`.
+`app state` shows the instance's status, its current release, each compose service (running, exited, health), domains and routes, and databases (never passwords). It exits 4 if something is not healthy. A service that exited with code 0, like a migration, counts as healthy, unless it has `restart: always` or `unless-stopped`.
 
 Both read what the deploy stored on the server, so they don't need the app's repository.
 
@@ -281,7 +300,7 @@ Both read what the deploy stored on the server, so they don't need the app's rep
 compost app remove myapp-staging [--volumes] [--purge database,oidc] [--yes]
 ```
 
-Removes the routes and link records, then `docker compose down` and the instance's folder. Databases and realms stay unless their kind is in `--purge` (databases on an external server stay anyway, see [External databases](Servers-and-Shared-Apps.md#external-databases)); `--volumes` also removes the compose volumes, except external ones. It asks for confirmation unless `--yes`. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
+Removes the routes and link records, then `docker compose down`, the instance's folder (with its releases) and the image tags kept for rollback. Databases and realms stay unless their kind is in `--purge` (databases on an external server stay anyway, see [External databases](Servers-and-Shared-Apps.md#external-databases)); `--volumes` also removes the compose volumes, except external ones. It asks for confirmation unless `--yes`. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
 
 ## Validation errors
 

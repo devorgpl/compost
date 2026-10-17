@@ -181,16 +181,13 @@ fn restore_deployment(
     let work = tempfile::Builder::new()
         .prefix("compost-restore-")
         .tempdir()?;
-    let sources = work.path().join("sources");
     let sources_tar = work.path().join("sources.tar");
     plan.archive.fetch(&sources_item(&plan.dir), &sources_tar)?;
-    tar::Archive::new(fs::File::open(&sources_tar)?)
-        .unpack(&sources)
-        .context("cannot unpack the archived sources")?;
-    let config = sources.join(RESTORED_CONFIG);
-    fs::write(
-        &config,
-        plan.archive
+    let config = unpack_stored(
+        work.path(),
+        &sources_tar,
+        &plan
+            .archive
             .read(&format!("{}/{}", plan.dir, instance::CONFIG_FILE))?,
     )?;
     let mut files = vec![config];
@@ -251,6 +248,7 @@ fn restore_deployment(
         restore: Some(plan),
         purge: Vec::new(),
         secrets: None,
+        pinned: None,
     };
     deploy::deploy(
         ctx.connector,
@@ -271,6 +269,18 @@ fn restore_deployment(
         steps::run(ctx, &loaded.config, "after_restore", after)?;
     }
     Ok(())
+}
+
+/// Unpack stored sources into `<work>/sources` and put the stored config next
+/// to them, where deploy reads it from. Returns the config's path.
+pub(super) fn unpack_stored(work: &Path, sources_tar: &Path, config: &str) -> Result<PathBuf> {
+    let sources = work.join("sources");
+    tar::Archive::new(fs::File::open(sources_tar)?)
+        .unpack(&sources)
+        .context("cannot unpack the stored sources")?;
+    let path = sources.join(RESTORED_CONFIG);
+    fs::write(&path, config)?;
+    Ok(path)
 }
 
 /// Load data into an instance that is deployed, with its services stopped.

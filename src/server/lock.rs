@@ -66,14 +66,24 @@ impl Drop for Lock<'_> {
 
 /// e.g. `host=laptop user=cyprian pid=4242 time=2026-10-15T12:00:00Z`
 fn holder() -> String {
-    let host = std::fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "unknown".into());
-    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+    let (user, host) = user_and_host();
     let time = humantime::format_rfc3339_seconds(SystemTime::now());
     format!(
-        "host={} user={user} pid={} time={time}\n",
-        host.trim(),
+        "host={host} user={user} pid={} time={time}\n",
         std::process::id()
     )
+}
+
+/// Who runs this command, e.g. `cyprian@laptop`.
+pub fn operator() -> String {
+    let (user, host) = user_and_host();
+    format!("{user}@{host}")
+}
+
+fn user_and_host() -> (String, String) {
+    let host = std::fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "unknown".into());
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
+    (user, host.trim().to_string())
 }
 
 #[cfg(test)]

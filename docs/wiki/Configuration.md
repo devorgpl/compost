@@ -40,6 +40,7 @@ deployment:
   compose_overrides: []                # more compose files applied after it; relative to compost.yaml
   build: false                         # true: `docker compose build` on the server; false: `pull`
   attach_sources: false                # upload the whole folder; forced true by build: true
+  releases: 5                          # releases kept on the server for `app rollback`; 0 keeps none
 services:
   ingress: [ … ]                       # see Applications
   database: [ … ]
