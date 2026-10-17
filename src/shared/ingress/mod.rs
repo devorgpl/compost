@@ -2,6 +2,7 @@
 
 mod base;
 mod caddy;
+pub mod security;
 
 use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
@@ -98,7 +99,7 @@ pub trait IngressType: Sync {
     fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()>;
 }
 
-static TYPES: &[&dyn IngressType] = &[&caddy::Caddy];
+static TYPES: &[&dyn IngressType] = &[&caddy::CADDY, &caddy::CADDY_SECURE];
 
 pub struct IngressKind;
 

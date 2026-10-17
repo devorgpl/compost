@@ -6,6 +6,29 @@
 {%- endfor %}
 }
 {%- endif %}
+{%- if security %}
+
+# Logs of every site; CrowdSec reads the `crowdsec` one.
+(compost_log) {
+{%- if access_log %}
+	log
+{%- endif %}
+	log crowdsec {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
+}
+
+# Imported by every site without `security` of its own.
+(compost_site) {
+	import compost_log
+	import compost_security {args[0]}
+}
+{{ security }}
+{%- else %}
 
 # Imported by every site.
 (compost_site) {
@@ -13,6 +36,7 @@
 	log
 {%- endif %}
 }
+{%- endif %}
 {%- if metrics_port %}
 
 # Metrics for the monitoring app; not published on the host.

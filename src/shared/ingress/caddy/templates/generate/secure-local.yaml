@@ -1,0 +1,24 @@
+    # Reverse proxy that routes the domains of apps to their services, built
+    # on the server with CrowdSec: it bans addresses that attack (e.g. repeated
+    # failed logins), checks requests with AppSec and limits request rates.
+    # Plain HTTP on port 18080, so it runs next to anything using 80/443.
+    - name: caddy-main
+      type: caddysecurebuild
+      version: 2
+      configuration:
+        http_port: 18080
+        https_port: 18443
+        # auto: Let's Encrypt | internal: self-signed | off: plain HTTP
+        tls: "off"
+        security:
+          crowdsec:
+            # Never banned, e.g. your office: [203.0.113.0/24]
+            whitelist: []
+            ban_duration: 4h
+          rate_limits:
+            # At most 10 login attempts per address and minute; more get 429.
+            - name: login
+              paths: [/login, /wp-login.php, /user/login]
+              methods: [POST]
+              events: 10
+              window: 1m

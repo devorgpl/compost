@@ -88,6 +88,7 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
             .map(|name| find_choice(&all, name))
             .collect::<Result<Vec<_>>>()?
     };
+    check_one_ingress(&selected)?;
     let selected = with_requirements(&all, selected, true)?;
     let files = server_files(&selected)?;
 
@@ -108,6 +109,23 @@ pub fn server(args: ServerGenerateArgs) -> Result<()> {
     Ok(())
 }
 
+/// A server runs one ingress.
+fn check_one_ingress(selected: &[&Choice]) -> Result<()> {
+    let mut ingress: Vec<&str> = selected
+        .iter()
+        .filter(|c| c.kind.name() == "ingress")
+        .map(|c| c.type_name)
+        .collect();
+    ingress.dedup();
+    if ingress.len() > 1 {
+        return Err(config_err(format!(
+            "a server runs one ingress; choose one of {}",
+            ingress.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 /// The selection plus the types it needs, each once, in the order chosen.
 fn with_requirements<'a>(
     all: &'a [Choice],
@@ -123,10 +141,11 @@ fn with_requirements<'a>(
         }
         for required in choice.kind.generate(choice.type_name)?.requires {
             let found = find_choice(all, required)?;
-            let chosen = result
-                .iter()
-                .chain(queue.iter())
-                .any(|c| c.label() == found.label());
+            // A server has one ingress: any chosen ingress type will do.
+            let chosen = result.iter().chain(queue.iter()).any(|c| {
+                c.label() == found.label()
+                    || (c.kind.name() == "ingress" && found.kind.name() == "ingress")
+            });
             if !chosen {
                 if report {
                     out!("Adding {} (needed by {})", found.label(), choice.label());
@@ -512,6 +531,9 @@ mod tests {
                 .filter(|(i, _)| mask & (1 << i) != 0)
                 .map(|(_, c)| c)
                 .collect();
+            if check_one_ingress(&selected).is_err() {
+                continue;
+            }
             let selected = with_requirements(&all, selected, false).unwrap();
             let files = server_files(&selected).unwrap();
             let dir = tempfile::tempdir().unwrap();
@@ -536,6 +558,38 @@ mod tests {
         assert!(files.prod.contains("http_port: 80"));
         assert!(files.secrets.contains("root_password"));
         assert!(files.notes.iter().any(|n| n.contains("root_password")));
+    }
+
+    #[test]
+    fn any_ingress_type_meets_an_ingress_requirement() {
+        let all = choices();
+        let pick = |names: &[&str]| -> Vec<String> {
+            let selected = names
+                .iter()
+                .map(|n| find_choice(&all, n).unwrap())
+                .collect();
+            with_requirements(&all, selected, false)
+                .unwrap()
+                .iter()
+                .map(|c| c.label())
+                .collect()
+        };
+        assert_eq!(
+            pick(&["caddysecurebuild", "keycloak"]),
+            [
+                "ingress/caddysecurebuild",
+                "oidc/keycloak",
+                "database/postgres"
+            ]
+        );
+        assert!(pick(&["keycloak"]).contains(&"ingress/caddy".to_string()));
+
+        let both = [
+            find_choice(&all, "caddy").unwrap(),
+            find_choice(&all, "caddysecurebuild").unwrap(),
+        ];
+        let err = check_one_ingress(&both).unwrap_err();
+        assert!(format!("{err:#}").contains("one ingress"), "{err:#}");
     }
 
     #[test]

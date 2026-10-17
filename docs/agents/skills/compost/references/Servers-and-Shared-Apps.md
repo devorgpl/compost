@@ -41,11 +41,11 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 ## Deploying shared apps
 
 ```sh
-compost server generate [--with caddy,postgres,keycloak,openobserve] [--force]
+compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecurebuild] [--force]
 compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--dry-run]
 ```
 
-`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. `--list` shows the available types.
+`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
 
 `server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`. It:
 
@@ -56,7 +56,7 @@ compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [-
 
 Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
-`up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
+`up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
 When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 
@@ -122,6 +122,80 @@ shared:
 With [`monitoring`](#monitoring-shared-apps), Caddy also serves its Prometheus metrics (requests, durations, sizes per host) on port 9180 inside its container, not published on the host, and the collector scrapes them. This needs Caddy 2.8 or newer; the default image is.
 
 Caddy runs as the server user, so its files can be backed up and removed without root. Hosts and paths no app uses get a 404. When an app is deployed, Caddy is reloaded, not restarted; a site that fails `caddy validate` is rolled back and fails the deploy.
+
+### caddysecurebuild (`ingress`)
+
+Caddy as above, built on the server with request filtering, next to a [CrowdSec](https://www.crowdsec.net/) agent:
+
+- **Bans.** The agent reads Caddy's access log and bans addresses that attack, e.g. a burst of more than 5 POST requests answered 401 or 403 (brute-force logins; one is forgotten every 10 seconds), path traversal, SQL injection probes or scans for admin pages. It also gets CrowdSec's community blocklist. A banned address gets 403 on every site that enforces bans, for `ban_duration`.
+- **AppSec.** Caddy sends every request to CrowdSec's AppSec component first, which blocks known exploits (CrowdSec's virtual patching and generic rules) with 403. Optionally, it also checks the OWASP Core Rule Set, out of band: a match doesn't block the request, but repeated matches ban the address.
+- **Rate limits.** Zones you define: at most `events` matching requests per address within `window`; more get 429.
+
+All keys of [caddy](#caddy-ingress) apply, plus `security`. Everything in it is optional:
+
+```yaml
+shared:
+  ingress:
+    - name: caddy-main
+      type: caddysecurebuild
+      version: 2
+      configuration:
+        tls: auto
+        acme_email: admin@example.com
+        security:
+          crowdsec:
+            whitelist: [203.0.113.0/24]   # never banned: your office, monitoring
+            ban_duration: 4h
+          appsec:
+            crs: false
+          defaults:                       # what a site gets unless its own `security` says otherwise
+            bans: true
+            appsec: true
+            rate_limits: [login]          # default: every zone below
+          rate_limits:
+            - name: login
+              paths: [/login, /wp-login.php, /user/login]
+              methods: [POST]
+              events: 10
+              window: 1m
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `2` | Major version of the `caddy:<version>-builder` and `caddy:<version>-alpine` images the build uses |
+| `image` | – | Not accepted: the image is built |
+| `security.crowdsec.whitelist` | `[]` | IP addresses and networks (`203.0.113.0/24`) that are never banned. CrowdSec never bans private addresses either (`10.0.0.0/8`, `192.168.0.0/16`, …) |
+| `security.crowdsec.ban_duration` | `4h` | How long a ban lasts, e.g. `30m`, `1h30m` |
+| `security.crowdsec.collections` | `[]` | Hub collections installed besides `crowdsecurity/caddy`, `crowdsecurity/base-http-scenarios`, `crowdsecurity/appsec-virtual-patching` and `crowdsecurity/appsec-generic-rules`, e.g. `crowdsecurity/wordpress` |
+| `security.crowdsec.scenarios` | `[]` | Hub scenarios installed besides those of the collections |
+| `security.appsec.crs` | `false` | Also check the OWASP Core Rule Set (`crowdsecurity/appsec-crs`), out of band |
+| `security.defaults.bans` | `true` | Sites enforce bans |
+| `security.defaults.appsec` | `true` | Sites check requests with AppSec |
+| `security.defaults.rate_limits` | all zones | Zones sites use, by name |
+| `security.rate_limits[].name` | required | Zone name |
+| `security.rate_limits[].paths` | every path | Request paths; `*` matches anything, e.g. `/api/*` |
+| `security.rate_limits[].methods` | every method | e.g. `[POST]` |
+| `security.rate_limits[].events` | required | Requests allowed per address in `window` |
+| `security.rate_limits[].window` | required | e.g. `10s`, `1m` |
+| `sites[].security` | – | A site's own choice, like an app's (see [Ingress links](Applications.md#ingress-links)) |
+
+Apps choose per ingress entry with [`security`](Applications.md#request-filtering); an entry without it gets `defaults`. A site's zones count each address separately for each site. CrowdSec reads the log of every site, including sites with `bans: false`, so an address banned for attacking one site is blocked on all sites that enforce bans.
+
+Changing `defaults` or a zone applies to every site on the next `server deploy`, with a reload. When you switch an existing `caddy` to this type, apps' sites get the defaults right away, but they share their rate-limit counters until each app's next `app deploy`. `server deploy` refuses to remove a zone that a deployed app's `security` names, and switching back to `type: caddy` while an app has `security`: deploy those apps without it first.
+
+**The build.** The first `server deploy --apply` builds the image on the server (`build/Dockerfile` in the Caddy folder), which takes a few minutes and needs internet access. The image is tagged `compost-caddysecurebuild-<name>:<hash of the Dockerfile>`, so later deploys reuse it until compost pins newer modules. `--pull` rebuilds it on the newest Caddy images.
+
+**The agent** is the container `compost-ingress-<name>-crowdsec` (image `crowdsecurity/crowdsec`). It's only on a network it shares with Caddy, so apps and other shared apps can't reach it. Its state (bans, its registration with CrowdSec) is in the Docker volumes `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`; it is not part of `server backup`. If the agent is down or still starting, requests pass unchecked rather than failing.
+
+To see and lift bans:
+
+```sh
+docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
+docker exec compost-ingress-caddy-main-crowdsec cscli alerts list
+docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+```
+
+Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 
 ### postgres (`database`)
 

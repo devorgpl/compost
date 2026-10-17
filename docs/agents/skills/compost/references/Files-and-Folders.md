@@ -59,7 +59,11 @@ infra/
 │   │   ├── conf/sites/<instance>-<entry>.caddy
 │   │   ├── conf/custom/<site>.caddy  `sites` of compost-server.yaml
 │   │   ├── data/                     certificates
-│   │   └── config/
+│   │   ├── config/
+│   │   ├── build/Dockerfile          caddysecurebuild: the image built on the server
+│   │   ├── conf/crowdsec/            caddysecurebuild: the CrowdSec agent's log sources, ban profile, whitelist
+│   │   ├── logs/access.log           caddysecurebuild: access log of every site, read by CrowdSec
+│   │   └── secrets/crowdsec.env      caddysecurebuild: key of the bouncer in Caddy
 │   ├── database/postgres18/
 │   │   ├── compose.yaml
 │   │   ├── data/                     PGDATA
@@ -97,9 +101,11 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 |---|---|
 | Instance compose project | `<app>-<prefix>`, e.g. `myapp-staging` |
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
-| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
-| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector` |
-| Ingress network | `compost-ingress` |
+| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
+| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
+| Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress |
+| Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
+| Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |

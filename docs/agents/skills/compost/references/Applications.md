@@ -97,6 +97,28 @@ Longer paths win, `/` comes last, and paths no route matches get a 404. A domain
 
 A route can also serve another link of the app instead of a service, with `link: <kind>/<entry>`. This is how a Keycloak realm gets its own domain; see [OIDC links](#oidc-links).
 
+### Request filtering
+
+With a [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress) ingress, every entry gets the server's `security.defaults`: CrowdSec bans, AppSec checks and rate limits. An entry can choose for itself; a field it leaves out keeps following the default:
+
+```yaml
+services:
+  ingress:
+    - name: site
+      routes: [ … ]
+      security:
+        bans: true               # block addresses CrowdSec banned
+        appsec: false            # e.g. a CMS whose editor posts HTML that looks like an attack
+        rate_limits: [login]     # zones of the server, by name; replaces the default list, [] for none
+        own_rate_limits:         # zones of this entry only, keys as on the server
+          - name: api
+            paths: [/api/*]
+            events: 100
+            window: 10s
+```
+
+`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429.
+
 ## Database links
 
 A database link creates a database and a user in a matching Postgres and passes the connection values to services:

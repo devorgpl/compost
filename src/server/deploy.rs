@@ -555,10 +555,12 @@ fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()>
     let project = shared::project_name(plan.kind_name(), &plan.app.name);
     // `up` pulls only missing images; a new image behind the same tag needs
     // its own pull, after which `up` recreates the containers that use it.
+    // Images built on the server (`build:`) are rebuilt on newer base images
+    // instead; `build` does nothing for a project without any.
     if pull {
         ctx.connector.exec(&format!(
-            "cd {dir} && docker compose -p {} pull -q",
-            shell_quote(&project)
+            "cd {dir} && docker compose -p {project} pull -q --ignore-buildable && docker compose -p {project} build --pull -q",
+            project = shell_quote(&project)
         ))?;
     }
     let recreate = if recreate { " --force-recreate" } else { "" };

@@ -1,4 +1,7 @@
-//! Caddy ingress type (spec §5.3, §9.2).
+//! Caddy ingress types (spec §5.3, §9.2): `caddy`, and `caddysecurebuild`,
+//! Caddy built on the server with request filtering (see [`security`]).
+
+mod security;
 
 use std::collections::HashSet;
 
@@ -6,20 +9,30 @@ use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::Deserialize;
 
+use self::security::ServerSecurity;
 use super::base::{self, IngressLink};
+use super::security::LinkSecurity;
 use super::{IngressType, KIND};
 use crate::config::check_name;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered,
-    RenderedFile, Role, ServerCtx, SharedAppConfig, app_service, is_domain, is_network_name,
-    project_name, render_template, service_name, shared_dir,
+    RenderedFile, Role, ServerCtx, SharedAppConfig, app_service, generate_password, is_domain,
+    is_network_name, project_name, render_template, service_name, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
 
-pub struct Caddy;
+/// `secure`: the `caddysecurebuild` type, which filters requests.
+pub struct Caddy {
+    secure: bool,
+}
+
+pub static CADDY: Caddy = Caddy { secure: false };
+pub static CADDY_SECURE: Caddy = Caddy { secure: true };
+
+const SECURE_TYPE: &str = "caddysecurebuild";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -35,6 +48,8 @@ struct CaddyConfig {
     sites: Vec<Site>,
     /// Log every request (to the container output, as JSON).
     access_log: bool,
+    /// Request filtering, `caddysecurebuild` only.
+    security: Option<ServerSecurity>,
 }
 
 impl Default for CaddyConfig {
@@ -47,6 +62,7 @@ impl Default for CaddyConfig {
             networks: Vec::new(),
             sites: Vec::new(),
             access_log: false,
+            security: None,
         }
     }
 }
@@ -59,6 +75,9 @@ struct Site {
     domains: Vec<String>,
     /// The body of the site block, e.g. `reverse_proxy shop-web-1:80`.
     config: String,
+    /// Request filtering, `caddysecurebuild` only.
+    #[serde(default)]
+    security: Option<LinkSecurity>,
 }
 
 /// Port of the metrics endpoint inside the container, served with `monitoring`.
@@ -66,6 +85,11 @@ const METRICS_PORT: u16 = 9180;
 
 /// Folder of the site files of `sites`, owned by `server deploy`.
 const CUSTOM_DIR: &str = "conf/custom";
+/// Folder of the CrowdSec agent's configuration, owned by `server deploy`.
+const CROWDSEC_DIR: &str = "conf/crowdsec";
+/// Generated once: the key the bouncer in Caddy uses for the CrowdSec agent.
+const CROWDSEC_SECRETS: &str = "secrets/crowdsec.env";
+const API_KEY_VARIABLE: &str = "CROWDSEC_API_KEY";
 
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,9 +99,45 @@ enum Tls {
     Off,
 }
 
+impl Caddy {
+    /// The security of a `caddysecurebuild` ingress, with defaults; `None` for `caddy`.
+    fn security(&self, caddy: &CaddyConfig) -> Option<ServerSecurity> {
+        self.secure
+            .then(|| caddy.security.clone().unwrap_or_default())
+    }
+
+    /// The lines that open a site block: its logs and filtering.
+    fn site_lines(
+        &self,
+        caddy: &CaddyConfig,
+        security: Option<&LinkSecurity>,
+        site: &str,
+    ) -> Vec<String> {
+        match self.security(caddy) {
+            Some(_) => security::site_lines(security, site),
+            None => vec!["import compost_site".to_string()],
+        }
+    }
+
+    /// Security a site or link asks for must be available on this ingress.
+    fn check_link_security(
+        &self,
+        caddy: &CaddyConfig,
+        security: Option<&LinkSecurity>,
+    ) -> Result<()> {
+        let Some(security) = security else {
+            return Ok(());
+        };
+        match self.security(caddy) {
+            Some(server) => server.check_link(security),
+            None => bail!("`security` needs an ingress of type {SECURE_TYPE}, not caddy"),
+        }
+    }
+}
+
 impl IngressType for Caddy {
     fn type_name(&self) -> &'static str {
-        "caddy"
+        if self.secure { SECURE_TYPE } else { "caddy" }
     }
 
     fn default_version(&self) -> Option<u32> {
@@ -97,6 +157,19 @@ impl IngressType for Caddy {
     }
 
     fn generate(&self) -> Generated {
+        if self.secure {
+            return Generated {
+                local: include_str!("templates/generate/secure-local.yaml"),
+                prod: Some(include_str!("templates/generate/secure-prod.yaml")),
+                secrets: None,
+                notes: &[
+                    "caddysecurebuild: point the domains of your apps to the server and set `acme_email` in compost-server.prod.yaml.",
+                    "caddysecurebuild: the first deploy builds Caddy on the server, which takes a few minutes.",
+                    "caddysecurebuild: add your own address to `whitelist`; lift a ban with `docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip <address>`.",
+                ],
+                requires: &[],
+            };
+        }
         Generated {
             local: include_str!("templates/generate/local.yaml"),
             prod: Some(include_str!("templates/generate/prod.yaml")),
@@ -120,6 +193,20 @@ impl IngressType for Caddy {
             );
         }
         let caddy: CaddyConfig = config.configuration()?;
+        if self.secure {
+            ensure!(
+                config.image.is_none(),
+                "image is not used: {SECURE_TYPE} builds its own image on the server"
+            );
+        } else {
+            ensure!(
+                caddy.security.is_none(),
+                "security needs type {SECURE_TYPE}"
+            );
+        }
+        if let Some(security) = &caddy.security {
+            security.validate()?;
+        }
         ensure!(
             caddy.http_port != caddy.https_port,
             "http_port and https_port must differ"
@@ -183,6 +270,12 @@ impl IngressType for Caddy {
                 "sites[{}]: config is empty",
                 site.name
             );
+            if let Some(security) = &site.security {
+                security
+                    .validate()
+                    .and_then(|()| self.check_link_security(&caddy, Some(security)))
+                    .with_context(|| format!("sites[{}]", site.name))?;
+            }
         }
         Ok(())
     }
@@ -196,6 +289,7 @@ impl IngressType for Caddy {
         out: &mut Contribution,
     ) -> Result<()> {
         let caddy: CaddyConfig = ctx.shared.configuration()?;
+        self.check_link_security(&caddy, link.security.as_ref())?;
         for site in &caddy.sites {
             if let Some(domain) = link.domains.iter().find(|d| site.domains.contains(d)) {
                 bail!(
@@ -211,10 +305,33 @@ impl IngressType for Caddy {
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
         let caddy: CaddyConfig = config.configuration()?;
         let version = config.version.unwrap_or(DEFAULT_VERSION);
-        let image = config
-            .image
-            .clone()
-            .unwrap_or_else(|| format!("caddy:{version}-alpine"));
+        let security = self.security(&caddy);
+        let dir = shared_dir(KIND, &config.name);
+        let mut files = Vec::new();
+        let mut dirs = vec![format!("{dir}/data"), format!("{dir}/config")];
+        let mut owned_dirs = vec![format!("{dir}/{CUSTOM_DIR}")];
+
+        let image = match &security {
+            // Built on the server; a changed Dockerfile gets a new tag, which
+            // `docker compose up` builds.
+            Some(_) => {
+                let dockerfile = security::dockerfile(version)?;
+                let tag = format!(
+                    "compost-{SECURE_TYPE}-{}:{}",
+                    config.name,
+                    &sha256_hex(&dockerfile)[..12]
+                );
+                files.push(RenderedFile::new(
+                    format!("{dir}/build/Dockerfile"),
+                    dockerfile,
+                ));
+                tag
+            }
+            None => config
+                .image
+                .clone()
+                .unwrap_or_else(|| format!("caddy:{version}-alpine")),
+        };
 
         let mut options = Vec::new();
         if let Some(email) = &caddy.acme_email {
@@ -242,6 +359,41 @@ impl IngressType for Caddy {
 
         let mut networks = vec![base::NETWORK.to_string()];
         networks.extend(caddy.networks.iter().cloned());
+        let mut service_networks = networks.clone();
+        let mut snippets = None;
+        let mut crowdsec = None;
+        if let Some(security) = &security {
+            check_link_security_in_use(ctx, config, security)?;
+            let host = crowdsec_service(&config.name);
+            options.extend(security.options(&host));
+            snippets = Some(security.snippets()?.trim_end().to_string());
+            files.push(RenderedFile::secret(
+                format!("{dir}/{CROWDSEC_SECRETS}"),
+                crowdsec_secrets(&crowdsec_key(ctx, &config.name)?),
+            ));
+            let mut hashed = String::new();
+            for (name, contents) in security.crowdsec_files()? {
+                hashed.push_str(&contents);
+                files.push(RenderedFile::new(
+                    format!("{dir}/{CROWDSEC_DIR}/{name}"),
+                    contents,
+                ));
+            }
+            service_networks.push("crowdsec".to_string());
+            dirs.push(format!("{dir}/logs"));
+            owned_dirs.push(format!("{dir}/{CROWDSEC_DIR}"));
+            crowdsec = Some(context! {
+                service => host,
+                image => security::CROWDSEC_IMAGE,
+                collections => security.collections(),
+                scenarios => security.crowdsec.scenarios.clone(),
+                whitelist => !security.crowdsec.whitelist.is_empty(),
+                config_hash => sha256_hex(&hashed)[..12].to_string(),
+            });
+        } else {
+            check_no_link_security(ctx, config)?;
+        }
+
         let compose = render_template(
             include_str!("templates/compose.yaml.j2"),
             context! {
@@ -253,41 +405,43 @@ impl IngressType for Caddy {
                 https_port => caddy.https_port,
                 publish_https => caddy.tls != Tls::Off,
                 networks,
+                service_networks,
+                crowdsec,
             },
         )?;
         let caddyfile = render_template(
             include_str!("templates/Caddyfile.j2"),
             context! {
                 options,
+                security => snippets,
                 custom_sites => !caddy.sites.is_empty(),
                 access_log => caddy.access_log,
                 metrics_port => metrics.then_some(METRICS_PORT),
             },
         )?;
 
-        let dir = shared_dir(KIND, &config.name);
-        let mut files = vec![
+        files.extend([
             RenderedFile::new(format!("{dir}/compose.yaml"), compose),
             RenderedFile::new(format!("{dir}/conf/Caddyfile"), caddyfile),
             RenderedFile::new(
                 format!("{dir}/conf/sites/00-default.caddy"),
                 include_str!("templates/default-site.caddy").to_string(),
             ),
-        ];
+        ]);
         if !caddy.sites.is_empty() {
             check_site_conflicts(ctx, config, &caddy.sites)?;
         }
         for site in &caddy.sites {
             files.push(RenderedFile::new(
                 format!("{dir}/{CUSTOM_DIR}/{}.caddy", site.name),
-                render_site(config, &caddy, site)?,
+                self.render_site(config, &caddy, site)?,
             ));
         }
         Ok(Rendered {
             files,
-            dirs: vec![format!("{dir}/data"), format!("{dir}/config")],
+            dirs,
             existing_networks: caddy.networks,
-            owned_dirs: vec![format!("{dir}/{CUSTOM_DIR}")],
+            owned_dirs,
             ..Default::default()
         })
     }
@@ -338,6 +492,7 @@ impl IngressType for Caddy {
                 instance => ctx.app.instance(),
                 entry => link.name.as_str(),
                 addresses => addresses.join(", "),
+                site_lines => self.site_lines(&caddy, link.security.as_ref(), &ctx.link_id(&link.name)),
                 routes => minijinja::value::Serde(&routes),
                 fallback,
             },
@@ -432,23 +587,96 @@ const BACKUP_DIRS: [&str; 3] = ["data", "config", "conf"];
 const RESTORE_DIRS: [&str; 2] = ["data", "config"];
 const BACKUP_ITEM: &str = "caddy.tar";
 
-/// The site block of an entry of `sites`, with its config indented.
-fn render_site(config: &SharedAppConfig, caddy: &CaddyConfig, site: &Site) -> Result<String> {
-    let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
-    let addresses: Vec<String> = site
-        .domains
+impl Caddy {
+    /// The site block of an entry of `sites`, with its config indented.
+    fn render_site(
+        &self,
+        config: &SharedAppConfig,
+        caddy: &CaddyConfig,
+        site: &Site,
+    ) -> Result<String> {
+        let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
+        let addresses: Vec<String> = site
+            .domains
+            .iter()
+            .map(|d| format!("{scheme}{d}"))
+            .collect();
+        let lines: Vec<String> = site.config.trim_end().lines().map(str::to_string).collect();
+        render_template(
+            include_str!("templates/custom-site.caddy.j2"),
+            context! {
+                shared => config.name.as_str(),
+                addresses => addresses.join(", "),
+                site_lines => self.site_lines(caddy, site.security.as_ref(), &format!("site-{}", site.name)),
+                lines,
+            },
+        )
+    }
+}
+
+/// Compose service of the CrowdSec agent; unique, since Caddy also sits on
+/// the ingress network.
+fn crowdsec_service(name: &str) -> String {
+    format!("{}-crowdsec", service_name(name))
+}
+
+/// The bouncer key: generated on the first deploy, then kept, since the
+/// agent registers it only once.
+fn crowdsec_key(ctx: &ServerCtx, name: &str) -> Result<String> {
+    let path = format!("{}/{CROWDSEC_SECRETS}", shared_dir(KIND, name));
+    let existing = ctx.read(&path)?.and_then(|text| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(&format!("{API_KEY_VARIABLE}=")))
+            .map(str::to_string)
+    });
+    Ok(existing.unwrap_or_else(generate_password))
+}
+
+/// Read by both containers: Caddy's bouncer and the agent, which registers it.
+fn crowdsec_secrets(key: &str) -> String {
+    format!("{API_KEY_VARIABLE}={key}\nBOUNCER_KEY_caddy={key}\n")
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
         .iter()
-        .map(|d| format!("{scheme}{d}"))
-        .collect();
-    let lines: Vec<String> = site.config.trim_end().lines().map(str::to_string).collect();
-    render_template(
-        include_str!("templates/custom-site.caddy.j2"),
-        context! {
-            shared => config.name.as_str(),
-            addresses => addresses.join(", "),
-            lines,
-        },
-    )
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Apps deployed with `security` must find what they use: removing a
+/// rate-limit zone would make Caddy reject their sites on reload.
+fn check_link_security_in_use(
+    ctx: &ServerCtx,
+    config: &SharedAppConfig,
+    security: &ServerSecurity,
+) -> Result<()> {
+    for record in base::records(ctx, &config.name)? {
+        if let Some(link) = &record.security {
+            security.check_link(link).map_err(|e| {
+                CompostError::ServerNotReady(format!(
+                    "{} is deployed with this security: {e}; deploy it without that first",
+                    record.owner()
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Plain Caddy has none of the snippets that sites with `security` import.
+fn check_no_link_security(ctx: &ServerCtx, config: &SharedAppConfig) -> Result<()> {
+    for record in base::records(ctx, &config.name)? {
+        if record.security.is_some() {
+            return Err(CompostError::ServerNotReady(format!(
+                "{} is deployed with `security`, which needs type {SECURE_TYPE}; deploy it without `security` first",
+                record.owner()
+            ))
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// A domain of `sites` must not be served by an app already.
@@ -486,9 +714,17 @@ fn caddy_command(ctx: &AppCtx, command: &str) -> String {
 mod tests {
     use super::*;
 
+    fn caddy_type(config: &SharedAppConfig) -> &'static Caddy {
+        if config.type_name == SECURE_TYPE {
+            &CADDY_SECURE
+        } else {
+            &CADDY
+        }
+    }
+
     fn validate(text: &str) -> Result<()> {
         let config: SharedAppConfig = serde_yaml_ng::from_str(text).unwrap();
-        Caddy.validate_config(&config)
+        caddy_type(&config).validate_config(&config)
     }
 
     #[test]
@@ -565,7 +801,7 @@ mod tests {
             connector: &connector,
             home: "/nonexistent".into(),
         };
-        Caddy.render(&ctx, &config).unwrap()
+        caddy_type(&config).render(&ctx, &config).unwrap()
     }
 
     fn file<'a>(rendered: &'a Rendered, suffix: &str) -> &'a str {
@@ -600,6 +836,10 @@ mod tests {
             "runs as the deploy user: {compose}"
         );
         assert!(compose.contains(r#""443:443/udp""#), "{compose}");
+        assert!(
+            compose.contains("      - ./conf:/etc/caddy:ro\n      - ./data:/data\n"),
+            "the folder, so reloads see replaced files: {compose}"
+        );
         assert!(compose.contains("networks: [compost-ingress]"), "{compose}");
         assert!(
             compose.ends_with("external: true\n"),
@@ -685,5 +925,228 @@ mod tests {
 
         let rendered = render("{name: c, type: caddy, configuration: {acme_email: a@b.c}}");
         assert!(file(&rendered, "conf/Caddyfile").contains("\temail a@b.c\n"));
+    }
+
+    const SECURE: &str = "{name: caddy-main, type: caddysecurebuild, version: 2, configuration: {security: {crowdsec: {whitelist: [203.0.113.7]}, rate_limits: [{name: login, paths: [/login], methods: [POST], events: 10, window: 1m}]}, sites: [{name: shop, domains: [shop.example.com], config: 'respond ok', security: {appsec: false}}]}}";
+
+    #[test]
+    fn security_needs_the_secure_type() {
+        let err = validate("{name: c, type: caddy, configuration: {security: {}}}").unwrap_err();
+        assert_eq!(err.to_string(), "security needs type caddysecurebuild");
+        let err = validate(
+            "{name: c, type: caddy, configuration: {sites: [{name: a, domains: [a.com], config: x, security: {}}]}}",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("needs an ingress of type caddysecurebuild"),
+            "{err:#}"
+        );
+        let err = validate("{name: c, type: caddysecurebuild, image: caddy:2}").unwrap_err();
+        assert!(err.to_string().contains("builds its own image"), "{err}");
+        validate("{name: c, type: caddysecurebuild}").unwrap();
+        validate(SECURE).unwrap();
+
+        let err = validate(
+            "{name: c, type: caddysecurebuild, configuration: {sites: [{name: a, domains: [a.com], config: x, security: {rate_limits: [api]}}]}}",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("sites[a]: security.rate_limits: `api`"),
+            "{err:#}"
+        );
+        let err = validate(
+            "{name: c, type: caddysecurebuild, configuration: {security: {crowdsec: {ban_duration: forever}}}}",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ban_duration"), "{err}");
+    }
+
+    #[test]
+    fn renders_the_secure_type() {
+        let home = tempfile::tempdir().unwrap();
+        let config: SharedAppConfig = serde_yaml_ng::from_str(SECURE).unwrap();
+        let connector = crate::connector::local::Local { verbose: false };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: home.path().to_string_lossy().into_owned(),
+        };
+        let rendered = CADDY_SECURE.render(&ctx, &config).unwrap();
+
+        let dockerfile = file(&rendered, "build/Dockerfile");
+        let tag = &sha256_hex(dockerfile)[..12];
+        let compose = file(&rendered, "compose.yaml");
+        assert!(
+            compose.contains(&format!(
+                "    build: ./build\n    image: compost-caddysecurebuild-caddy-main:{tag}\n"
+            )),
+            "{compose}"
+        );
+        assert!(
+            compose.contains("    networks: [compost-ingress, crowdsec]\n"),
+            "{compose}"
+        );
+        assert!(
+            compose.contains(
+                "\n  compost-shared-caddy-main-crowdsec:\n    image: crowdsecurity/crowdsec:"
+            ),
+            "{compose}"
+        );
+        assert!(compose.contains("    networks: [crowdsec]\n"), "{compose}");
+        assert!(compose.contains("compost-whitelist.yaml:ro"), "{compose}");
+        assert!(
+            compose.contains("      - ./conf:/etc/caddy:ro\n"),
+            "{compose}"
+        );
+        assert!(
+            compose.contains("      compost.config-hash: \""),
+            "{compose}"
+        );
+        assert!(
+            compose.ends_with(
+                "  crowdsec: {}\nvolumes:\n  crowdsec-data: {}\n  crowdsec-config: {}\n"
+            ),
+            "{compose}"
+        );
+        assert!(
+            compose
+                .contains("COLLECTIONS: \"crowdsecurity/caddy crowdsecurity/base-http-scenarios"),
+            "{compose}"
+        );
+
+        let caddyfile = file(&rendered, "conf/Caddyfile");
+        for expected in [
+            "\torder crowdsec first\n\torder appsec after crowdsec\n\torder rate_limit after appsec\n",
+            "\t\tapi_url http://compost-shared-caddy-main-crowdsec:8080\n",
+            "\t\tappsec_url http://compost-shared-caddy-main-crowdsec:7422\n\t\tappsec_fail_open\n",
+            "(compost_site) {\n\timport compost_log\n\timport compost_security {args[0]}\n}\n",
+            "(compost_rate_limit_login) {\n",
+            "(compost_security) {\n",
+            "}\n\n# One file per application instance",
+        ] {
+            assert!(caddyfile.contains(expected), "{expected:?}\n{caddyfile}");
+        }
+        assert!(!caddyfile.contains("\tlog\n"), "no access_log: {caddyfile}");
+
+        let site = file(&rendered, "conf/custom/shop.caddy");
+        assert!(
+            site.contains("shop.example.com {\n\timport compost_log\n\timport compost_default_bans\n\timport compost_default_rate_limits site-shop\n\trespond ok\n}\n"),
+            "{site}"
+        );
+
+        let secrets = rendered
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("secrets/crowdsec.env"))
+            .unwrap();
+        assert!(secrets.is_secret());
+        let key = secrets
+            .contents
+            .strip_prefix("CROWDSEC_API_KEY=")
+            .and_then(|rest| rest.split_once('\n'))
+            .map(|(key, _)| key.to_string())
+            .unwrap();
+        assert_eq!(
+            secrets.contents,
+            format!("CROWDSEC_API_KEY={key}\nBOUNCER_KEY_caddy={key}\n")
+        );
+        assert!(
+            rendered
+                .dirs
+                .contains(&"shared/ingress/caddy-main/logs".to_string())
+        );
+        assert_eq!(
+            rendered.owned_dirs,
+            [
+                "shared/ingress/caddy-main/conf/custom",
+                "shared/ingress/caddy-main/conf/crowdsec"
+            ]
+        );
+        let crowdsec: Vec<_> = rendered
+            .files
+            .iter()
+            .filter_map(|f| {
+                f.path
+                    .strip_prefix("shared/ingress/caddy-main/conf/crowdsec/")
+            })
+            .collect();
+        assert_eq!(
+            crowdsec,
+            [
+                "acquis-caddy.yaml",
+                "acquis-appsec.yaml",
+                "profiles.yaml",
+                "whitelist.yaml"
+            ]
+        );
+
+        // The key is generated once, then kept.
+        let path = home
+            .path()
+            .join("shared/ingress/caddy-main/secrets/crowdsec.env");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "CROWDSEC_API_KEY=kept\nBOUNCER_KEY_caddy=kept\n").unwrap();
+        let again = CADDY_SECURE.render(&ctx, &config).unwrap();
+        assert!(file(&again, "secrets/crowdsec.env").starts_with("CROWDSEC_API_KEY=kept\n"));
+    }
+
+    #[test]
+    fn secure_access_log_goes_to_both_logs() {
+        let caddyfile = file(
+            &render("{name: c, type: caddysecurebuild, configuration: {access_log: true}}"),
+            "conf/Caddyfile",
+        )
+        .to_string();
+        assert!(
+            caddyfile.contains("(compost_log) {\n\tlog\n\tlog crowdsec {\n"),
+            "{caddyfile}"
+        );
+    }
+
+    #[test]
+    fn checks_the_security_of_deployed_links() {
+        let home = tempfile::tempdir().unwrap();
+        let records = home.path().join("connectors/ingress/c");
+        std::fs::create_dir_all(&records).unwrap();
+        std::fs::write(
+            records.join("shop-prod-web.yaml"),
+            "{app: shop, prefix: prod, entry: web, domains: [shop.example.com], routes: [], security: {rate_limits: [login]}}",
+        )
+        .unwrap();
+        let connector = crate::connector::local::Local { verbose: false };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: home.path().to_string_lossy().into_owned(),
+        };
+        let render = |text: &str| {
+            let config: SharedAppConfig = serde_yaml_ng::from_str(text).unwrap();
+            caddy_type(&config)
+                .render(&ctx, &config)
+                .map(|_| ())
+                .map_err(|e| format!("{e:#}"))
+        };
+        render("{name: c, type: caddysecurebuild, configuration: {security: {rate_limits: [{name: login, events: 5, window: 1m}]}}}")
+            .unwrap();
+        let err = render("{name: c, type: caddysecurebuild}").unwrap_err();
+        assert!(
+            err.contains(
+                "shop/prod (web) is deployed with this security: security.rate_limits: `login`"
+            ),
+            "{err}"
+        );
+        let err = render("{name: c, type: caddy}").unwrap_err();
+        assert!(err.contains("needs type caddysecurebuild"), "{err}");
+    }
+
+    #[test]
+    fn plain_sites_keep_importing_compost_site() {
+        let rendered = render(
+            "{name: c, type: caddy, configuration: {sites: [{name: shop, domains: [a.com], config: x}]}}",
+        );
+        assert!(
+            file(&rendered, "conf/custom/shop.caddy")
+                .ends_with("a.com {\n\timport compost_site\n\tx\n}\n")
+        );
+        assert!(!file(&rendered, "compose.yaml").contains("crowdsec"));
+        assert!(!rendered.files.iter().any(|f| f.path.contains("build/")));
     }
 }

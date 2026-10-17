@@ -309,6 +309,53 @@ compost connector list
 
 Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; traces from the SDK show under Traces.
 
+## Block brute-force logins
+
+Switch the ingress to `caddysecurebuild`: Caddy built with CrowdSec. It bans addresses whose login POSTs keep failing with 401 or 403, blocks known exploits with AppSec and throttles login attempts:
+
+```yaml
+# compost-server.yaml
+shared:
+  ingress:
+    - name: caddy-main
+      type: caddysecurebuild
+      configuration:
+        security:
+          crowdsec:
+            whitelist: [203.0.113.7]      # your own address
+          rate_limits:
+            - name: login
+              paths: [/login]
+              methods: [POST]
+              events: 10
+              window: 1m
+```
+
+```sh
+compost server deploy --apply          # the first one builds Caddy: a few minutes
+```
+
+Apps keep their sites and get the defaults on this deploy. One whose admin pages post HTML can turn AppSec off for itself, and an API can get a limit of its own:
+
+```yaml
+# compost.yaml
+services:
+  ingress:
+    - name: site
+      routes: [ … ]
+      security:
+        appsec: false
+        own_rate_limits:
+          - {name: api, paths: [/api/*], events: 100, window: 10s}
+```
+
+From an address that isn't whitelisted, a burst of failed logins gets it banned within seconds: every site then answers 403 until `ban_duration` (4 hours by default) passes. Slower attempts are cut off at 10 a minute with 429.
+
+```sh
+docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
+docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+```
+
 ## A review copy of production
 
 ```sh

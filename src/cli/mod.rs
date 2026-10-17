@@ -121,7 +121,7 @@ pub struct DeployArgs {
     /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
-    /// Pull images again, even when their tags did not change (needs `--apply`)
+    /// Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
     #[arg(long)]
     pub pull: bool,
     /// Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)

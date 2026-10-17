@@ -1,0 +1,7 @@
+    - name: caddy-main
+      configuration:
+        http_port: 80
+        https_port: 443
+        # Certificates from Let's Encrypt. Domains must point to this server.
+        tls: auto
+        acme_email: admin@example.com

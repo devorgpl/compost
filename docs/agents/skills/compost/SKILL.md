@@ -39,7 +39,7 @@ The user must have connected with `ssh` once to accept the host key; compost nev
 **Shared apps**, in an infrastructure folder ([Servers and shared apps](references/Servers-and-Shared-Apps.md)):
 
 ```sh
-compost server generate --with caddy,postgres         # --list shows the types
+compost server generate --with caddy,postgres         # --list shows the types; caddysecurebuild instead of caddy adds CrowdSec bans, AppSec and rate limits
 # edit compost-server.prod.yaml (acme_email), copy .compost-server.secrets.example.yaml to .compost-server.secrets.yaml
 compost server deploy --dry-run -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
 compost server deploy --apply   -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
@@ -57,7 +57,7 @@ compost app state myapp-staging
 
 Or store the overlay on the server, so any machine or CI deploys with `compost.yaml` alone: `compost secret deploy .compost-staging.yaml`, then `compost app deploy --apply --prefix staging`.
 
-**Update images or recreate containers:** add `--pull` (pull images again, even with unchanged tags) or `--recreate` (recreate every container; volumes are kept) to `server deploy --apply` or `app deploy --apply`. Shared apps are never pulled without `--pull` unless `version` or `image` changes; recreating them restarts what every app uses.
+**Update images or recreate containers:** add `--pull` (pull images again, even with unchanged tags; rebuild images built on the server) or `--recreate` (recreate every container; volumes are kept) to `server deploy --apply` or `app deploy --apply`. Shared apps are never pulled without `--pull` unless `version` or `image` changes; recreating them restarts what every app uses.
 
 **Inspect:** `compost app list`, `compost app state <instance>`, `compost connector list`, `compost server state`, `compost backup list`.
 

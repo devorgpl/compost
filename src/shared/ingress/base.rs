@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::KIND;
+use super::security::LinkSecurity;
 use crate::config::app::{AppConfig, link_name};
 use crate::config::check_name;
 use crate::connector::shell_quote;
@@ -29,6 +30,9 @@ pub struct IngressLink {
     pub domains: Vec<String>,
     #[serde(default)]
     pub routes: Vec<Route>,
+    /// Request filtering; only ingress types that filter requests accept it.
+    #[serde(default)]
+    pub security: Option<LinkSecurity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +72,15 @@ pub struct IngressRecord {
     pub entry: String,
     pub domains: Vec<String>,
     pub routes: Vec<RouteRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<LinkSecurity>,
+}
+
+impl IngressRecord {
+    /// e.g. `myapp/staging (ui-front)`.
+    pub fn owner(&self) -> String {
+        format!("{}/{} ({})", self.app, self.prefix, self.entry)
+    }
 }
 
 /// What a route points to.
@@ -118,6 +131,9 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
     }
 
     ensure!(!link.routes.is_empty(), "at least one route is required");
+    if let Some(security) = &link.security {
+        security.validate()?;
+    }
     let mut names = HashSet::new();
     let mut paths = HashSet::new();
     for route in &link.routes {
@@ -280,6 +296,7 @@ pub fn prepare_application(ctx: &AppCtx, link: &IngressLink, out: &mut Contribut
         entry: link.name.clone(),
         domains: link.domains.clone(),
         routes,
+        security: link.security.clone(),
     };
     let text = serde_yaml_ng::to_string(&record)?;
     ctx.server
@@ -337,11 +354,10 @@ pub fn remove_application(ctx: &AppCtx, entry: &str) -> Result<()> {
     Ok(())
 }
 
-/// Domains of the link records of an ingress, each with the link serving it,
-/// e.g. `myapp/staging (ui-front)`.
-pub fn domains_in_use(ctx: &ServerCtx, ingress: &str) -> Result<Vec<(String, String)>> {
+/// The link records of an ingress: the app links it serves.
+pub fn records(ctx: &ServerCtx, ingress: &str) -> Result<Vec<IngressRecord>> {
     let dir = ctx.path(&connectors_dir(KIND, ingress));
-    let mut used = Vec::new();
+    let mut records = Vec::new();
     for file in ctx.connector.list_dir(&dir)? {
         if !file.ends_with(".yaml") {
             continue;
@@ -350,9 +366,17 @@ pub fn domains_in_use(ctx: &ServerCtx, ingress: &str) -> Result<Vec<(String, Str
         let Some(text) = ctx.connector.read_file(&path)? else {
             continue;
         };
-        let record: IngressRecord =
-            serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?;
-        let owner = format!("{}/{} ({})", record.app, record.prefix, record.entry);
+        records.push(serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?);
+    }
+    Ok(records)
+}
+
+/// Domains of the link records of an ingress, each with the link serving it,
+/// e.g. `myapp/staging (ui-front)`.
+pub fn domains_in_use(ctx: &ServerCtx, ingress: &str) -> Result<Vec<(String, String)>> {
+    let mut used = Vec::new();
+    for record in records(ctx, ingress)? {
+        let owner = record.owner();
         for domain in record.domains {
             used.push((domain, owner.clone()));
         }

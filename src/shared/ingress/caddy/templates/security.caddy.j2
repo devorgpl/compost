@@ -1,0 +1,38 @@
+
+# Request filtering. A site imports `compost_site <site>` for the defaults, or
+# the snippets its `security` chooses; `<site>` names its rate-limit zones.
+(compost_bans) {
+	crowdsec
+}
+(compost_appsec) {
+	appsec
+}
+{%- for zone in zones %}
+(compost_rate_limit_{{ zone.name }}) {
+{%- for line in zone.lines %}
+	{{ line }}
+{%- endfor %}
+}
+{%- endfor %}
+
+# `defaults` of `security` in compost-server.yaml.
+(compost_default_bans) {
+{%- if bans %}
+	import compost_bans
+{%- endif %}
+}
+(compost_default_appsec) {
+{%- if appsec %}
+	import compost_appsec
+{%- endif %}
+}
+(compost_default_rate_limits) {
+{%- for name in default_zones %}
+	import compost_rate_limit_{{ name }} {args[0]}
+{%- endfor %}
+}
+(compost_security) {
+	import compost_default_bans
+	import compost_default_appsec
+	import compost_default_rate_limits {args[0]}
+}

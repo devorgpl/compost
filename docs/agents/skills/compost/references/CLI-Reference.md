@@ -151,7 +151,7 @@ Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
       --dry-run          Validate and show what would happen without changing the server
       --force-unlock     Remove a lock left behind by an interrupted compost command
-      --pull             Pull images again, even when their tags did not change (needs `--apply`)
+      --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
   -h, --help             Print help
 ```
@@ -336,7 +336,7 @@ Options:
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
       --dry-run          Validate and show what would happen without changing the server
       --force-unlock     Remove a lock left behind by an interrupted compost command
-      --pull             Pull images again, even when their tags did not change (needs `--apply`)
+      --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
       --purge <PURGE>    Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`

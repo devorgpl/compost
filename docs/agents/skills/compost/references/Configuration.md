@@ -83,6 +83,10 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `routes[].path` | `/` | |
 | `routes[].strip_prefix` | `false` | Forward `/ui/x` as `/x` |
 | `routes[].link` | – | `<kind>/<entry>` of another link instead of `target`/`port`, e.g. `oidc/login` |
+| `security.bans` | server default | Block addresses CrowdSec banned. Needs a `caddysecurebuild` ingress, like every `security` key |
+| `security.appsec` | server default | Check requests with CrowdSec AppSec |
+| `security.rate_limits` | server default | Rate-limit zones of the server, by name; `[]` for none |
+| `security.own_rate_limits[]` | `[]` | Zones of this entry: `name`, `paths`, `methods`, `events`, `window` (see [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)) |
 
 ### `services.database[]`
 
@@ -168,7 +172,7 @@ backup:
   server_path: backups                 # folder of the server target
 ```
 
-Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server.
+Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
 Keys every shared app has:
 
