@@ -4,12 +4,12 @@ Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS
 
 compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers.
 
-**Documentation:** the [wiki](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md). For AI agents, [`docs/agents`](docs/agents) has `llms.txt`, `llms-full.txt` and a compost Agent Skill (`compost agent skill` installs it; see [AI agents](docs/wiki/AI-Agents.md)).
+**Documentation:** the [wiki](https://github.com/devorgpl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md). For AI agents, [`docs/agents`](docs/agents) has `llms.txt`, `llms-full.txt` and a compost Agent Skill (`compost agent skill` installs it; see [AI agents](docs/wiki/AI-Agents.md)).
 
 ## Install
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh
 ```
 
 Linux x86_64 and arm64, static binaries. Other options and macOS: [Installation](docs/wiki/Installation.md).
@@ -48,7 +48,7 @@ User-visible changes update the matching page in [`docs/wiki`](docs/wiki/Home.md
 
 ## Releases
 
-Gitea Actions ([`.gitea/workflows`](.gitea/workflows)):
+GitHub Actions ([`.github/workflows`](.github/workflows)):
 - **Every branch push and pull request:** runs `just ci`.
 - **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag. For tags without a `-`, it also publishes `docs/wiki` to the repository's wiki (`scripts/publish-wiki.sh`; `just wiki v0.3.0` does the same by hand).
 
@@ -63,6 +63,6 @@ git push
 
 The tag must match the version in Cargo.toml. Release notes leave out the `Version …` commits.
 
-The workflows need a Gitea Actions runner with the `ubuntu-latest` label. They install everything else themselves. The wiki must exist (enable it and create a first page once). If the job's token can't push to it, add a token with repository write access as the `WIKI_TOKEN` Actions secret.
+The workflows run on GitHub's `ubuntu-latest` runners and install everything else themselves. The wiki must exist (enable it and create a first page once). The job's own token can't push to a wiki, so add a fine-grained personal access token with Contents read and write access to the repository as the `WIKI_TOKEN` Actions secret.
 
 To build the release archives locally, run `scripts/ci/setup.sh release`, which needs rustup, then `just dist`.

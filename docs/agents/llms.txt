@@ -6,27 +6,27 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 
 ## Start
 
-- [Home](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Home): what compost does, concepts (server, context, shared app, app, instance, overlay, link) and requirements
-- [Installation](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Installation): install script, release archives, macOS, first setup, updates
-- [Quick start](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Quick-Start): run compost against this machine with the sample app
-- [Production setup](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Production-Setup): from an empty Linux server to an app on HTTPS, step by step, with a checklist
-- [Examples](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Examples): static site, API with a database, staging and production, apps you don't own, AWS RDS, Keycloak logins, OpenObserve, review copies, nightly backups
-- [Migrating to compost](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Migration): move a server with hand-made containers to compost in reversible phases
+- [Home](https://github.com/devorgpl/compost/wiki/Home): what compost does, concepts (server, context, shared app, app, instance, overlay, link) and requirements
+- [Installation](https://github.com/devorgpl/compost/wiki/Installation): install script, release archives, macOS, first setup, updates
+- [Quick start](https://github.com/devorgpl/compost/wiki/Quick-Start): run compost against this machine with the sample app
+- [Production setup](https://github.com/devorgpl/compost/wiki/Production-Setup): from an empty Linux server to an app on HTTPS, step by step, with a checklist
+- [Examples](https://github.com/devorgpl/compost/wiki/Examples): static site, API with a database, staging and production, apps you don't own, AWS RDS, Keycloak logins, OpenObserve, review copies, nightly backups
+- [Migrating to compost](https://github.com/devorgpl/compost/wiki/Migration): move a server with hand-made containers to compost in reversible phases
 
 ## Use
 
-- [Applications](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Applications): `compost.yaml`, services, ingress, database, OIDC and monitoring links, deploying, inspecting, removing
-- [Servers and shared apps](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Servers-and-Shared-Apps): defining servers, `compost-server.yaml`, the caddy, postgres, keycloak and openobserve types, external databases, locks
-- [Secrets](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Secrets): overlays with passwords, local or stored on the server, generated passwords
-- [Backup and restore](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Backup-and-Restore): app and server backups, targets, formats, restoring, copies, moving to a new server
+- [Applications](https://github.com/devorgpl/compost/wiki/Applications): `compost.yaml`, services, ingress, database, OIDC and monitoring links, deploying, inspecting, removing
+- [Servers and shared apps](https://github.com/devorgpl/compost/wiki/Servers-and-Shared-Apps): defining servers, `compost-server.yaml`, the caddy, postgres, keycloak and openobserve types, external databases, locks
+- [Secrets](https://github.com/devorgpl/compost/wiki/Secrets): overlays with passwords, local or stored on the server, generated passwords
+- [Backup and restore](https://github.com/devorgpl/compost/wiki/Backup-and-Restore): app and server backups, targets, formats, restoring, copies, moving to a new server
 
 ## Reference
 
-- [Configuration](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Configuration): every key of `compost.yaml`, overlays, `compost-server.yaml`, `servers.yaml`, merge rules, preferences, environment variables
-- [Files and folders](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/Files-and-Folders): files on your machine, in app and infrastructure folders, on the server, and Docker names
-- [CLI reference](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/CLI-Reference): the `--help` of every command, and exit codes
-- [AI agents](https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki/AI-Agents): `llms.txt`, `llms-full.txt` and the compost Agent Skill
+- [Configuration](https://github.com/devorgpl/compost/wiki/Configuration): every key of `compost.yaml`, overlays, `compost-server.yaml`, `servers.yaml`, merge rules, preferences, environment variables
+- [Files and folders](https://github.com/devorgpl/compost/wiki/Files-and-Folders): files on your machine, in app and infrastructure folders, on the server, and Docker names
+- [CLI reference](https://github.com/devorgpl/compost/wiki/CLI-Reference): the `--help` of every command, and exit codes
+- [AI agents](https://github.com/devorgpl/compost/wiki/AI-Agents): `llms.txt`, `llms-full.txt` and the compost Agent Skill
 
 ## Optional
 
-- [llms-full.txt](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms-full.txt): all pages above in one file (master; every release also has its own)
+- [llms-full.txt](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms-full.txt): all pages above in one file (master; every release also has its own)

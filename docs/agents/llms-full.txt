@@ -76,7 +76,7 @@ compost is a single binary with no dependencies. Linux builds are static and run
 The script detects your system, downloads the latest release, verifies its checksum and installs to `~/.local/bin`:
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh
 ```
 
 Options go after `sh -s --`:
@@ -87,12 +87,12 @@ Options go after `sh -s --`:
 | `--to <dir>` | Install into this directory instead of `~/.local/bin` |
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh -s -- --version vX.Y.Z --to /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh -s -- --version vX.Y.Z --to /usr/local/bin
 ```
 
 ## By hand
 
-Download the archive for your system and `SHA256SUMS` from the [releases page](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases):
+Download the archive for your system and `SHA256SUMS` from the [releases page](https://github.com/devorgpl/compost/releases):
 
 | System | Archive |
 |---|---|
@@ -113,7 +113,7 @@ Each release also has the documentation for AI agents: `llms.txt`, `llms-full.tx
 There are no prebuilt macOS binaries yet. Build from source with [Rust](https://rustup.rs):
 
 ```sh
-cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/compost --tag vX.Y.Z
+cargo install --locked --git https://github.com/devorgpl/compost --tag vX.Y.Z
 ```
 
 ## Set up
@@ -149,7 +149,7 @@ Next: [Quick start](Quick-Start.md).
 Run compost against this machine with the sample app from the repository: a web page and a Python API with a Postgres database, behind Caddy. You need Docker with compose v2. It uses port 18080 and plain HTTP, so it runs next to anything already on ports 80 and 443.
 
 ```sh
-git clone https://gitrepo.dev.org.pl/dev.org.pl/compost.git
+git clone https://github.com/devorgpl/compost.git
 cd compost/samples
 ```
 
@@ -364,7 +364,7 @@ See [Backup and restore](Backup-and-Restore.md), also for moving to a new server
 
 # Examples
 
-The repository's [`samples/`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples) folder has a server setup (Caddy, Postgres, Keycloak) and an app (web page, Python API, migration). [Quick start](Quick-Start.md) deploys them on this machine.
+The repository's [`samples/`](https://github.com/devorgpl/compost/tree/master/samples) folder has a server setup (Caddy, Postgres, Keycloak) and an app (web page, Python API, migration). [Quick start](Quick-Start.md) deploys them on this machine.
 
 ## Static site
 
@@ -404,7 +404,7 @@ compost app deploy --apply -f compost.yaml,.compost-prod.yaml
 
 ## API with a database and a migration
 
-From [`samples/sampleapp`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.
+From [`samples/sampleapp`](https://github.com/devorgpl/compost/tree/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.
 
 ```yaml
 # docker-compose.yaml
@@ -3030,7 +3030,7 @@ compost agent llms --full                    # print llms-full.txt
 
 ## From a release
 
-Every [release](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases) has `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz`, listed in its `SHA256SUMS`. The archive holds the `compost` skill folder:
+Every [release](https://github.com/devorgpl/compost/releases) has `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz`, listed in its `SHA256SUMS`. The archive holds the `compost` skill folder:
 
 ```sh
 tar -xzf compost-skill-vX.Y.Z.tar.gz -C ~/.claude/skills
@@ -3038,4 +3038,4 @@ tar -xzf compost-skill-vX.Y.Z.tar.gz -C ~/.claude/skills
 
 ## From the repository
 
-[`docs/agents`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/docs/agents) holds the same files for master, which may describe features not released yet. An agent can fetch [`llms.txt`](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms.txt) or [`llms-full.txt`](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms-full.txt) from there.
+[`docs/agents`](https://github.com/devorgpl/compost/tree/master/docs/agents) holds the same files for master, which may describe features not released yet. An agent can fetch [`llms.txt`](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms.txt) or [`llms-full.txt`](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms-full.txt) from there.

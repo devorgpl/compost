@@ -7,7 +7,7 @@ compost is a single binary with no dependencies. Linux builds are static and run
 The script detects your system, downloads the latest release, verifies its checksum and installs to `~/.local/bin`:
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh
 ```
 
 Options go after `sh -s --`:
@@ -18,12 +18,12 @@ Options go after `sh -s --`:
 | `--to <dir>` | Install into this directory instead of `~/.local/bin` |
 
 ```sh
-curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh -s -- --version vX.Y.Z --to /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh -s -- --version vX.Y.Z --to /usr/local/bin
 ```
 
 ## By hand
 
-Download the archive for your system and `SHA256SUMS` from the [releases page](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases):
+Download the archive for your system and `SHA256SUMS` from the [releases page](https://github.com/devorgpl/compost/releases):
 
 | System | Archive |
 |---|---|
@@ -44,7 +44,7 @@ Each release also has the documentation for AI agents: `llms.txt`, `llms-full.tx
 There are no prebuilt macOS binaries yet. Build from source with [Rust](https://rustup.rs):
 
 ```sh
-cargo install --locked --git https://gitrepo.dev.org.pl/dev.org.pl/compost --tag vX.Y.Z
+cargo install --locked --git https://github.com/devorgpl/compost --tag vX.Y.Z
 ```
 
 ## Set up

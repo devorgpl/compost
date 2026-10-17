@@ -1,6 +1,6 @@
 # Examples
 
-The repository's [`samples/`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples) folder has a server setup (Caddy, Postgres, Keycloak) and an app (web page, Python API, migration). [Quick start](Quick-Start.md) deploys them on this machine.
+The repository's [`samples/`](https://github.com/devorgpl/compost/tree/master/samples) folder has a server setup (Caddy, Postgres, Keycloak) and an app (web page, Python API, migration). [Quick start](Quick-Start.md) deploys them on this machine.
 
 ## Static site
 
@@ -40,7 +40,7 @@ compost app deploy --apply -f compost.yaml,.compost-prod.yaml
 
 ## API with a database and a migration
 
-From [`samples/sampleapp`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.
+From [`samples/sampleapp`](https://github.com/devorgpl/compost/tree/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.
 
 ```yaml
 # docker-compose.yaml

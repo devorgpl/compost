@@ -3,7 +3,7 @@
 Run compost against this machine with the sample app from the repository: a web page and a Python API with a Postgres database, behind Caddy. You need Docker with compose v2. It uses port 18080 and plain HTTP, so it runs next to anything already on ports 80 and 443.
 
 ```sh
-git clone https://gitrepo.dev.org.pl/dev.org.pl/compost.git
+git clone https://github.com/devorgpl/compost.git
 cd compost/samples
 ```
 

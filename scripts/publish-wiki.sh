@@ -1,9 +1,12 @@
 #!/bin/sh
-# Publish docs/wiki to the repository's Gitea wiki, as the documentation of a
+# Publish docs/wiki to the repository's GitHub wiki, as the documentation of a
 # release:
 #
-#   GITEA_URL=https://gitea.example.com GITEA_REPO=owner/compost WIKI_TOKEN=... \
-#     scripts/publish-wiki.sh v0.3.0
+#   WIKI_TOKEN=... scripts/publish-wiki.sh v0.3.0
+#
+# The repository is GITHUB_REPOSITORY (owner/name, set in GitHub Actions),
+# devorgpl/compost by default. WIKI_TOKEN is a personal access token with
+# write access to it.
 #
 # The wiki becomes an exact copy of docs/wiki: pages missing there are deleted,
 # so edit the pages in this repository, not in the wiki. Links to `Page.md` are
@@ -17,15 +20,16 @@ set -eu
 tag="${1:?usage: publish-wiki.sh <tag>}"
 pages=docs/wiki
 [ -f "$pages/Home.md" ] || { echo "run this from the repository root ($pages/Home.md not found)" >&2; exit 1; }
+repo_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-devorgpl/compost}"
 
 if [ -n "${WIKI_REMOTE:-}" ]; then
     remote="$WIKI_REMOTE"
     set --
 else
-    : "${GITEA_URL:?set GITEA_URL}" "${GITEA_REPO:?set GITEA_REPO}" "${WIKI_TOKEN:?set WIKI_TOKEN}"
-    remote="${GITEA_URL%/}/$GITEA_REPO.wiki.git"
+    : "${WIKI_TOKEN:?set WIKI_TOKEN}"
+    remote="$repo_url.wiki.git"
     # The token goes in a header, so it is never part of a URL or printed by git.
-    auth="$(printf 'compost:%s' "$WIKI_TOKEN" | base64 | tr -d '\n')"
+    auth="$(printf 'x-access-token:%s' "$WIKI_TOKEN" | base64 | tr -d '\n')"
     set -- -c "http.extraHeader=Authorization: Basic $auth"
 fi
 
@@ -45,9 +49,8 @@ for page in "$pages"/*.md; do
     # Page links: `](Some-Page.md)` and `](Some-Page.md#part)` → `](Some-Page)`, `](Some-Page#part)`.
     sed -E 's/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/](\1\2)/g' "$page" >"$wiki/$(basename "$page")"
 done
-repo_url="${GITEA_URL:+${GITEA_URL%/}/${GITEA_REPO:-}}"
 cat >"$wiki/_Footer.md" <<EOF
-Documentation for compost $tag${repo_url:+ · [releases]($repo_url/releases)} · Generated from \`docs/wiki\` in the repository: edit it there, changes made here are overwritten by the next release.
+Documentation for compost $tag · [releases]($repo_url/releases) · Generated from \`docs/wiki\` in the repository: edit it there, changes made here are overwritten by the next release.
 EOF
 
 cd "$wiki"

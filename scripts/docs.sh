@@ -1,5 +1,5 @@
 #!/bin/sh
-# User documentation in docs/wiki (published to the Gitea wiki by
+# User documentation in docs/wiki (published to the GitHub wiki by
 # scripts/publish-wiki.sh), and the same documentation for AI agents in
 # docs/agents.
 #
@@ -22,7 +22,7 @@ pages=docs/wiki
 out=$pages/CLI-Reference.md
 agents=docs/agents
 references=$agents/skills/compost/references
-wiki_url=https://gitrepo.dev.org.pl/dev.org.pl/compost/wiki
+wiki_url=https://github.com/devorgpl/compost/wiki
 check=false
 [ "${1:-}" = --check ] && check=true
 
@@ -86,7 +86,7 @@ done
     # Page links: `](Some-Page.md#part)` → `](<wiki>/Some-Page#part)`, as publish-wiki.sh makes them.
     sed -E "s|\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)|]($wiki_url/\1\2)|g" "$agents/llms-index.md"
     printf '\n## Optional\n\n'
-    printf -- '- [llms-full.txt](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms-full.txt): all pages above in one file (master; every release also has its own)\n'
+    printf -- '- [llms-full.txt](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms-full.txt): all pages above in one file (master; every release also has its own)\n'
 } >"$tmp/agents/llms.txt"
 {
     printf '# compost documentation\n\n'
@@ -136,7 +136,7 @@ for page in "$pages"/*.md; do
     fi
 done
 
-# anchors PAGE: the anchors of its headings, as Gitea and GitHub make them:
+# anchors PAGE: the anchors of its headings, as GitHub makes them:
 # lowercase, punctuation dropped, spaces to `-`. Code blocks are skipped.
 anchors() {
     awk '/^```/ { code = !code; next } !code && /^#+ / { sub(/^#+ /, ""); print }' "$1" |

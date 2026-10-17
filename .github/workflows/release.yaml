@@ -1,5 +1,5 @@
 # Pushing a tag like v0.1.0 tests, builds portable binaries and publishes a
-# Gitea release with generated notes:
+# GitHub release with generated notes:
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -15,6 +15,8 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,21 +60,17 @@ jobs:
 
       - name: Publish release
         env:
-          GITEA_URL: ${{ github.server_url }}
-          GITEA_REPO: ${{ github.repository }}
-          # The job's own token can create releases. If your Gitea restricts
-          # it, add a token with repository write access as RELEASE_TOKEN.
-          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: >
-          scripts/gitea-release.sh "${{ github.ref_name }}" dist/RELEASE_NOTES.md
+          scripts/github-release.sh "${{ github.ref_name }}" dist/RELEASE_NOTES.md
           dist/*.tar.gz dist/*.txt dist/SHA256SUMS
 
       - name: Publish the documentation to the wiki
         if: ${{ !contains(github.ref_name, '-') }}
         env:
-          GITEA_URL: ${{ github.server_url }}
-          GITEA_REPO: ${{ github.repository }}
-          # Pushing to the wiki may need a token with repository write access
-          # as WIKI_TOKEN, if the job's own token is not allowed to.
-          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN || secrets.GITHUB_TOKEN }}
+          # The job's own token cannot push to a wiki: add a fine-grained
+          # personal access token with Contents read and write access to this
+          # repository as the WIKI_TOKEN secret.
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
         run: scripts/publish-wiki.sh "${{ github.ref_name }}"

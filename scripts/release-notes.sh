@@ -3,7 +3,7 @@
 # `v*` tag, plus install instructions. Version bumps (`Version <x>`, and the
 # older `Next version`) are left out.
 #
-#   scripts/release-notes.sh v0.2.0 [https://gitea.example.com/owner/compost]
+#   scripts/release-notes.sh v0.2.0 [https://github.com/devorgpl/compost]
 #
 # With the repository URL, the notes also link the full diff and use real
 # download URLs.

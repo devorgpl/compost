@@ -55,7 +55,7 @@ docs:
 docs-check:
     scripts/docs.sh --check
 
-# Publish docs/wiki to the Gitea wiki, e.g. `just wiki v0.3.0` (needs GITEA_URL, GITEA_REPO, WIKI_TOKEN)
+# Publish docs/wiki to the GitHub wiki, e.g. `just wiki v0.3.0` (needs WIKI_TOKEN)
 wiki tag:
     scripts/publish-wiki.sh {{tag}}
 

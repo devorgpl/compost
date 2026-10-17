@@ -26,7 +26,7 @@ compost agent llms --full                    # print llms-full.txt
 
 ## From a release
 
-Every [release](https://gitrepo.dev.org.pl/dev.org.pl/compost/releases) has `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz`, listed in its `SHA256SUMS`. The archive holds the `compost` skill folder:
+Every [release](https://github.com/devorgpl/compost/releases) has `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz`, listed in its `SHA256SUMS`. The archive holds the `compost` skill folder:
 
 ```sh
 tar -xzf compost-skill-vX.Y.Z.tar.gz -C ~/.claude/skills
@@ -34,4 +34,4 @@ tar -xzf compost-skill-vX.Y.Z.tar.gz -C ~/.claude/skills
 
 ## From the repository
 
-[`docs/agents`](https://gitrepo.dev.org.pl/dev.org.pl/compost/src/branch/master/docs/agents) holds the same files for master, which may describe features not released yet. An agent can fetch [`llms.txt`](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms.txt) or [`llms-full.txt`](https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/docs/agents/llms-full.txt) from there.
+[`docs/agents`](https://github.com/devorgpl/compost/tree/master/docs/agents) holds the same files for master, which may describe features not released yet. An agent can fetch [`llms.txt`](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms.txt) or [`llms-full.txt`](https://raw.githubusercontent.com/devorgpl/compost/master/docs/agents/llms-full.txt) from there.

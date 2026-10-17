@@ -4,7 +4,7 @@ Rust CLI that deploys docker-compose apps to servers over SSH. `README.md` has t
 
 ## Documentation
 
-User documentation is `docs/wiki/*.md`. The release workflow publishes it to the Gitea wiki for every release tag without a `-` (`scripts/publish-wiki.sh`), so the wiki shows the latest release and `docs/wiki` shows master. Nobody edits the wiki itself.
+User documentation is `docs/wiki/*.md`. The release workflow publishes it to the GitHub wiki for every release tag without a `-` (`scripts/publish-wiki.sh`), so the wiki shows the latest release and `docs/wiki` shows master. Nobody edits the wiki itself.
 
 When a change is visible to users (a command, option, config key, default, output, file on disk), update the docs in the same commit:
 
@@ -32,4 +32,4 @@ When a change is visible to users (a command, option, config key, default, outpu
 - Check what you write against the code, not `docs/design/`: the specs there are design history and are not updated.
 - `samples/README.md` and `samples/` are part of the docs: keep them working.
 
-To publish by hand (backfill, or a failed release step): `just wiki v0.3.0` with `GITEA_URL`, `GITEA_REPO` and `WIKI_TOKEN` set.
+To publish by hand (backfill, or a failed release step): `just wiki v0.3.0` with `WIKI_TOKEN` set (a personal access token with write access to the repository).

@@ -1,13 +1,13 @@
 #!/bin/sh
-# Install the portable compost binary from a Gitea release.
+# Install the portable compost binary from a GitHub release.
 #
-#   curl -fsSL https://gitrepo.dev.org.pl/dev.org.pl/compost/raw/branch/master/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/devorgpl/compost/master/scripts/install.sh | sh
 #   ... | sh -s -- --version v0.1.0 --to /usr/local/bin
 #
 # Options:
-#   --url URL        Gitea server (default: https://gitrepo.dev.org.pl)
+#   --url URL        GitHub server (default: https://github.com)
 #   --repo OWNER/NAME
-#                    repository (default: dev.org.pl/compost)
+#                    repository (default: devorgpl/compost)
 #   --version TAG    e.g. v0.1.0 (default: the latest release)
 #   --to DIR         install directory (default: ~/.local/bin)
 #
@@ -15,7 +15,7 @@
 # copies the single `compost` binary. Nothing else is installed.
 set -eu
 
-url="https://gitrepo.dev.org.pl" repo="dev.org.pl/compost" version="" to="$HOME/.local/bin"
+url="https://github.com" repo="devorgpl/compost" version="" to="$HOME/.local/bin"
 while [ $# -gt 0 ]; do
     case "$1" in
     --url) url="${2%/}"; shift 2 ;;
@@ -41,8 +41,9 @@ Darwin-*)
 esac
 
 if [ -z "$version" ]; then
-    version="$(curl -fsSL "$url/api/v1/repos/$repo/releases/latest" |
-        sed -n 's/.*"tag_name":"\([^"]*\)".*/\1/p')"
+    # .../releases/latest redirects to .../releases/tag/<tag>.
+    latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url/$repo/releases/latest" || true)"
+    case "$latest" in */releases/tag/*) version="${latest##*/}" ;; esac
     [ -n "$version" ] || { echo "cannot find the latest release of $repo" >&2; exit 1; }
 fi
 
