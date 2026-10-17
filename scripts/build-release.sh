@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build portable compost binaries for a release tag into dist/:
-#   dist/compost-<tag>-<target>.tar.gz   (compost binary + README.md)
+#   dist/compost-<tag>-<target>.tar.gz   (compost binary, README.md, licenses)
 #   dist/compost-skill-<tag>.tar.gz      (the Agent Skill folder `compost`)
 #   dist/llms.txt, dist/llms-full.txt    (documentation for AI agents)
 #   dist/SHA256SUMS
@@ -35,7 +35,7 @@ cargo zigbuild --release --locked "$@"
 for target in $targets; do
     name="compost-$tag-$target"
     mkdir "dist/$name"
-    cp "target/$target/release/compost" README.md "dist/$name/"
+    cp "target/$target/release/compost" README.md LICENSE-APACHE LICENSE-MIT "dist/$name/"
     tar -C dist -czf "dist/$name.tar.gz" "$name"
     rm -r "dist/$name"
 done
