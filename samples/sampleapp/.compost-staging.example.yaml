@@ -1,7 +1,9 @@
 # Values for the `staging` instance, including secrets. Copy to
-# .compost-staging.yaml (never commit the copy) and deploy with:
+# .compost-staging.yaml (never commit the copy), then store it on the server
+# and deploy:
 #
-#   compost app deploy --apply -f compost.yaml,.compost-staging.yaml
+#   compost app deploy --apply --secret .compost-staging.yaml
+#   compost app deploy --apply --prefix staging    # later deploys, without the file
 #
 # Files named .compost-*.yaml are never uploaded with the sources.
 prefix: staging

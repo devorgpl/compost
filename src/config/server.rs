@@ -364,16 +364,19 @@ shared:
     #[test]
     fn samples_are_valid() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/server");
-        let secrets = dir.join(".compost-server.secrets.example.yaml");
-        let real = ServerConfig::load(&[dir.join("compost-server.yaml"), secrets]).unwrap();
-        assert_eq!(real.shared_apps().count(), 4);
-        let local = ServerConfig::load(&[
-            dir.join("compost-server.yaml"),
-            dir.join("compost-server.local.yaml"),
-        ])
-        .unwrap();
+        let local = ServerConfig::load(&[dir.join("compost-server.yaml")]).unwrap();
+        assert_eq!(local.shared_apps().count(), 4);
         let caddy = &local.shared["ingress"][0].configuration;
         assert_eq!(caddy["http_port"], 18080);
+        let real = ServerConfig::load(&[
+            dir.join("compost-server.yaml"),
+            dir.join("compost-server.prod.yaml"),
+            dir.join(".compost-server.secrets.example.yaml"),
+        ])
+        .unwrap();
+        let caddy = &real.shared["ingress"][0].configuration;
+        assert_eq!(caddy["http_port"], 80);
+        assert_eq!(caddy["tls"], "auto");
     }
 
     #[test]

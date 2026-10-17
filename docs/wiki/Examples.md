@@ -110,10 +110,9 @@ app_services:
 Each overlay is an instance. They share `compost.yaml` and the server's shared apps, with separate domains, databases and containers.
 
 ```sh
-compost secret deploy .compost-staging.yaml
-compost secret deploy .compost-prod.yaml
-compost app deploy --apply --prefix staging
-compost app deploy --apply --prefix prod
+compost app deploy --apply --secret .compost-staging.yaml   # stores the overlay on the server, then deploys
+compost app deploy --apply --secret .compost-prod.yaml
+compost app deploy --apply --prefix staging                 # later deploys: the stored overlay is used
 compost app list
 ```
 

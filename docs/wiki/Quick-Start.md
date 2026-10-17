@@ -20,10 +20,10 @@ compost server state                  # dev (local): UNINITIALIZED
 
 ```sh
 cd server
-compost server deploy --apply -f compost-server.yaml,compost-server.local.yaml
+compost server deploy --apply
 ```
 
-`compost-server.yaml` defines Caddy, Postgres 18, Keycloak and OpenObserve for a real server. `compost-server.local.yaml` is an overlay that changes Caddy to port 18080 without TLS, Keycloak to `http://auth.localhost:18080` and OpenObserve to `http://logs.localhost:18080`. Files given with `-f` are merged in order; see [Configuration](Configuration.md#how-files-are-merged).
+`compost-server.yaml` defines Caddy, Postgres 18, Keycloak and OpenObserve for this machine: Caddy on port 18080 without TLS, Keycloak on `http://auth.localhost:18080` and OpenObserve on `http://logs.localhost:18080`. `compost-server.prod.yaml` is an overlay with what a real server changes (ports 80/443, Let's Encrypt, real domains); see [Production setup](Production-Setup.md#3-shared-apps).
 
 compost generates the passwords it needs. Keycloak takes a minute or two to start the first time.
 

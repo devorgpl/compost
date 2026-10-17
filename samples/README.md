@@ -27,7 +27,7 @@ compost server define dev --local          # compost folder on this machine: ~/.
 compost connect dev
 
 cd samples/server
-compost server deploy --apply -f compost-server.yaml,compost-server.local.yaml
+compost server deploy --apply          # compost-server.yaml: set up for this machine
 
 cd ../sampleapp
 cp .compost-local.example.yaml .compost-local.yaml
@@ -130,16 +130,15 @@ Log in as `alice` on the realm's account page: http://login.localhost:18080/real
 The overlay can also be stored on the server. Later deploys then need only `compost.yaml`, and the stored values are merged in every time, so the links stay as they are:
 
 ```sh
-printf 'name: sampleapp\n' | cat - .compost-local.yaml > .compost-local.secrets.yaml   # stored overlays name their app
-compost secret deploy .compost-local.secrets.yaml      # stored for sampleapp-local
-compost app deploy --apply --prefix local              # compost.yaml from this folder + the stored values
+compost app deploy --apply --secret .compost-local.yaml   # stored for sampleapp-local, and deployed
+compost app deploy --apply --prefix local                 # compost.yaml from this folder + the stored values
 ```
 
-`secret deploy` replaces the stored overlay as a whole. When a new one leaves out a link (say the `login` ingress entry), the next `app deploy` removes it. Run `app deploy --dry-run` first to see what would change.
+`--secret` replaces the stored overlay as a whole. When a new one leaves out a link (say the `login` ingress entry), the next `app deploy` removes it. Run `app deploy --dry-run` first to see what would change.
 
 ### Remove the login
 
-Delete the `oidc` entry and the `login` ingress entry, then deploy again. If you stored the overlay, store the edited one again with `secret deploy`, or delete it with `compost secret remove --app sampleapp --prefix local`: the stored values would otherwise bring the login back. compost removes the route and the link record. The realm, client and users stay in Keycloak, unless you add `--purge oidc`:
+Delete the `oidc` entry and the `login` ingress entry, then deploy again. If you stored the overlay, deploy with `--secret .compost-local.yaml` instead, or delete it with `compost secret remove --app sampleapp --prefix local`: the stored values would otherwise bring the login back. compost removes the route and the link record. The realm, client and users stay in Keycloak, unless you add `--purge oidc`:
 
 ```sh
 compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
@@ -148,7 +147,7 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
 ## Deploy to a real server
 
 1. On the server: Linux with Docker and compose v2, and a user `compostuser` in the `docker` group who can log in with your SSH key. Connect once with `ssh compostuser@<host>` to accept the host key.
-2. Point your domains (here `staging.example.com`, `www.staging.example.com`, `auth.example.com` for Keycloak and `logs.example.com` for OpenObserve) to the server. In `server/compost-server.yaml`, change `acme_email` and the `url` of Keycloak and OpenObserve.
+2. Point your domains (here `staging.example.com`, `www.staging.example.com`, `auth.example.com` for Keycloak and `logs.example.com` for OpenObserve) to the server. In `server/compost-server.prod.yaml`, change `acme_email` and the `url` of Keycloak and OpenObserve.
 3. Deploy:
 
    ```sh
@@ -157,14 +156,20 @@ compost app deploy --apply -f compost.yaml,.compost-local.yaml --purge oidc
 
    cd samples/server
    cp .compost-server.secrets.example.yaml .compost-server.secrets.yaml   # set real passwords (postgres, keycloak admin, openobserve root)
-   compost server deploy --apply          # loads compost-server.yaml + .compost-server.secrets.yaml
+   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
 
    cd ../sampleapp
    cp .compost-staging.example.yaml .compost-staging.yaml                 # set domains and password
-   compost app deploy --apply -f compost.yaml,.compost-staging.yaml
+   compost app deploy --apply --secret .compost-staging.yaml             # stores it on the server and deploys
    ```
 
 Caddy then gets certificates from Let's Encrypt for the domains, and https://staging.example.com/ shows the page.
+
+The overlay is now stored on the server, so later deploys, from any machine, need only `compost.yaml`:
+
+```sh
+compost app deploy --apply --prefix staging
+```
 
 ## What compost does with the sample
 

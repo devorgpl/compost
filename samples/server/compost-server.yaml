@@ -1,5 +1,7 @@
-# Shared applications of the server (spec §5). Safe to commit: secrets go in
-# .compost-server.secrets.yaml (see .compost-server.secrets.example.yaml).
+# Shared applications of the server (spec §5). This file runs them on this
+# machine; compost-server.prod.yaml holds what a real server changes.
+# Safe to commit: secrets go in .compost-server.secrets.yaml (see
+# .compost-server.secrets.example.yaml).
 #
 #   compost server deploy            # upload files only
 #   compost server deploy --apply    # and start the services
@@ -9,11 +11,11 @@ shared:
       type: caddy
       version: 2
       configuration:
-        http_port: 80
-        https_port: 443
-        # auto: certificates from Let's Encrypt. Domains must point to this server.
-        tls: auto
-        acme_email: admin@example.com
+        # Plain HTTP on port 18080, so it runs next to anything using 80/443.
+        http_port: 18080
+        https_port: 18443
+        # auto: Let's Encrypt | internal: self-signed | off: plain HTTP
+        tls: "off"
         # Log every request; with `monitoring`, the log goes to OpenObserve.
         access_log: true
       # Send its output and metrics to the monitoring app below.
@@ -31,7 +33,7 @@ shared:
       type: keycloak
       version: 26
       configuration:
-        url: https://auth.example.com
+        url: http://auth.localhost:18080
       monitoring: {}
   monitoring:
     # Logs, metrics and traces of apps and shared apps. Its UI is served on
@@ -40,5 +42,4 @@ shared:
       type: openobserve
       version: 1
       configuration:
-        url: https://logs.example.com
-        retention_days: 30
+        url: http://logs.localhost:18080

@@ -1,0 +1,21 @@
+# Overrides for a real server, merged by `name` over compost-server.yaml:
+#
+#   compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.compost-server.secrets.yaml
+shared:
+  ingress:
+    - name: caddy-main
+      configuration:
+        http_port: 80
+        https_port: 443
+        # Certificates from Let's Encrypt. Domains must point to this server.
+        tls: auto
+        acme_email: admin@example.com
+  oidc:
+    - name: keycloak
+      configuration:
+        url: https://auth.example.com
+  monitoring:
+    - name: monitoring
+      configuration:
+        url: https://logs.example.com
+        retention_days: 30
