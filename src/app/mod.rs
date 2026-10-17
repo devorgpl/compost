@@ -3,6 +3,7 @@
 pub mod backup;
 pub mod contribution;
 pub mod deploy;
+pub mod exec;
 pub mod instance;
 pub mod list;
 pub mod logs;

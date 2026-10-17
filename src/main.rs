@@ -39,11 +39,11 @@ fn main() -> ExitCode {
     match cli::run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: {err:#}");
-            let code = err
-                .downcast_ref::<error::CompostError>()
-                .map_or(1, error::CompostError::exit_code);
-            ExitCode::from(code)
+            let known = err.downcast_ref::<error::CompostError>();
+            if !matches!(known, Some(error::CompostError::CommandExit(_))) {
+                eprintln!("error: {err:#}");
+            }
+            ExitCode::from(known.map_or(1, error::CompostError::exit_code))
         }
     }
 }

@@ -16,6 +16,10 @@ pub enum CompostError {
     /// Stopped by Ctrl-C.
     #[error("interrupted")]
     Interrupted,
+    /// A command run for the user (`app exec`, `app run`) exited with this
+    /// status, which becomes compost's; it already said why.
+    #[error("the command exited with status {0}")]
+    CommandExit(u8),
 }
 
 impl CompostError {
@@ -25,6 +29,7 @@ impl CompostError {
             CompostError::ServerNotReady(_) => 3,
             CompostError::Unhealthy(_) => 4,
             CompostError::Interrupted => 130,
+            CompostError::CommandExit(code) => *code,
         }
     }
 }

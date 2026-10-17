@@ -6,10 +6,11 @@ use std::io::IsTerminal;
 
 use anyhow::{Result, bail};
 
-use super::instance::{self, Selector};
+use super::instance::{self, Instance, Selector};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
+use crate::shared::ServerCtx;
 
 pub struct Options {
     /// Compose services; all when empty.
@@ -31,6 +32,28 @@ pub fn logs(
     options: &Options,
 ) -> Result<()> {
     check(options)?;
+    let (ctx, instance) = deployed(
+        connector,
+        server_home,
+        manager_key,
+        selector,
+        &options.services,
+    )?;
+    stream(
+        connector,
+        &instance::compose_command(&ctx, &instance.app),
+        options,
+    )
+}
+
+/// The deployed instance; `services` must be services of its compose files.
+pub fn deployed<'c>(
+    connector: &'c dyn Connector,
+    server_home: &str,
+    manager_key: &str,
+    selector: &Selector,
+    services: &[String],
+) -> Result<(ServerCtx<'c>, Instance)> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let (name, prefix) = instance::resolve(&ctx, selector)?;
     let instance =
@@ -38,7 +61,7 @@ pub fn logs(
     // Unreadable compose files give no services; compose then reports the name.
     let compose = stored_compose_file(&ctx, &instance)?;
     if !compose.services.is_empty() {
-        for service in &options.services {
+        for service in services {
             if !compose.services.contains_key(service) {
                 let known: Vec<&str> = compose.services.keys().map(String::as_str).collect();
                 return Err(config_err(format!(
@@ -49,11 +72,7 @@ pub fn logs(
             }
         }
     }
-    stream(
-        connector,
-        &instance::compose_command(&ctx, &instance.app),
-        options,
-    )
+    Ok((ctx, instance))
 }
 
 /// Reject values that compose would misread before connecting.

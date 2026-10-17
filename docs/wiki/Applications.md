@@ -332,6 +332,21 @@ compost app logs myapp-staging --since 1h --timestamps --tail all
 
 It shows what Docker still keeps for the current containers: a recreated container starts with empty logs. A [monitoring link](#monitoring-links) keeps the history in OpenObserve.
 
+### Commands in containers
+
+```sh
+compost app exec myapp-staging --service backend -- sh                 # a shell in the running container
+compost app exec myapp-staging --service backend -- ls -la /data
+compost app run  myapp-staging --service backend -- python migrate.py  # a one-off container
+compost app run  myapp-staging --service backend --no-deps -- python manage.py check
+```
+
+The command and its arguments come after `--`. `app exec` runs it in the service's running container (`docker compose exec`); `app run` starts a new container of the service with the same image, variables, networks and volumes, and removes it afterwards (`docker compose run --rm`), so it works when the service isn't running, and starts the services it `depends_on` unless `--no-deps`. Both use the instance's compose files and compost's override, so link variables like `DATABASE_URL` are set.
+
+When stdin and stdout are terminals, the command gets a terminal on the server (a shell works, Ctrl-C goes to the command); otherwise input and output can be piped, e.g. `compost app exec myapp-staging --service backend -- cat /data/export.csv > export.csv`. compost exits with the command's exit status.
+
+They change what the command changes: there is no dry run and no lock.
+
 ## Removing
 
 ```sh

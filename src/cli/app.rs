@@ -10,7 +10,7 @@ use serde::Deserialize;
 use super::{BackupOutputArgs, DeployArgs};
 use crate::app::backup::{self, Component, Which};
 use crate::app::instance::Selector;
-use crate::app::{deploy, list, remove, restore, rollback, secrets, state};
+use crate::app::{deploy, exec, list, remove, restore, rollback, secrets, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
@@ -32,6 +32,10 @@ pub enum AppCommand {
     State(InstanceArgs),
     /// Show the output of an application instance's containers
     Logs(AppLogsArgs),
+    /// Run a command in a service's running container, e.g. a shell
+    Exec(AppExecArgs),
+    /// Run a command in a new one-off container of a service, e.g. a migration
+    Run(AppRunArgs),
     /// Remove an application instance
     Remove(RemoveArgs),
     /// Back up an application instance (or all of them)
@@ -172,6 +176,27 @@ pub struct AppLogsArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct AppExecArgs {
+    #[command(flatten)]
+    pub instance: InstanceArgs,
+    /// Compose service whose container runs the command
+    #[arg(long, required = true)]
+    pub service: String,
+    /// The command and its arguments, after `--`, e.g. `-- sh` or `-- ls -la /data`
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    pub command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct AppRunArgs {
+    #[command(flatten)]
+    pub exec: AppExecArgs,
+    /// Don't start the services it depends on (`depends_on`)
+    #[arg(long)]
+    pub no_deps: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct AppRollbackArgs {
     #[command(flatten)]
     pub instance: InstanceArgs,
@@ -308,6 +333,27 @@ pub fn run(
                 &args.logs.options(args.service),
             )
         }
+        AppCommand::Exec(args) => exec(
+            home,
+            &manager.manager_key,
+            &server,
+            args,
+            exec::Mode::Exec,
+            verbose,
+        ),
+        AppCommand::Run(args) => {
+            let mode = exec::Mode::Run {
+                no_deps: args.no_deps,
+            };
+            exec(
+                home,
+                &manager.manager_key,
+                &server,
+                args.exec,
+                mode,
+                verbose,
+            )
+        }
         AppCommand::Releases(args) => {
             let selector = selector(&args)?;
             let connector = connector::open(&server, home, verbose)?;
@@ -336,6 +382,30 @@ pub fn run(
             )
         }
     }
+}
+
+fn exec(
+    home: &CompostHome,
+    manager_key: &str,
+    server: &ServerEntry,
+    args: AppExecArgs,
+    mode: exec::Mode,
+    verbose: bool,
+) -> Result<()> {
+    let selector = selector(&args.instance)?;
+    let connector = connector::open(server, home, verbose)?;
+    let options = exec::Options {
+        service: args.service,
+        command: args.command,
+        mode,
+    };
+    exec::exec(
+        connector.as_ref(),
+        server.server_home(),
+        manager_key,
+        &selector,
+        &options,
+    )
 }
 
 /// The positional instance, name and prefix from `--app`/`--prefix`, or the

@@ -128,6 +128,7 @@ case "$*" in
     for s in $names; do echo "$s" >> "$FAKE_DOCKER_LOG.stopped"; done ;;
   "compose "*" start "*) rm -f "$FAKE_DOCKER_LOG.stopped" ;;
   "compose "*" run "*" failing-job"*) echo "job failed" >&2; exit 1 ;;
+  "compose "*" run "*" exit-7"*) exit 7 ;;
   "compose "*" run "*) echo "job output" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
@@ -1614,6 +1615,102 @@ fn app_and_server_logs() {
         .run(&["server", "logs", "nope"], &[])
         .code(2)
         .stderr(contains("no shared app `nope` on this server"));
+}
+
+#[test]
+fn app_exec_and_run_pass_the_command_and_its_status() {
+    let server = server_with_app();
+    let compose = "docker compose -p myapp-staging --project-directory sources \
+                   -f sources/docker-compose.yaml -f compose/compost.override.yaml";
+    server
+        .run(
+            &[
+                "app",
+                "exec",
+                "myapp-staging",
+                "--service",
+                "backend-webapp",
+                "--",
+                "sh",
+                "-c",
+                "echo hi",
+            ],
+            &[],
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(&format!("{compose} exec -T backend-webapp sh -c echo hi")),
+        "{log}"
+    );
+
+    server
+        .run(
+            &[
+                "app",
+                "run",
+                "myapp-staging",
+                "--service",
+                "backend-webapp",
+                "--no-deps",
+                "--",
+                "migrate",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("job output"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(&format!(
+            "{compose} run --rm --no-deps -T backend-webapp migrate"
+        )),
+        "{log}"
+    );
+
+    // The command's status becomes compost's, without an error of its own.
+    server
+        .run(
+            &[
+                "app",
+                "run",
+                "myapp-staging",
+                "--service",
+                "backend-webapp",
+                "--",
+                "exit-7",
+            ],
+            &[],
+        )
+        .code(7)
+        .stderr(contains("error:").not());
+    server
+        .run(
+            &[
+                "app",
+                "exec",
+                "myapp-staging",
+                "--service",
+                "nope",
+                "--",
+                "true",
+            ],
+            &[],
+        )
+        .code(2)
+        .stderr(contains("has no service `nope`"));
+    server
+        .run(
+            &[
+                "app",
+                "exec",
+                "myapp-staging",
+                "--service",
+                "backend-webapp",
+            ],
+            &[],
+        )
+        .code(2);
 }
 
 #[test]

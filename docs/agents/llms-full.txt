@@ -1411,6 +1411,21 @@ compost app logs myapp-staging --since 1h --timestamps --tail all
 
 It shows what Docker still keeps for the current containers: a recreated container starts with empty logs. A [monitoring link](#monitoring-links) keeps the history in OpenObserve.
 
+### Commands in containers
+
+```sh
+compost app exec myapp-staging --service backend -- sh                 # a shell in the running container
+compost app exec myapp-staging --service backend -- ls -la /data
+compost app run  myapp-staging --service backend -- python migrate.py  # a one-off container
+compost app run  myapp-staging --service backend --no-deps -- python manage.py check
+```
+
+The command and its arguments come after `--`. `app exec` runs it in the service's running container (`docker compose exec`); `app run` starts a new container of the service with the same image, variables, networks and volumes, and removes it afterwards (`docker compose run --rm`), so it works when the service isn't running, and starts the services it `depends_on` unless `--no-deps`. Both use the instance's compose files and compost's override, so link variables like `DATABASE_URL` are set.
+
+When stdin and stdout are terminals, the command gets a terminal on the server (a shell works, Ctrl-C goes to the command); otherwise input and output can be piped, e.g. `compost app exec myapp-staging --service backend -- cat /data/export.csv > export.csv`. compost exits with the command's exit status.
+
+They change what the command changes: there is no dry run and no lock.
+
 ## Removing
 
 ```sh
@@ -2770,6 +2785,8 @@ Commands:
   deploy    Deploy the application instance described by the given files
   state     Show the state of an application instance
   logs      Show the output of an application instance's containers
+  exec      Run a command in a service's running container, e.g. a shell
+  run       Run a command in a new one-off container of a service, e.g. a migration
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
@@ -2876,6 +2893,49 @@ Options:
       --tail <TAIL>        Lines to show from the end of each container's output, or `all` [default: 100]
       --since <SINCE>      Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
       --timestamps         Show the time of every line
+  -h, --help               Print help
+```
+
+## `compost app exec`
+
+```text
+Run a command in a service's running container, e.g. a shell
+
+Usage: compost app exec [OPTIONS] --service <SERVICE> [INSTANCE] -- <COMMAND>...
+
+Arguments:
+  [INSTANCE]    Instance as shown by `app list`, e.g. `myapp-staging`
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- ls -la /data`
+
+Options:
+  -f, --file <FILES>       Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>    Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>          Application name (instead of config files)
+  -v, --verbose            Print every command run on the server
+      --prefix <PREFIX>    Instance prefix (overrides the one from the config files)
+      --service <SERVICE>  Compose service whose container runs the command
+  -h, --help               Print help
+```
+
+## `compost app run`
+
+```text
+Run a command in a new one-off container of a service, e.g. a migration
+
+Usage: compost app run [OPTIONS] --service <SERVICE> [INSTANCE] -- <COMMAND>...
+
+Arguments:
+  [INSTANCE]    Instance as shown by `app list`, e.g. `myapp-staging`
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- ls -la /data`
+
+Options:
+  -f, --file <FILES>       Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>    Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>          Application name (instead of config files)
+  -v, --verbose            Print every command run on the server
+      --prefix <PREFIX>    Instance prefix (overrides the one from the config files)
+      --service <SERVICE>  Compose service whose container runs the command
+      --no-deps            Don't start the services it depends on (`depends_on`)
   -h, --help               Print help
 ```
 

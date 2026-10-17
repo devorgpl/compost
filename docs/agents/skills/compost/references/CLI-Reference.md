@@ -305,6 +305,8 @@ Commands:
   deploy    Deploy the application instance described by the given files
   state     Show the state of an application instance
   logs      Show the output of an application instance's containers
+  exec      Run a command in a service's running container, e.g. a shell
+  run       Run a command in a new one-off container of a service, e.g. a migration
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
@@ -411,6 +413,49 @@ Options:
       --tail <TAIL>        Lines to show from the end of each container's output, or `all` [default: 100]
       --since <SINCE>      Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
       --timestamps         Show the time of every line
+  -h, --help               Print help
+```
+
+## `compost app exec`
+
+```text
+Run a command in a service's running container, e.g. a shell
+
+Usage: compost app exec [OPTIONS] --service <SERVICE> [INSTANCE] -- <COMMAND>...
+
+Arguments:
+  [INSTANCE]    Instance as shown by `app list`, e.g. `myapp-staging`
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- ls -la /data`
+
+Options:
+  -f, --file <FILES>       Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>    Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>          Application name (instead of config files)
+  -v, --verbose            Print every command run on the server
+      --prefix <PREFIX>    Instance prefix (overrides the one from the config files)
+      --service <SERVICE>  Compose service whose container runs the command
+  -h, --help               Print help
+```
+
+## `compost app run`
+
+```text
+Run a command in a new one-off container of a service, e.g. a migration
+
+Usage: compost app run [OPTIONS] --service <SERVICE> [INSTANCE] -- <COMMAND>...
+
+Arguments:
+  [INSTANCE]    Instance as shown by `app list`, e.g. `myapp-staging`
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- ls -la /data`
+
+Options:
+  -f, --file <FILES>       Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>    Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>          Application name (instead of config files)
+  -v, --verbose            Print every command run on the server
+      --prefix <PREFIX>    Instance prefix (overrides the one from the config files)
+      --service <SERVICE>  Compose service whose container runs the command
+      --no-deps            Don't start the services it depends on (`depends_on`)
   -h, --help               Print help
 ```
 
