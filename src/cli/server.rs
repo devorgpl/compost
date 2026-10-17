@@ -1,8 +1,9 @@
 //! `compost server …` commands (spec §10.3, §10.4, §10.6, §10.7).
 
+use std::fs;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
@@ -14,6 +15,7 @@ use crate::error::{CompostError, config_err};
 use crate::server::backup::{self, BackupOptions, RestoreOptions};
 use crate::server::deploy::{self, Options};
 use crate::server::links;
+use crate::server::secrets as server_secrets;
 use crate::server::state::{self, Status};
 
 const SERVER_FILE: &str = "compost-server.yaml";
@@ -44,6 +46,16 @@ pub struct DefineArgs {
     /// Replace an existing server with the same name
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ServerDeployArgs {
+    #[command(flatten)]
+    pub deploy: DeployArgs,
+    /// Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server
+    /// and deploy with, replacing the stored one; later deploys use it without the file
+    #[arg(long, value_name = "FILE")]
+    pub secret: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -218,27 +230,67 @@ pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<
 pub fn deploy(
     home: &CompostHome,
     server: Option<&str>,
-    args: DeployArgs,
+    args: ServerDeployArgs,
     verbose: bool,
 ) -> Result<()> {
+    let ServerDeployArgs {
+        deploy: args,
+        secret,
+    } = args;
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let apply = args.apply(home, &server)?;
-    let files = if args.files.is_empty() {
+    let mut files = if args.files.is_empty() {
         default_files()?
     } else {
         args.files
     };
-    let config = ServerConfig::load(&files)?;
+    // --secret takes the place of the stored overlay, right after the first
+    // file; merging it again later would change nothing.
+    let text = match &secret {
+        Some(file) => {
+            let mut index = 0;
+            files.retain(|f| {
+                index += 1;
+                index == 1 || f != file
+            });
+            Some(
+                fs::read_to_string(file)
+                    .with_context(|| format!("cannot read {}", file.display()))?,
+            )
+        }
+        None => None,
+    };
 
     let connector = connector::open(&server, home, verbose)?;
+    let (stored_path, stored) = match (&secret, &text) {
+        (Some(file), Some(text)) => (
+            Some(file.display().to_string()),
+            Some(server_secrets::parse(text)?),
+        ),
+        _ => server_secrets::read(connector.as_ref(), server.server_home())?.unzip(),
+    };
+    let (config, skipped) = ServerConfig::load_with(&files, stored)?;
+
     out!("Deploying to {} ({})", server.name, connector.target());
+    if let Some(path) = stored_path {
+        let what = if secret.is_some() {
+            "secrets"
+        } else {
+            "stored secrets"
+        };
+        out!("  using {what} {path}");
+    }
+    for app in skipped {
+        out!("  secrets of {app} not used: it is not in the configuration");
+    }
     let options = Options {
         apply,
         dry_run: args.dry_run,
         force_unlock: args.force_unlock,
         pull: args.pull,
         recreate: args.recreate,
+        secrets: text.as_deref(),
     };
     deploy::deploy(
         connector.as_ref(),

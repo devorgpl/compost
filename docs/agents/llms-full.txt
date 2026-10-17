@@ -288,7 +288,7 @@ compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.c
 compost server state
 ```
 
-Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy.
+Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. To keep the secrets file on the server as well, so other machines deploy without it, pass it with `--secret .compost-server.secrets.yaml` instead of `-f` ([Secrets](Secrets.md#stored-on-the-server)).
 
 ## 4. Your app
 
@@ -1414,12 +1414,12 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecurebuild] [--force]
-compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
 
-`server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`. It:
+`server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`, plus the secrets stored on the server with `--secret` ([Secrets](Secrets.md#stored-on-the-server)). It:
 
 1. validates the config (exit 2 on errors, before anything touches the server);
 2. creates compost's folder and the Docker networks;
@@ -1716,7 +1716,7 @@ shared:
 | `external.sslmode` | – | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; added to `db_url` and used by compost's own clients |
 | `external.allow_purge` | `false` | Let `--purge database` drop databases there (needs root credentials) |
 | `configuration.root_user` | `postgres` | Superuser, if compost may create databases there |
-| `configuration.root_password` | – | Its password; secret |
+| `configuration.root_password` | – | Its password; secret. A new value replaces the stored one; a deploy without it keeps the stored credentials |
 
 What compost does with it:
 - **Runs nothing.** `server deploy` only checks that `network` exists and stores how to reach it. `server state` checks that it answers (`external, accepting connections`); if it doesn't, the state is `DEGRADED`.
@@ -1815,13 +1815,30 @@ shared:
         root_password: Change-me-to-a-long-random-string-1
 ```
 
-Lists merge by `name`, so only the secret keys are repeated. The passwords are optional, and none can change after the first deploy. Generated ones are on the server:
+Lists merge by `name`, so only the secret keys are repeated. The passwords are optional. None can change after the first deploy, except an external database's `root_password`, which a new value replaces. Once on the server, they are kept by later deploys without the file. Generated ones are on the server:
 
 ```sh
 cat ~/.compost-server/shared/database/postgres18/secrets/postgres.env
 grep PASSWORD ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
 grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml
 ```
+
+### Stored on the server
+
+As with apps, the file can be kept on the server, so any machine deploys with `compost-server.yaml` alone:
+
+```sh
+compost server deploy --apply --secret .compost-server.secrets.yaml   # store it and deploy
+compost server deploy --apply                                         # later: compost-server.yaml + the stored file
+compost secret list
+compost secret remove --shared
+```
+
+It is kept at `~/.compost-server/secrets/server.yaml` (mode `0600`). `server deploy` merges it right after the first file: `compost-server.yaml` → stored file → other files (`-f`, or `.compost-server.secrets.yaml` when it exists). Local files can still override stored values.
+
+- `--secret` uses the file in place of the stored one and replaces it as a whole. With `--dry-run` nothing is stored. Without `--apply` it is stored with the other files.
+- Entries for shared apps that the config doesn't have are left out, with a note: removing a shared app from `compost-server.yaml` doesn't break deploys.
+- `server backup` saves it, and `server restore` puts it back when the server has none.
 
 ## Notes
 
@@ -1997,7 +2014,7 @@ compost server backup [--shared <name>]… [--format …] [-o …] [--target …
 compost server restore <archive> [--shared <name>]… [--source …] [--yes]
 ```
 
-A server backup holds the stored `compost-server.yaml`, all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates, config and `sites` (for `caddysecurebuild` also its CrowdSec configuration, but not the agent's bans: a restored server starts without bans, with a new bouncer key); OpenObserve's data folder and root login. OpenObserve keeps recent data in memory, so it is stopped while its folder is copied (seconds to minutes, depending on its size); the collector keeps retrying what arrives meanwhile for up to five minutes. It holds secrets. External databases are left out; `app backup` saves the apps' data on them.
+A server backup holds the stored `compost-server.yaml`, the secrets stored with `server deploy --secret` (restored only when the server has none), all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates, config and `sites` (for `caddysecurebuild` also its CrowdSec configuration, but not the agent's bans: a restored server starts without bans, with a new bouncer key); OpenObserve's data folder and root login. OpenObserve keeps recent data in memory, so it is stopped while its folder is copied (seconds to minutes, depending on its size); the collector keeps retrying what arrives meanwhile for up to five minutes. It holds secrets. External databases are left out; `app backup` saves the apps' data on them.
 
 `server restore` is for a server that doesn't have these shared apps yet (exit 3 if one is deployed). It puts back the records and files, deploys the shared apps, loads their data and then deploys Keycloak, which finds its data in the restored database, and OpenObserve, which needs Caddy for its domain. The `monitoring` of shared apps is set up in that last step too.
 
@@ -2047,7 +2064,7 @@ services:
       domains: [staging.example.com]
 ```
 
-Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
+Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
 
 ## compost.yaml
 
@@ -2304,6 +2321,7 @@ infra/
 ├── tmp/                              short-lived files, e.g. client credentials for external databases
 ├── backups/                          archives of the `server` backup target
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
+├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`
 ├── shared/
 │   ├── ingress/caddy-main/
 │   │   ├── compose.yaml
@@ -2531,6 +2549,7 @@ Options:
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
+      --secret <FILE>    Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
   -h, --help             Print help
 ```
 
@@ -2984,8 +3003,8 @@ Usage: compost secret [OPTIONS] <COMMAND>
 
 Commands:
   deploy  Store an instance's overlay (e.g. .compost.secrets.yaml) for `app deploy`
-  list    List the instances with stored secrets
-  remove  Delete the stored secrets of an instance
+  list    List the instances with stored secrets, and the shared apps' secrets
+  remove  Delete the stored secrets of an instance, or of the shared apps
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -3015,7 +3034,7 @@ Options:
 ## `compost secret list`
 
 ```text
-List the instances with stored secrets
+List the instances with stored secrets, and the shared apps' secrets
 
 Usage: compost secret list [OPTIONS]
 
@@ -3028,15 +3047,16 @@ Options:
 ## `compost secret remove`
 
 ```text
-Delete the stored secrets of an instance
+Delete the stored secrets of an instance, or of the shared apps
 
-Usage: compost secret remove [OPTIONS] --app <APP>
+Usage: compost secret remove [OPTIONS]
 
 Options:
       --app <APP>        Application name
   -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
       --prefix <PREFIX>  Instance prefix [default: main]
   -v, --verbose          Print every command run on the server
+      --shared           The shared apps' secrets, stored by `server deploy --secret`
       --force-unlock     Remove a lock left behind by an interrupted compost command
   -h, --help             Print help
 ```

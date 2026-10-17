@@ -10,6 +10,7 @@ use crate::config::check_name;
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::server::lock::Lock;
+use crate::server::secrets as server_secrets;
 use crate::shared::ServerCtx;
 
 /// Relative to COMPOST_SERVER_HOME. Outside `apps/`, so `app remove` keeps them.
@@ -160,15 +161,24 @@ pub fn list(connector: &dyn Connector, server_home: &str, manager_key: &str) -> 
             }
         }
     }
-    if found.is_empty() {
+    let shared = ctx.read(server_secrets::PATH)?.is_some();
+    if found.is_empty() && !shared {
         out!("No stored secrets. Add some with `compost secret deploy`.");
         return Ok(());
     }
-    found.sort();
-    let width = found.iter().map(|(app, _)| app.len()).max().unwrap_or(0);
-    out!("{:<width$}  PREFIX", "APP");
-    for (app, prefix) in found {
-        out!("{app:<width$}  {prefix}");
+    if !found.is_empty() {
+        found.sort();
+        let width = found.iter().map(|(app, _)| app.len()).max().unwrap_or(0);
+        out!("{:<width$}  PREFIX", "APP");
+        for (app, prefix) in found {
+            out!("{app:<width$}  {prefix}");
+        }
+    }
+    if shared {
+        out!(
+            "Secrets of the shared apps: {}",
+            ctx.path(server_secrets::PATH)
+        );
     }
     Ok(())
 }

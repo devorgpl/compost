@@ -27,7 +27,7 @@ services:
       domains: [staging.example.com]
 ```
 
-Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
+Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
 
 ## compost.yaml
 

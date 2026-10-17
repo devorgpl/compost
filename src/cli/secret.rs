@@ -10,6 +10,7 @@ use crate::app::secrets;
 use crate::config::check_name;
 use crate::config::local::CompostHome;
 use crate::connector;
+use crate::server::secrets as server_secrets;
 
 #[derive(Debug, Subcommand)]
 pub enum SecretCommand {
@@ -24,16 +25,19 @@ pub enum SecretCommand {
         #[arg(long)]
         force_unlock: bool,
     },
-    /// List the instances with stored secrets
+    /// List the instances with stored secrets, and the shared apps' secrets
     List,
-    /// Delete the stored secrets of an instance
+    /// Delete the stored secrets of an instance, or of the shared apps
     Remove {
         /// Application name
-        #[arg(long)]
-        app: String,
+        #[arg(long, required_unless_present = "shared", conflicts_with = "shared")]
+        app: Option<String>,
         /// Instance prefix
-        #[arg(long, default_value = "main")]
+        #[arg(long, default_value = "main", conflicts_with = "shared")]
         prefix: String,
+        /// The shared apps' secrets, stored by `server deploy --secret`
+        #[arg(long)]
+        shared: bool,
         /// Remove a lock left behind by an interrupted compost command
         #[arg(long)]
         force_unlock: bool,
@@ -75,9 +79,23 @@ pub fn run(
             )
         }
         SecretCommand::Remove {
-            app,
+            app: None,
+            force_unlock,
+            ..
+        } => {
+            let connector = connector::open(&server, home, verbose)?;
+            server_secrets::remove(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                force_unlock,
+            )
+        }
+        SecretCommand::Remove {
+            app: Some(app),
             prefix,
             force_unlock,
+            ..
         } => {
             check_name("app name", &app)?;
             check_name("prefix", &prefix)?;

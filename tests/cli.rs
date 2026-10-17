@@ -733,6 +733,119 @@ fn external_database_with_root_credentials_is_provisioned() {
 }
 
 #[test]
+fn server_deploy_stores_the_secret_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let server = LocalServer::new();
+    let rds = "    - name: rds\n      type: postgres\n      version: 16\n      external: {host: main.rds.example.com}\n";
+    server.write_work_file("compost-server.yaml", &format!("{SERVER_CONFIG}{rds}"));
+    server.write_work_file(
+        "prod-secrets.yaml",
+        "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: s3cret}\n    - name: rds\n      configuration: {root_user: admin, root_password: r00t}\n",
+    );
+    let env = [("FAKE_DOCKER_RUNNING", "1")];
+    let stored = server.server_home.join("secrets/server.yaml");
+    let record = "connectors/database/rds/root-connector.yaml";
+
+    server
+        .run(
+            &[
+                "server",
+                "deploy",
+                "--dry-run",
+                "--secret",
+                "prod-secrets.yaml",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("secrets: would be stored in"));
+    assert!(!stored.exists());
+
+    server
+        .run(
+            &[
+                "server",
+                "deploy",
+                "--apply",
+                "--secret",
+                "prod-secrets.yaml",
+            ],
+            &env,
+        )
+        .success()
+        .stdout(contains("using secrets prod-secrets.yaml"))
+        .stdout(contains("stored secrets in"));
+    let mode = fs::metadata(&stored).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(
+        !server
+            .read_server_file("compost-server.yaml")
+            .contains("r00t")
+    );
+    assert!(
+        server
+            .read_server_file(record)
+            .contains("root_password: r00t")
+    );
+
+    // Later deploys need only compost-server.yaml; shared apps it no longer
+    // has are left out of the stored secrets.
+    fs::remove_file(server.env.work.path().join("prod-secrets.yaml")).unwrap();
+    server
+        .run(&["server", "deploy", "--apply"], &env)
+        .success()
+        .stdout(contains("using stored secrets"));
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &env)
+        .success()
+        .stdout(contains(
+            "secrets of shared.database[rds] not used: it is not in the configuration",
+        ));
+    assert!(
+        server
+            .read_server_file("shared/database/postgres16/secrets/postgres.env")
+            .contains("s3cret")
+    );
+
+    server
+        .run(&["secret", "list"], &[])
+        .success()
+        .stdout(contains("Secrets of the shared apps:"));
+    server
+        .run(&["secret", "remove", "--shared"], &[])
+        .success()
+        .stdout(contains("Removed the stored secrets of the shared apps"));
+    assert!(!stored.exists());
+    server
+        .run(&["secret", "remove", "--shared"], &[])
+        .code(2)
+        .stderr(contains("no stored secrets of the shared apps"));
+}
+
+#[test]
+fn external_root_credentials_survive_deploys_without_them() {
+    let server = LocalServer::new();
+    let rds = |configuration: &str| {
+        format!(
+            "{SERVER_CONFIG}    - name: rds\n      type: postgres\n      version: 16\n      external: {{host: main.rds.example.com}}\n{configuration}"
+        )
+    };
+    let record = "connectors/database/rds/root-connector.yaml";
+    server.write_work_file(
+        "compost-server.yaml",
+        &rds("      configuration: {root_user: admin, root_password: r00t}\n"),
+    );
+    server.run(&["server", "deploy"], &[]).success();
+    server.write_work_file("compost-server.yaml", &rds(""));
+    server.run(&["server", "deploy"], &[]).success();
+    let text = server.read_server_file(record);
+    assert!(text.contains("root_user: admin"), "{text}");
+    assert!(text.contains("root_password: r00t"), "{text}");
+}
+
+#[test]
 fn server_deploy_respects_lock() {
     let server = LocalServer::new();
     server.write_work_file("compost-server.yaml", SERVER_CONFIG);
@@ -2570,6 +2683,39 @@ fn server_restore_starts_keycloak_after_loading_its_database() {
     assert!(loaded < provisioned && provisioned < keycloak, "{log}");
     let config = new.read_server_file("compost-server.yaml");
     assert!(config.contains("name: keycloak"), "{config}");
+}
+
+#[test]
+fn server_backup_and_restore_keep_stored_secrets() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let secrets = "shared:\n  database:\n    - name: postgres16\n      configuration: {root_password: s3cret}\n";
+    let old = LocalServer::new();
+    old.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    old.write_work_file("prod-secrets.yaml", secrets);
+    old.run(
+        &[
+            "server",
+            "deploy",
+            "--apply",
+            "--secret",
+            "prod-secrets.yaml",
+        ],
+        &running,
+    )
+    .success();
+    old.run(&["server", "backup", "-o", "server.tar.gz"], &running)
+        .success();
+
+    let new = LocalServer::new();
+    fs::copy(
+        old.env.work.path().join("server.tar.gz"),
+        new.env.work.path().join("server.tar.gz"),
+    )
+    .unwrap();
+    new.run(&["server", "restore", "server.tar.gz", "--yes"], &running)
+        .success()
+        .stdout(contains("stored secrets in"));
+    assert_eq!(new.read_server_file("secrets/server.yaml"), secrets);
 }
 
 #[test]

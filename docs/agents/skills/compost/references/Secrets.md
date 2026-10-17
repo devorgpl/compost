@@ -58,13 +58,30 @@ shared:
         root_password: Change-me-to-a-long-random-string-1
 ```
 
-Lists merge by `name`, so only the secret keys are repeated. The passwords are optional, and none can change after the first deploy. Generated ones are on the server:
+Lists merge by `name`, so only the secret keys are repeated. The passwords are optional. None can change after the first deploy, except an external database's `root_password`, which a new value replaces. Once on the server, they are kept by later deploys without the file. Generated ones are on the server:
 
 ```sh
 cat ~/.compost-server/shared/database/postgres18/secrets/postgres.env
 grep PASSWORD ~/.compost-server/shared/oidc/keycloak/secrets/keycloak.env
 grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml
 ```
+
+### Stored on the server
+
+As with apps, the file can be kept on the server, so any machine deploys with `compost-server.yaml` alone:
+
+```sh
+compost server deploy --apply --secret .compost-server.secrets.yaml   # store it and deploy
+compost server deploy --apply                                         # later: compost-server.yaml + the stored file
+compost secret list
+compost secret remove --shared
+```
+
+It is kept at `~/.compost-server/secrets/server.yaml` (mode `0600`). `server deploy` merges it right after the first file: `compost-server.yaml` → stored file → other files (`-f`, or `.compost-server.secrets.yaml` when it exists). Local files can still override stored values.
+
+- `--secret` uses the file in place of the stored one and replaces it as a whole. With `--dry-run` nothing is stored. Without `--apply` it is stored with the other files.
+- Entries for shared apps that the config doesn't have are left out, with a note: removing a shared app from `compost-server.yaml` doesn't break deploys.
+- `server backup` saves it, and `server restore` puts it back when the server has none.
 
 ## Notes
 

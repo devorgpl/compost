@@ -80,7 +80,7 @@ pub enum ServerCommand {
     /// Check and display server state
     State,
     /// Deploy shared applications from compost-server.yaml
-    Deploy(DeployArgs),
+    Deploy(server::ServerDeployArgs),
     /// Back up shared applications (data, configuration and secrets)
     Backup(server::ServerBackupArgs),
     /// Restore shared applications from a server backup

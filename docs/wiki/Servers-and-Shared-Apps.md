@@ -42,12 +42,12 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecurebuild] [--force]
-compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
 
-`server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`. It:
+`server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`, plus the secrets stored on the server with `--secret` ([Secrets](Secrets.md#stored-on-the-server)). It:
 
 1. validates the config (exit 2 on errors, before anything touches the server);
 2. creates compost's folder and the Docker networks;
@@ -344,7 +344,7 @@ shared:
 | `external.sslmode` | – | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; added to `db_url` and used by compost's own clients |
 | `external.allow_purge` | `false` | Let `--purge database` drop databases there (needs root credentials) |
 | `configuration.root_user` | `postgres` | Superuser, if compost may create databases there |
-| `configuration.root_password` | – | Its password; secret |
+| `configuration.root_password` | – | Its password; secret. A new value replaces the stored one; a deploy without it keeps the stored credentials |
 
 What compost does with it:
 - **Runs nothing.** `server deploy` only checks that `network` exists and stores how to reach it. `server state` checks that it answers (`external, accepting connections`); if it doesn't, the state is `DEGRADED`.

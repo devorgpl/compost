@@ -153,6 +153,7 @@ Options:
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
+      --secret <FILE>    Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
   -h, --help             Print help
 ```
 
@@ -606,8 +607,8 @@ Usage: compost secret [OPTIONS] <COMMAND>
 
 Commands:
   deploy  Store an instance's overlay (e.g. .compost.secrets.yaml) for `app deploy`
-  list    List the instances with stored secrets
-  remove  Delete the stored secrets of an instance
+  list    List the instances with stored secrets, and the shared apps' secrets
+  remove  Delete the stored secrets of an instance, or of the shared apps
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -637,7 +638,7 @@ Options:
 ## `compost secret list`
 
 ```text
-List the instances with stored secrets
+List the instances with stored secrets, and the shared apps' secrets
 
 Usage: compost secret list [OPTIONS]
 
@@ -650,15 +651,16 @@ Options:
 ## `compost secret remove`
 
 ```text
-Delete the stored secrets of an instance
+Delete the stored secrets of an instance, or of the shared apps
 
-Usage: compost secret remove [OPTIONS] --app <APP>
+Usage: compost secret remove [OPTIONS]
 
 Options:
       --app <APP>        Application name
   -s, --server <SERVER>  Target server (default: COMPOST_SERVER, then the current context) [env: COMPOST_SERVER=]
       --prefix <PREFIX>  Instance prefix [default: main]
   -v, --verbose          Print every command run on the server
+      --shared           The shared apps' secrets, stored by `server deploy --secret`
       --force-unlock     Remove a lock left behind by an interrupted compost command
   -h, --help             Print help
 ```

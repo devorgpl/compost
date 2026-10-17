@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use super::compose::wait_until_ready_within;
 use super::lock::Lock;
+use super::secrets;
 use super::state::{self, Status};
 use super::state_file::{DeployStatus, StateFile};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
@@ -19,7 +20,7 @@ use crate::shared::{self, AppCtx, Kind, Rendered, ServerCtx, SharedAppConfig};
 /// reads it automatically.
 pub const SHARED_OVERRIDE_FILE: &str = "compose.override.yaml";
 
-pub struct Options {
+pub struct Options<'a> {
     pub apply: bool,
     pub dry_run: bool,
     pub force_unlock: bool,
@@ -27,6 +28,8 @@ pub struct Options {
     pub pull: bool,
     /// Recreate every container, even unchanged ones.
     pub recreate: bool,
+    /// Overlay stored as the shared apps' secrets (`--secret`).
+    pub secrets: Option<&'a str>,
 }
 
 /// One shared app, rendered and ready to be written to the server.
@@ -165,6 +168,10 @@ pub fn deploy(
         }
     }
     connector.write_file(&ctx.path(SERVER_CONFIG_FILE), effective.as_bytes(), 0o644)?;
+    if let Some(text) = options.secrets {
+        let path = secrets::store(&ctx, text)?;
+        out!("  stored secrets in {path}");
+    }
     state_file.save(&ctx)?;
 
     if !options.apply {
@@ -609,6 +616,9 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], options: &Opti
             let secret = if file.is_secret() { "  (secret)" } else { "" };
             out!("      {}  {:o}{secret}", file.path, file.mode);
         }
+    }
+    if options.secrets.is_some() {
+        out!("  secrets: would be stored in {}", ctx.path(secrets::PATH));
     }
     if options.apply {
         let pull = if options.pull { "pull and " } else { "" };

@@ -324,7 +324,7 @@ impl DatabaseType for Postgres {
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered> {
         let postgres: PostgresConfig = config.configuration()?;
         if let Some(external) = base::external(config)? {
-            return render_external(config, postgres, external, &self.endpoint());
+            return render_external(ctx, config, postgres, external, &self.endpoint());
         }
         let Some(version) = config.version else {
             bail!("version is required for databases");
@@ -399,13 +399,25 @@ fn secrets_path(name: &str) -> String {
 }
 
 /// An external server has no compose project: only the record of how to
-/// reach it, which also holds the root credentials, if any.
+/// reach it, which also holds the root credentials, if any. A config without
+/// `root_password` keeps the credentials of the record already on the server,
+/// so deploys without the secrets file don't drop them.
 fn render_external(
+    ctx: &ServerCtx,
     config: &SharedAppConfig,
-    postgres: PostgresConfig,
+    mut postgres: PostgresConfig,
     external: External,
     endpoint: &Endpoint,
 ) -> Result<Rendered> {
+    if postgres.root_password.is_none() {
+        let existing = ctx
+            .read(&root_record_path(&config.name))?
+            .and_then(|text| serde_yaml_ng::from_str::<ExternalRecord>(&text).ok());
+        if let Some(existing) = existing.filter(|record| record.root_password.is_some()) {
+            postgres.root_user = postgres.root_user.or(existing.root_user);
+            postgres.root_password = existing.root_password;
+        }
+    }
     let record = ExternalRecord {
         type_name: config.type_name.clone(),
         instance: config.name.clone(),
@@ -762,6 +774,32 @@ mod tests {
             let second = render(&home, PG).unwrap();
             assert_eq!(secret(&first), secret(&second));
             assert_eq!(secret(&first).len(), "POSTGRES_PASSWORD=''\n".len() + 32);
+        }
+
+        #[test]
+        fn external_root_credentials_are_kept_without_the_secrets() {
+            let home = TempDir::new().unwrap();
+            let external = |configuration: &str| {
+                format!(
+                    "{{name: rds, type: postgres, version: 16, external: {{host: db.example.com}}, configuration: {configuration}}}"
+                )
+            };
+            let record = |rendered: &Rendered| rendered.files[0].contents.clone();
+
+            let first = render(&home, &external("{root_user: admin, root_password: one}")).unwrap();
+            write(&home, &first);
+            let without = render(&home, &external("{}")).unwrap();
+            assert_eq!(record(&without), record(&first));
+            assert!(record(&without).contains("root_password: one"));
+
+            // A new password replaces the old one: the server is not compost's.
+            let changed = render(&home, &external("{root_password: two}")).unwrap();
+            assert!(
+                record(&changed).contains("root_user: postgres"),
+                "{}",
+                record(&changed)
+            );
+            assert!(record(&changed).contains("root_password: two"));
         }
 
         #[test]

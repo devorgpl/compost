@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 
 use super::deploy;
 use super::lock::Lock;
+use super::secrets as server_secrets;
 use super::state::{self, Status};
 use super::state_file::StateFile;
 use crate::app::{self, backup::output, instance, restore::open_archive};
@@ -19,6 +20,8 @@ use crate::shared::{self, ServerCtx, SharedAppConfig, connectors_dir};
 
 const CONFIG_ITEM: &str = "server/compost-server.yaml";
 const CONNECTORS_ITEM: &str = "server/connectors.tar";
+/// The shared apps' overlay stored by `server deploy --secret`, if any.
+const SECRETS_ITEM: &str = "server/secrets.yaml";
 
 pub struct BackupOptions {
     /// Only these shared apps (default: all).
@@ -85,6 +88,9 @@ pub fn backup(
         .read(super::SERVER_CONFIG_FILE)?
         .context("the server has no compost-server.yaml")?;
     backup.file(CONFIG_ITEM, Role::Meta, stored.as_bytes())?;
+    if let Some(secrets) = ctx.read(server_secrets::PATH)? {
+        backup.file(SECRETS_ITEM, Role::Meta, secrets.as_bytes())?;
+    }
 
     // Link records hold the apps' database credentials: restored apps keep them.
     let mut records = Vec::new();
@@ -212,6 +218,14 @@ pub fn restore(
         if archive.has(CONNECTORS_ITEM) {
             restore_records(&ctx, &archive, &selected)?;
         }
+        if archive.has(SECRETS_ITEM) {
+            if ctx.read(server_secrets::PATH)?.is_some() {
+                out!("  kept the stored secrets of the shared apps already on the server");
+            } else {
+                let path = server_secrets::store(&ctx, &archive.read(SECRETS_ITEM)?)?;
+                out!("  stored secrets in {path}");
+            }
+        }
         for (kind_name, app) in selected.iter().filter(|(_, app)| !app.is_external()) {
             let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
             let reader = reader(&archive, kind_name, &app.name);
@@ -229,6 +243,7 @@ pub fn restore(
         force_unlock: false,
         pull: false,
         recreate: false,
+        secrets: None,
     };
     let providers = without_consumers(&config, &selected)?;
     let later = providers.shared_apps().count() != config.shared_apps().count()

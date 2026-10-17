@@ -51,7 +51,7 @@ compost server deploy --apply -f compost-server.yaml,compost-server.prod.yaml,.c
 compost server state
 ```
 
-Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy.
+Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. To keep the secrets file on the server as well, so other machines deploy without it, pass it with `--secret .compost-server.secrets.yaml` instead of `-f` ([Secrets](Secrets.md#stored-on-the-server)).
 
 ## 4. Your app
 

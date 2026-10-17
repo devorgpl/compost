@@ -93,6 +93,36 @@ fn monitoring_link(monitoring: &SharedMonitoring, monitored: &Monitored) -> Resu
     Ok(Value::Mapping(link))
 }
 
+/// Remove the shared apps of `overlay` that `config` does not have: merged,
+/// they would be shared apps without a type. Returns them as `shared.<kind>[<name>]`.
+fn without_unknown_apps(overlay: &mut Value, config: &Value) -> Vec<String> {
+    let mut removed = Vec::new();
+    let Some(Value::Mapping(kinds)) = overlay.get_mut("shared") else {
+        return removed;
+    };
+    for (kind, apps) in kinds.iter_mut() {
+        let Value::Sequence(apps) = apps else {
+            continue;
+        };
+        let known = config.get("shared").and_then(|shared| shared.get(kind));
+        apps.retain(|app| {
+            let name = app.get("name");
+            let found = known
+                .and_then(Value::as_sequence)
+                .is_some_and(|known| known.iter().any(|k| k.get("name") == name));
+            if !found {
+                removed.push(format!(
+                    "shared.{}[{}]",
+                    kind.as_str().unwrap_or_default(),
+                    name.and_then(Value::as_str).unwrap_or_default()
+                ));
+            }
+            found
+        });
+    }
+    removed
+}
+
 /// Where `backup` writes archives and `restore` reads them by default.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -122,11 +152,29 @@ pub enum BackupTarget {
 
 impl ServerConfig {
     /// Merge, parse and validate the given files.
+    #[cfg(test)]
     pub fn load(files: &[impl AsRef<Path>]) -> Result<Self> {
-        let merged = merge::load_merged(files)?;
+        Ok(Self::load_with(files, None)?.0)
+    }
+
+    /// Like [`ServerConfig::load`], with `stored` (secrets kept on the server)
+    /// merged right after the first file. Its shared apps that the files
+    /// don't have are left out; returns them as `shared.<kind>[<name>]`.
+    pub fn load_with(
+        files: &[impl AsRef<Path>],
+        stored: Option<Value>,
+    ) -> Result<(Self, Vec<String>)> {
+        let split = files.len().min(1);
+        let mut merged = merge::load_merged(&files[..split])?;
+        let mut skipped = Vec::new();
+        if let Some(mut stored) = stored {
+            skipped = without_unknown_apps(&mut stored, &merge::load_merged(files)?);
+            merge::merge(&mut merged, stored);
+        }
+        merge::merge_files(&mut merged, &files[split..])?;
         let config: ServerConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("server configuration: {e}")))?;
-        config.complete()
+        Ok((config.complete()?, skipped))
     }
 
     /// Parse and validate one document, e.g. the effective config stored on a server.
@@ -339,6 +387,40 @@ mod tests {
 
     fn error(text: &str) -> String {
         format!("{:#}", parse(text).unwrap_err())
+    }
+
+    #[test]
+    fn stored_secrets_merge_after_the_first_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        let base = write(
+            "compost-server.yaml",
+            "shared: {database: [{name: pg, type: postgres, version: 16}]}",
+        );
+        let local = write(
+            "local.yaml",
+            "shared: {database: [{name: pg, configuration: {root_password: local}}]}",
+        );
+        let stored: Value = serde_yaml_ng::from_str(
+            "shared: {database: [{name: pg, configuration: {root_password: stored}}, {name: gone, configuration: {root_password: x}}], oidc: [{name: kc}]}",
+        )
+        .unwrap();
+        let password = |config: &ServerConfig| {
+            config.shared["database"][0].configuration["root_password"].clone()
+        };
+
+        let (config, skipped) =
+            ServerConfig::load_with(std::slice::from_ref(&base), Some(stored.clone())).unwrap();
+        assert_eq!(password(&config), Value::from("stored"));
+        assert_eq!(config.shared["database"].len(), 1);
+        assert_eq!(skipped, ["shared.database[gone]", "shared.oidc[kc]"]);
+
+        let (config, _) = ServerConfig::load_with(&[base, local], Some(stored)).unwrap();
+        assert_eq!(password(&config), Value::from("local"));
     }
 
     #[test]
