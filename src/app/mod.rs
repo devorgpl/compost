@@ -5,6 +5,7 @@ pub mod contribution;
 pub mod deploy;
 pub mod instance;
 pub mod list;
+pub mod logs;
 mod plan;
 pub mod release;
 pub mod remove;

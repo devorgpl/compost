@@ -15,6 +15,9 @@ use crate::error::CompostError;
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// Number of active cleanup guards; commands may run while it is above zero.
 static CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+/// Number of active [`expect_ctrl_c`] guards: Ctrl-C is how the user ends the
+/// running command, so it is not reported.
+static EXPECTED: AtomicUsize = AtomicUsize::new(0);
 
 pub fn install() -> Result<()> {
     ctrlc::set_handler(|| {
@@ -24,7 +27,9 @@ pub fn install() -> Result<()> {
             );
             std::process::exit(130);
         }
-        eprintln!("\ninterrupted: stopping and cleaning up (press Ctrl-C again to exit now)");
+        if EXPECTED.load(Ordering::SeqCst) == 0 {
+            eprintln!("\ninterrupted: stopping and cleaning up (press Ctrl-C again to exit now)");
+        }
     })?;
     Ok(())
 }
@@ -48,5 +53,25 @@ pub struct CleanupGuard;
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
         CLEANUPS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether Ctrl-C was pressed.
+pub fn interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
+/// Ctrl-C ends the command that runs while the returned guard is alive (e.g.
+/// following logs), so the usual message is not printed.
+pub fn expect_ctrl_c() -> ExpectGuard {
+    EXPECTED.fetch_add(1, Ordering::SeqCst);
+    ExpectGuard
+}
+
+pub struct ExpectGuard;
+
+impl Drop for ExpectGuard {
+    fn drop(&mut self) {
+        EXPECTED.fetch_sub(1, Ordering::SeqCst);
     }
 }

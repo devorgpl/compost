@@ -63,7 +63,7 @@ Or store the overlay on the server, so any machine or CI deploys with `compost.y
 
 **Update images or recreate containers:** add `--pull` (pull images again, even with unchanged tags; rebuild images built on the server) or `--recreate` (recreate every container; volumes are kept) to `server deploy --apply` or `app deploy --apply`. Shared apps are never pulled without `--pull` unless `version` or `image` changes; recreating them restarts what every app uses.
 
-**Inspect:** `compost app list`, `compost app state <instance>`, `compost connector list`, `compost server state`, `compost backup list`.
+**Inspect:** `compost app list`, `compost app state <instance>`, `compost app logs <instance> --service <service> --tail 200`, `compost server logs <shared app>`, `compost connector list`, `compost server state`, `compost backup list`. Never use `--follow` with logs: it doesn't end.
 
 **Back up and restore** ([Backup and restore](references/Backup-and-Restore.md)): `compost app backup <instance>` or `--all`, `compost server backup`; restores with `app restore` / `server restore`. `app restore <archive> --prefix review -f other-domains.yaml` makes a copy of an instance. Steps under `backup` in `compost.yaml` (`before_backup`, `after_backup`, `before_restore`, `after_restore`) run commands in the app's containers during these; `backup.stop` (or `--stop`, all services) stops services while volumes are copied.
 
@@ -77,7 +77,7 @@ Or store the overlay on the server, so any machine or CI deploys with `compost.y
 | 1 | Unexpected error | Read the message; rerun with `-v` to see the commands run on the server |
 | 2 | Invalid local config or usage; nothing was changed | Fix the file at the path the error names (e.g. `services.ingress[site].routes[api]`) |
 | 3 | Server not ready, or a server-side check failed | `compost server state`; a missing shared app, a domain used by another instance, SSH or Docker problems |
-| 4 | Deployed, but not healthy | `compost app state <instance>`, then the service's logs on the server |
+| 4 | Deployed, but not healthy | `compost app state <instance>`, then `compost app logs <instance> --service <service> --tail 200` |
 | 130 | Interrupted | If the next command reports a lock, ask before using `--force-unlock` |
 
 ## Where to look

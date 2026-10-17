@@ -30,6 +30,8 @@ pub enum AppCommand {
     Deploy(AppDeployArgs),
     /// Show the state of an application instance
     State(InstanceArgs),
+    /// Show the output of an application instance's containers
+    Logs(AppLogsArgs),
     /// Remove an application instance
     Remove(RemoveArgs),
     /// Back up an application instance (or all of them)
@@ -159,6 +161,17 @@ pub struct AppRestoreArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct AppLogsArgs {
+    #[command(flatten)]
+    pub instance: InstanceArgs,
+    /// Only this compose service (repeatable or comma-separated; default: all)
+    #[arg(long, value_delimiter = ',')]
+    pub service: Vec<String>,
+    #[command(flatten)]
+    pub logs: super::LogsArgs,
+}
+
+#[derive(Debug, Args)]
 pub struct AppRollbackArgs {
     #[command(flatten)]
     pub instance: InstanceArgs,
@@ -282,6 +295,17 @@ pub fn run(
                 server.server_home(),
                 &manager.manager_key,
                 &options,
+            )
+        }
+        AppCommand::Logs(args) => {
+            let selector = selector(&args.instance)?;
+            let connector = connector::open(&server, home, verbose)?;
+            crate::app::logs::logs(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &selector,
+                &args.logs.options(args.service),
             )
         }
         AppCommand::Releases(args) => {

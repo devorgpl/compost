@@ -131,6 +131,7 @@ case "$*" in
   "compose "*" run "*) echo "job output" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
+  "compose "*" logs "*) echo "fake log line" ;;
   "compose "*) ;;
   "network inspect "*)
     for network in $FAKE_DOCKER_NETWORKS; do [ "$*" = "network inspect $network" ] && exit 0; done
@@ -1553,6 +1554,66 @@ fn server_deploy_dry_run_shows_reload_and_recreate() {
     }
     assert!(!out.contains("POSTGRES_PASSWORD="), "{out}");
     assert_eq!(snapshot(&server.server_home), before, "the server changed");
+}
+
+#[test]
+fn app_and_server_logs() {
+    let server = server_with_app();
+    server
+        .run(
+            &[
+                "app",
+                "logs",
+                "myapp-staging",
+                "--service",
+                "backend-webapp",
+                "--tail",
+                "50",
+                "--since",
+                "10m",
+                "--timestamps",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("fake log line"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(
+            "docker compose -p myapp-staging --project-directory sources -f sources/docker-compose.yaml \
+             -f compose/compost.override.yaml logs --tail 50 --since 10m --timestamps --no-color backend-webapp"
+        ),
+        "{log}"
+    );
+
+    server
+        .run(&["app", "logs", "myapp-staging", "--service", "nope"], &[])
+        .code(2)
+        .stderr(contains(
+            "myapp-staging has no service `nope` (services: backend-webapp, front-webapp)",
+        ));
+    server
+        .run(&["app", "logs", "other-main"], &[])
+        .code(3)
+        .stderr(contains("other-main is not deployed"));
+    server
+        .run(&["app", "logs", "myapp-staging", "--since", "x;rm"], &[])
+        .code(2)
+        .stderr(contains("--since `x;rm`"));
+
+    server
+        .run(&["server", "logs", "caddy-main", "--tail", "10"], &[])
+        .success()
+        .stdout(contains("fake log line"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker compose -p compost-ingress-caddy-main logs --tail 10 --no-color"),
+        "{log}"
+    );
+    server
+        .run(&["server", "logs", "nope"], &[])
+        .code(2)
+        .stderr(contains("no shared app `nope` on this server"));
 }
 
 #[test]

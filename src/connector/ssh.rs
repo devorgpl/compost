@@ -32,7 +32,7 @@ pub struct Ssh {
 }
 
 impl Ssh {
-    fn args(&self, script: &str) -> Vec<String> {
+    fn args(&self, script: &str, tty: bool) -> Vec<String> {
         let mut args: Vec<String> = [
             "-o",
             "BatchMode=yes", // never prompt for passwords; fail instead
@@ -57,6 +57,10 @@ impl Ssh {
                 args.extend(["-o".to_string(), option]);
             }
         }
+        // A terminal on the server, so colors and Ctrl-C reach the command.
+        if tty {
+            args.push("-t".to_string());
+        }
         // `--` stops option parsing, so an address can never be read as an option.
         args.push("--".to_string());
         args.push(format!("{}@{}", self.user, self.address));
@@ -73,7 +77,13 @@ impl Connector for Ssh {
 
     fn command(&self, script: &str) -> Command {
         let mut command = Command::new("ssh");
-        command.args(self.args(script));
+        command.args(self.args(script, false));
+        command
+    }
+
+    fn interactive_command(&self, script: &str, tty: bool) -> Command {
+        let mut command = Command::new("ssh");
+        command.args(self.args(script, tty));
         command
     }
 
@@ -112,7 +122,7 @@ mod tests {
             verbose: false,
         };
         assert_eq!(
-            ssh.args("echo 'hi'"),
+            ssh.args("echo 'hi'", false),
             [
                 "-o",
                 "BatchMode=yes",
@@ -133,6 +143,22 @@ mod tests {
                 r"sh -c 'echo '\''hi'\'''",
             ]
         );
+    }
+
+    #[test]
+    fn asks_for_a_terminal_when_attached() {
+        let ssh = Ssh {
+            address: "10.0.0.1".into(),
+            port: 22,
+            user: "u".into(),
+            identity_file: None,
+            control_path: None,
+            verbose: false,
+        };
+        let args = ssh.args("true", true);
+        let dashes = args.iter().position(|a| a == "--").unwrap();
+        assert_eq!(args[dashes - 1], "-t");
+        assert!(!ssh.args("true", false).contains(&"-t".to_string()));
     }
 
     #[test]

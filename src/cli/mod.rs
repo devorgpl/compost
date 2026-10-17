@@ -85,6 +85,8 @@ pub enum ServerCommand {
     Backup(server::ServerBackupArgs),
     /// Restore shared applications from a server backup
     Restore(server::ServerRestoreArgs),
+    /// Show the output of a shared application's containers
+    Logs(server::ServerLogsArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -101,6 +103,35 @@ pub enum BackupCommand {
 pub enum ConnectorCommand {
     /// Show shared apps and the applications linked to them
     List,
+}
+
+/// Arguments shared by `app logs` and `server logs`.
+#[derive(Debug, Args)]
+pub struct LogsArgs {
+    /// Keep streaming new output until Ctrl-C
+    #[arg(long)]
+    pub follow: bool,
+    /// Lines to show from the end of each container's output, or `all`
+    #[arg(long, default_value = "100")]
+    pub tail: String,
+    /// Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
+    #[arg(long)]
+    pub since: Option<String>,
+    /// Show the time of every line
+    #[arg(long)]
+    pub timestamps: bool,
+}
+
+impl LogsArgs {
+    pub fn options(self, services: Vec<String>) -> crate::app::logs::Options {
+        crate::app::logs::Options {
+            services,
+            follow: self.follow,
+            tail: self.tail,
+            since: self.since,
+            timestamps: self.timestamps,
+        }
+    }
 }
 
 /// Arguments shared by `server deploy` and `app deploy`.
@@ -174,6 +205,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
         Command::Server(ServerCommand::Deploy(args)) => {
             server::deploy(&home, server, args, cli.verbose)
+        }
+        Command::Server(ServerCommand::Logs(args)) => {
+            server::logs(&home, server, args, cli.verbose)
         }
         Command::Secret(command) => secret::run(&home, server, command, cli.verbose),
         Command::Config(command) => config::run(&home, command),

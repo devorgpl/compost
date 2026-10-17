@@ -164,6 +164,32 @@ pub fn list(home: &CompostHome) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Args)]
+pub struct ServerLogsArgs {
+    /// Shared app, as in compost-server.yaml, e.g. `caddy-main` (`<kind>/<name>` if two kinds use the name)
+    pub name: String,
+    #[command(flatten)]
+    pub logs: super::LogsArgs,
+}
+
+pub fn logs(
+    home: &CompostHome,
+    server: Option<&str>,
+    args: ServerLogsArgs,
+    verbose: bool,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, verbose)?;
+    crate::server::logs::logs(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &args.name,
+        &args.logs.options(Vec::new()),
+    )
+}
+
 pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;

@@ -42,6 +42,12 @@ pub trait Connector {
     /// The local process that runs a POSIX `sh` script on the server.
     fn command(&self, script: &str) -> Command;
 
+    /// Like [`Connector::command`], for a script attached to this terminal;
+    /// `tty` asks for a terminal on the server.
+    fn interactive_command(&self, script: &str, _tty: bool) -> Command {
+        self.command(script)
+    }
+
     /// Print every script before it runs.
     fn verbose(&self) -> bool;
 
@@ -74,6 +80,28 @@ pub trait Connector {
         let output = run_process_stream(self.command(script), stdin, stdout)?;
         self.check_connection(&output)?;
         Ok(output)
+    }
+
+    /// Run a script with this terminal's stdin, stdout and stderr, e.g. to
+    /// follow logs, and return its exit status.
+    fn attach(&self, script: &str, tty: bool) -> Result<i32> {
+        log_script(self.verbose(), &self.target(), script);
+        crate::interrupt::check()?;
+        let mut command = self.interactive_command(script, tty);
+        let program = command.get_program().to_string_lossy().into_owned();
+        let status = command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .with_context(|| format!("cannot start `{program}`"))?;
+        let status = status.code().unwrap_or(-1);
+        self.check_connection(&Output {
+            status,
+            stdout: String::new(),
+            stderr: "see the message above".to_string(),
+        })?;
+        Ok(status)
     }
 
     /// Write the script's stdout to `stdout`; a non-zero exit status is an error.

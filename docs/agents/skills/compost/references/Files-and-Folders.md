@@ -121,3 +121,5 @@ docker compose -p myapp-staging logs -f backend
 docker compose -p compost-database-postgres18 exec compost-shared-postgres18 psql -U postgres
 docker exec -it compost-database-postgres18 psql -U postgres
 ```
+
+From your machine, `compost app logs` and `compost server logs` show the same output without logging in to the server (see [Logs](Applications.md#logs)).

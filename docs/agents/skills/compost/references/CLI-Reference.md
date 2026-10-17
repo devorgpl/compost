@@ -63,6 +63,7 @@ Commands:
   deploy    Deploy shared applications from compost-server.yaml
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
+  logs      Show the output of a shared application's containers
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -242,6 +243,26 @@ Options:
           Print help (see a summary with '-h')
 ```
 
+## `compost server logs`
+
+```text
+Show the output of a shared application's containers
+
+Usage: compost server logs [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  Shared app, as in compost-server.yaml, e.g. `caddy-main` (`<kind>/<name>` if two kinds use the name)
+
+Options:
+      --follow           Keep streaming new output until Ctrl-C
+  -s, --server <SERVER>  Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --tail <TAIL>      Lines to show from the end of each container's output, or `all` [default: 100]
+  -v, --verbose          Print every command run on the server
+      --since <SINCE>    Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
+      --timestamps       Show the time of every line
+  -h, --help             Print help
+```
+
 ## `compost connect`
 
 ```text
@@ -283,6 +304,7 @@ Commands:
   list      List the application instances deployed on the server
   deploy    Deploy the application instance described by the given files
   state     Show the state of an application instance
+  logs      Show the output of an application instance's containers
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
@@ -366,6 +388,30 @@ Options:
   -v, --verbose          Print every command run on the server
       --prefix <PREFIX>  Instance prefix (overrides the one from the config files)
   -h, --help             Print help
+```
+
+## `compost app logs`
+
+```text
+Show the output of an application instance's containers
+
+Usage: compost app logs [OPTIONS] [INSTANCE]
+
+Arguments:
+  [INSTANCE]  Instance as shown by `app list`, e.g. `myapp-staging`
+
+Options:
+  -f, --file <FILES>       Config files merged in order (repeatable or comma-separated)
+  -s, --server <SERVER>    Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>          Application name (instead of config files)
+  -v, --verbose            Print every command run on the server
+      --prefix <PREFIX>    Instance prefix (overrides the one from the config files)
+      --service <SERVICE>  Only this compose service (repeatable or comma-separated; default: all)
+      --follow             Keep streaming new output until Ctrl-C
+      --tail <TAIL>        Lines to show from the end of each container's output, or `all` [default: 100]
+      --since <SINCE>      Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
+      --timestamps         Show the time of every line
+  -h, --help               Print help
 ```
 
 ## `compost app remove`

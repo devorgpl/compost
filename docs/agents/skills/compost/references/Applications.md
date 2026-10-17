@@ -320,6 +320,18 @@ compost app state myapp-staging                  # or: -f compost.yaml,.compost-
 
 Both read what the deploy stored on the server, so they don't need the app's repository.
 
+### Logs
+
+```sh
+compost app logs myapp-staging                          # last 100 lines of every service
+compost app logs myapp-staging --service backend --follow   # stream until Ctrl-C
+compost app logs myapp-staging --since 1h --timestamps --tail all
+```
+
+`app logs` runs `docker compose logs` on the server with the instance's compose files, so you don't need to know its project or files. `--service` (repeatable or comma-separated) picks compose services; an unknown one exits 2 and lists the instance's services. `--tail` is the number of lines per container (default `100`, or `all`), `--since` a duration (`10m`) or time (`2026-10-17T12:00:00`). On a terminal the output keeps compose's colors, and Ctrl-C ends `--follow` normally (exit 0); piped, it is plain text, e.g. `compost app logs myapp-staging | grep ERROR`.
+
+It shows what Docker still keeps for the current containers: a recreated container starts with empty logs. A [monitoring link](#monitoring-links) keeps the history in OpenObserve.
+
 ## Removing
 
 ```sh

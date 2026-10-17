@@ -5,6 +5,7 @@ pub mod compose;
 pub mod deploy;
 pub mod links;
 pub mod lock;
+pub mod logs;
 pub mod plan;
 pub mod secrets;
 pub mod state;
