@@ -138,6 +138,7 @@ pub fn rollback(
     let deploy_options = deploy::Options {
         apply: true,
         dry_run: false,
+        diff: false,
         force_unlock: options.force_unlock,
         pull: false,
         recreate: false,

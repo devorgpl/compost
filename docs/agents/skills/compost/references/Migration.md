@@ -94,7 +94,7 @@ Traefik labels such as ``traefik.http.routers.shop.rule=Host(`shop.example.com`)
 Check, switch, check:
 
 ```sh
-compost server deploy --dry-run       # validates; lists the networks it joins
+compost server deploy --dry-run       # validates; says if a network it joins is missing
 docker stop old-proxy                 # or: docker compose -p proxy stop
 compost server deploy --apply
 curl -I https://shop.example.com/

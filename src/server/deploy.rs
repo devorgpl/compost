@@ -1,20 +1,24 @@
 //! `compost server deploy` (spec §10.7).
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::compose::wait_until_ready_within;
 use super::lock::Lock;
+use super::plan::{self as server_plan, FileChange};
 use super::secrets;
 use super::state::{self, Status};
 use super::state_file::{DeployStatus, StateFile};
 use super::{MANAGER_KEY_FILE, SERVER_CONFIG_FILE};
 use crate::app::contribution::Contribution;
 use crate::config::app::ComposeFile;
-use crate::config::server::{Consumer, ServerConfig};
+use crate::config::server::{Consumer, ConsumerLink, ServerConfig};
+use crate::connector::dry_run::DryRun;
 use crate::connector::{Connector, shell_quote};
 use crate::error::CompostError;
-use crate::shared::{self, AppCtx, Kind, Rendered, ServerCtx, SharedAppConfig};
+use crate::shared::{self, AppCtx, Kind, Rendered, RenderedFile, ServerCtx, SharedAppConfig};
 
 /// Written next to `compose.yaml` of a shared app with links; docker compose
 /// reads it automatically.
@@ -23,6 +27,8 @@ pub const SHARED_OVERRIDE_FILE: &str = "compose.override.yaml";
 pub struct Options<'a> {
     pub apply: bool,
     pub dry_run: bool,
+    /// With `dry_run`: also print the changed lines of files without secrets.
+    pub diff: bool,
     pub force_unlock: bool,
     /// Pull images before starting, even when their tags did not change.
     pub pull: bool,
@@ -92,8 +98,7 @@ pub fn deploy(
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
     if options.dry_run {
-        print_dry_run(&ctx, report.status, &plans, options);
-        return Ok(());
+        return dry_run(&ctx, report.status, &plans, config, options);
     }
 
     // 3. Initialize and lock.
@@ -149,23 +154,7 @@ pub fn deploy(
         let change = if plan.changed { "updated" } else { "unchanged" };
         out!("  {:<10} {:<16} {change}", plan.kind_name(), plan.app.name);
     }
-    let orphans: Vec<(String, String)> = state_file
-        .shared
-        .iter()
-        .filter(|record| {
-            !plans
-                .iter()
-                .any(|p| p.kind_name() == record.kind && p.app.name == record.name)
-        })
-        .map(|record| (record.kind.clone(), record.name.clone()))
-        .collect();
-    for (kind, name) in orphans {
-        let was_external = previous.as_ref().is_some_and(|config| {
-            config
-                .shared
-                .get(&kind)
-                .is_some_and(|apps| apps.iter().any(|a| a.name == name && a.is_external()))
-        });
+    for (kind, name, was_external) in orphans(&state_file, &plans, previous.as_ref()) {
         if was_external && forget_external(&ctx, &kind, &name)? {
             state_file.remove_shared(&kind, &name);
             out!("  {kind:<10} {name:<16} removed: external, compost only forgets it");
@@ -332,18 +321,50 @@ fn check_existing_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<
 /// Delete the records of an external shared app that was removed from the
 /// config, unless apps still link to it. Returns whether it was forgotten.
 fn forget_external(ctx: &ServerCtx, kind: &str, name: &str) -> Result<bool> {
-    let dir = shared::connectors_dir(kind, name);
-    let links = ctx
-        .connector
-        .list_dir(&ctx.path(&dir))?
-        .into_iter()
-        .any(|file| !file.starts_with("root-"));
-    if links {
+    if has_links(ctx, kind, name)? {
         return Ok(false);
     }
+    let dir = shared::connectors_dir(kind, name);
     ctx.connector
         .exec(&format!("rm -rf -- {}", shell_quote(&ctx.path(&dir))))?;
     Ok(true)
+}
+
+/// Apps (or shared apps) have link records of this shared app.
+fn has_links(ctx: &ServerCtx, kind: &str, name: &str) -> Result<bool> {
+    let dir = shared::connectors_dir(kind, name);
+    Ok(ctx
+        .connector
+        .list_dir(&ctx.path(&dir))?
+        .into_iter()
+        .any(|file| !file.starts_with("root-")))
+}
+
+/// Shared apps in `state.yaml` that the config no longer has: kind, name and
+/// whether the previous config had them as external.
+fn orphans(
+    state_file: &StateFile,
+    plans: &[Plan],
+    previous: Option<&ServerConfig>,
+) -> Vec<(String, String, bool)> {
+    state_file
+        .shared
+        .iter()
+        .filter(|record| {
+            !plans
+                .iter()
+                .any(|p| p.kind_name() == record.kind && p.app.name == record.name)
+        })
+        .map(|record| {
+            let was_external = previous.is_some_and(|config| {
+                config.shared.get(&record.kind).is_some_and(|apps| {
+                    apps.iter()
+                        .any(|a| a.name == record.name && a.is_external())
+                })
+            });
+            (record.kind.clone(), record.name.clone(), was_external)
+        })
+        .collect()
 }
 
 /// `shared/<kind>/<name>/compose.yaml`.
@@ -460,6 +481,40 @@ fn remove_override(ctx: &ServerCtx, plan: &Plan) -> Result<bool> {
 /// Remove the links that shared apps had in the previously deployed config
 /// and no longer have, or that now use another shared app.
 fn remove_dropped_links(ctx: &ServerCtx, previous: &ServerConfig, plans: &[Plan]) -> Result<()> {
+    for_each_dropped_link(previous, plans, |kind_name, app, old, link| {
+        let peers = old.peers();
+        let link_ctx = AppCtx {
+            server: ctx,
+            app: &old.app,
+            shared: &link.shared,
+            peers: &peers,
+        };
+        link.kind
+            .remove_application(&link_ctx, &link.name, false)
+            .map_err(|e| {
+                CompostError::ServerNotReady(format!(
+                    "{kind_name} {}: removing {}: {e:#}",
+                    app.name,
+                    link.path()
+                ))
+            })?;
+        out!(
+            "  {kind_name:<10} {:<16} removed link {} ({} {})",
+            app.name,
+            link.path(),
+            link.kind.name(),
+            link.shared.name
+        );
+        Ok(())
+    })
+}
+
+/// Call `f` with every link of the previous config that `plans` dropped.
+fn for_each_dropped_link(
+    previous: &ServerConfig,
+    plans: &[Plan],
+    mut f: impl FnMut(&str, &SharedAppConfig, &Consumer, &ConsumerLink) -> Result<()>,
+) -> Result<()> {
     for (kind_name, app) in previous.shared_apps() {
         // Only links that resolved then; a config that does not resolve any
         // more has nothing deployed to remove.
@@ -474,7 +529,6 @@ fn remove_dropped_links(ctx: &ServerCtx, previous: &ServerConfig, plans: &[Plan]
             continue;
         };
         let current = plan.consumer.as_ref();
-        let peers = old.peers();
         for link in &old.links {
             let kept = current.is_some_and(|current| {
                 current.links.iter().any(|l| {
@@ -483,31 +537,9 @@ fn remove_dropped_links(ctx: &ServerCtx, previous: &ServerConfig, plans: &[Plan]
                         && l.shared.name == link.shared.name
                 })
             });
-            if kept {
-                continue;
+            if !kept {
+                f(kind_name, app, &old, link)?;
             }
-            let link_ctx = AppCtx {
-                server: ctx,
-                app: &old.app,
-                shared: &link.shared,
-                peers: &peers,
-            };
-            link.kind
-                .remove_application(&link_ctx, &link.name, false)
-                .map_err(|e| {
-                    CompostError::ServerNotReady(format!(
-                        "{kind_name} {}: removing {}: {e:#}",
-                        app.name,
-                        link.path()
-                    ))
-                })?;
-            out!(
-                "  {kind_name:<10} {:<16} removed link {} ({} {})",
-                app.name,
-                link.path(),
-                link.kind.name(),
-                link.shared.name
-            );
         }
     }
     Ok(())
@@ -590,26 +622,68 @@ fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()>
     Ok(())
 }
 
-fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], options: &Options) {
+/// `--dry-run`: compare what the deploy would write with the server and say
+/// what `--apply` would do with each shared app. Link hooks run through a
+/// connector that keeps their writes in memory.
+fn dry_run(
+    ctx: &ServerCtx,
+    status: Status,
+    plans: &[Plan],
+    config: &ServerConfig,
+    options: &Options,
+) -> Result<()> {
+    let state_file = StateFile::load(ctx)?;
+    let previous = match ctx.read(SERVER_CONFIG_FILE)? {
+        Some(text) => ServerConfig::parse(&text).ok(),
+        None => None,
+    };
+    let dry = DryRun::new(ctx.connector);
+    let dry_ctx = ServerCtx {
+        connector: &dry,
+        home: ctx.home.clone(),
+    };
     out!(
         "Dry run: nothing is changed on the server ({status}, home {}).",
         ctx.home
     );
-    out!("  networks: {}", all_networks(plans).join(", "));
-    let existing: Vec<&str> = plans
-        .iter()
-        .flat_map(|plan| plan.rendered.existing_networks.iter().map(String::as_str))
-        .collect();
-    if !existing.is_empty() {
-        out!("  existing networks joined: {}", existing.join(", "));
+
+    let network_exists = |network: &str| -> Result<bool> {
+        Ok(ctx
+            .connector
+            .exec(&format!(
+                "docker network inspect {} >/dev/null 2>&1 && echo yes || true",
+                shell_quote(network)
+            ))?
+            .trim()
+            == "yes")
+    };
+    for network in all_networks(plans) {
+        if !network_exists(&network)? {
+            out!("  network {network}: created");
+        }
     }
     for plan in plans {
-        let change = if plan.changed {
-            "would update"
-        } else {
-            "unchanged"
-        };
-        out!("  {:<10} {:<16} {change}", plan.kind_name(), plan.app.name);
+        for network in &plan.rendered.existing_networks {
+            if !network_exists(network)? {
+                out!(
+                    "  network {network}: missing; {} {} joins it, so the deploy fails",
+                    plan.kind_name(),
+                    plan.app.name
+                );
+            }
+        }
+    }
+
+    for plan in plans {
+        let (changes, compose_changed) = plan_changes(ctx, &dry, &dry_ctx, plan, options.diff)?;
+        let action = shared_action(
+            &state_file,
+            plan,
+            !changes.is_empty(),
+            compose_changed,
+            options,
+        );
+        out!("  {:<10} {:<16} {action}", plan.kind_name(), plan.app.name);
         if let Some(consumer) = &plan.consumer {
             let uses: Vec<String> = consumer
                 .links
@@ -618,26 +692,122 @@ fn print_dry_run(ctx: &ServerCtx, status: Status, plans: &[Plan], options: &Opti
                 .collect();
             out!("      uses {}", uses.join(", "));
         }
-        for dir in &plan.rendered.dirs {
-            out!("      {dir}/");
-        }
-        for file in &plan.rendered.files {
-            let secret = if file.is_secret() { "  (secret)" } else { "" };
-            out!("      {}  {:o}{secret}", file.path, file.mode);
-        }
+        server_plan::print_files("      ", &changes, options.diff);
     }
-    if options.secrets.is_some() {
-        out!("  secrets: would be stored in {}", ctx.path(secrets::PATH));
+
+    if let Some(previous) = &previous {
+        for_each_dropped_link(previous, plans, |kind_name, app, _old, link| {
+            out!(
+                "  {kind_name:<10} {:<16} link {} ({} {}): removed",
+                app.name,
+                link.path(),
+                link.kind.name(),
+                link.shared.name
+            );
+            Ok(())
+        })?;
     }
-    if options.apply {
-        let pull = if options.pull { "pull and " } else { "" };
-        let recreate = if options.recreate {
-            " --force-recreate"
+    for (kind, name, was_external) in orphans(&state_file, plans, previous.as_ref()) {
+        let what = if !was_external {
+            "orphaned: not in the configuration any more, left as it is"
+        } else if has_links(ctx, &kind, &name)? {
+            "orphaned: apps still link to it; deploy them without it first"
         } else {
-            ""
+            "removed: external, compost only forgets it"
         };
-        out!(
-            "  then: docker compose {pull}up -d{recreate} for each shared app, and wait until it runs"
-        );
+        out!("  {kind:<10} {name:<16} {what}");
     }
+
+    let mut files = vec![RenderedFile::new(
+        SERVER_CONFIG_FILE.to_string(),
+        serde_yaml_ng::to_string(&config.without_secrets()?)?,
+    )];
+    if let Some(text) = options.secrets {
+        files.push(RenderedFile::secret(
+            secrets::PATH.to_string(),
+            text.to_string(),
+        ));
+    }
+    let changes = server_plan::compare(ctx, &files)?;
+    server_plan::print_files("  ", &changes, options.diff);
+    if !options.apply {
+        out!("Without --apply, the files are written and the services are not started.");
+    }
+    Ok(())
+}
+
+/// Files of a shared app that the deploy would add, change or remove, and
+/// whether its compose files (or their override) are among them.
+fn plan_changes(
+    ctx: &ServerCtx,
+    dry: &DryRun,
+    dry_ctx: &ServerCtx,
+    plan: &Plan,
+    diff: bool,
+) -> Result<(Vec<FileChange>, bool)> {
+    let mut changes = server_plan::compare(ctx, &plan.rendered.files)?;
+    for dir in &plan.rendered.owned_dirs {
+        for name in ctx.connector.list_dir(&ctx.path(dir))? {
+            let path = format!("{dir}/{name}");
+            if !plan.rendered.files.iter().any(|file| file.path == path) {
+                let old = if diff { ctx.read(&path)? } else { None };
+                changes.push(FileChange::removed(path, old));
+            }
+        }
+    }
+
+    let dir = shared::shared_dir(plan.kind_name(), &plan.app.name);
+    let override_path = format!("{dir}/{SHARED_OVERRIDE_FILE}");
+    if let Some(consumer) = &plan.consumer {
+        let before = dry.writes();
+        prepare_links(dry_ctx, plan, consumer).map_err(|e| {
+            CompostError::ServerNotReady(format!("{} {}: {e:#}", plan.kind_name(), plan.app.name))
+        })?;
+        let written: BTreeMap<_, _> = dry
+            .writes()
+            .into_iter()
+            .filter(|(path, _)| !before.contains_key(path))
+            .collect();
+        let files = server_plan::captured_files(ctx, written);
+        changes.extend(server_plan::compare(ctx, &files)?);
+    } else if let Some(old) = ctx.read(&override_path)? {
+        changes.push(FileChange::removed(override_path.clone(), Some(old)));
+    }
+    let compose = compose_path(plan);
+    let compose_changed = changes
+        .iter()
+        .any(|change| change.path == compose || change.path == override_path);
+    Ok((changes, compose_changed))
+}
+
+/// What `--apply` would do with a shared app, by the rules of [`deploy`].
+fn shared_action(
+    state_file: &StateFile,
+    plan: &Plan,
+    changed: bool,
+    compose_changed: bool,
+    options: &Options,
+) -> String {
+    let record = state_file.shared(plan.kind_name(), &plan.app.name);
+    let deployed = record.is_some_and(|r| r.status == DeployStatus::Deployed);
+    let action = if plan.app.is_external() {
+        "external: compost does not start it"
+    } else if record.is_none() {
+        "created"
+    } else if options.recreate {
+        "recreated (--recreate)"
+    } else if !deployed {
+        "recreated: its last deploy did not finish"
+    } else if !changed && options.pull {
+        "pulled; recreated if a newer image comes"
+    } else if !changed {
+        "unchanged"
+    } else if compose_changed {
+        "recreated: compose files changed"
+    } else if plan.kind.reloads(plan.app) {
+        "reloaded without a restart"
+    } else {
+        "recreated: configuration files changed"
+    };
+    action.to_string()
 }

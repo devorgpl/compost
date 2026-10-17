@@ -8,7 +8,7 @@ Passwords and other per-instance values (domains, database credentials, OIDC use
 - Keep the real files out of Git, e.g. with `.compost-*.yaml` and `.compost.*.yaml` in `.gitignore`, keeping the examples with `!*.example.yaml`.
 - Files named `.compost-*.yaml` or `.compost.*.yaml`, and every file passed with `-f`, are never uploaded with the sources.
 - Passwords you leave out are generated on the first deploy (32 hexadecimal characters; OpenObserve's root password starts with `Compost-` to meet its rules), stored on the server and reused by later deploys.
-- On the server, secret files have mode `0600`. Secrets never appear in output, `--dry-run` (shown as `***`), stored configs or remote command lines.
+- On the server, secret files have mode `0600`. Secrets never appear in output, stored configs or remote command lines. `--dry-run` names files with secrets but never shows them, also with `--diff`, and shows variable names, not values.
 
 ## Local overlays
 

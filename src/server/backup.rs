@@ -241,6 +241,7 @@ pub fn restore(
     let deploy_options = deploy::Options {
         apply: true,
         dry_run: false,
+        diff: false,
         force_unlock: false,
         pull: false,
         recreate: false,

@@ -366,6 +366,12 @@ pub trait Kind: Sync {
         Ok(false)
     }
 
+    /// Whether [`Kind::reload_shared`] can apply changed files while it
+    /// runs, for `--dry-run`.
+    fn reloads(&self, _config: &SharedAppConfig) -> bool {
+        false
+    }
+
     // --- Links from applications (entries under `services.<kind>` in compost.yaml).
 
     /// Hooks run in ascending order on deploy (and reverse order on remove).
@@ -392,6 +398,12 @@ pub trait Kind: Sync {
 
     /// After the application's containers started.
     fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()>;
+
+    /// Files `after_apply_application` would write (relative to
+    /// `COMPOST_SERVER_HOME`), for `--dry-run`. Writes nothing.
+    fn preview_application(&self, _ctx: &AppCtx, _link: &Value) -> Result<Vec<RenderedFile>> {
+        Ok(Vec::new())
+    }
 
     /// One line about a deployed link, for `app state`.
     fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String>;

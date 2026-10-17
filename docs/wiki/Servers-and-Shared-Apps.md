@@ -42,7 +42,7 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecurebuild] [--force]
-compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run [--diff]]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
@@ -54,7 +54,7 @@ compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [-
 3. renders each shared app's files and uploads them, generating missing passwords;
 4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
-Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
+Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, compared with the server: networks to create, the files of each shared app that would be added, changed or removed (files with secrets only named), dropped links and shared apps left out of the config, and what `--apply` would do with each shared app: `created`, `recreated` (its compose files or override changed, `--recreate`, or its last deploy didn't finish), `reloaded without a restart` (Caddy, when only its other files changed), `pulled` (`--pull`) or `unchanged`. `--diff` adds the changed lines of files without secrets. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
 `up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 

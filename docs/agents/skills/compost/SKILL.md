@@ -17,7 +17,7 @@ The `references/` folder holds the full user documentation of the compost versio
 
 ## Safety rules
 
-- **Dry-run first.** Before any `server deploy` or `app deploy`, run it with `--dry-run` and show the user what would change. `--dry-run` never changes the server.
+- **Dry-run first.** Before any `server deploy` or `app deploy`, run it with `--dry-run` (add `--diff` for the changed lines) and show the user what would change: files, and which services are recreated, built, pulled or reloaded. `--dry-run` never changes the server.
 - **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `app rollback`, `server restore`, `secret deploy`, `app deploy --secret`, `server deploy --secret` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data.
 - `compost config set deploy.apply true` makes every deploy apply. Check it with `compost config show`, and pass `--no-apply` when you only want to upload.
 - **Secrets.** Overlays (`.compost-*.yaml`, `.compost.*.yaml`, `.compost-server.secrets.yaml`) hold passwords: never commit them, print them or paste them into chat. Commit only `*.example.yaml`. Leave passwords out to have compost generate and keep them. Postgres `root_password`, Keycloak `admin_password` and OpenObserve's `root_password` can't change after the first deploy. See [Secrets](references/Secrets.md).

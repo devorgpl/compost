@@ -421,6 +421,7 @@ fn deploy(
     let options = deploy::Options {
         apply: args.apply(home, server)?,
         dry_run: args.dry_run,
+        diff: args.diff,
         force_unlock: args.force_unlock,
         pull: args.pull,
         recreate: args.recreate,

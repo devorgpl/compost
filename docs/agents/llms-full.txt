@@ -876,7 +876,7 @@ Traefik labels such as ``traefik.http.routers.shop.rule=Host(`shop.example.com`)
 Check, switch, check:
 
 ```sh
-compost server deploy --dry-run       # validates; lists the networks it joins
+compost server deploy --dry-run       # validates; says if a network it joins is missing
 docker stop old-proxy                 # or: docker compose -p proxy stop
 compost server deploy --apply
 curl -I https://shop.example.com/
@@ -1321,7 +1321,7 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run]
+compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
 ```
 
 `-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
@@ -1340,6 +1340,32 @@ The result is shown as by `app state`. Running the same deploy again keeps data 
 
 - `--pull`: with `build: true`, also pulls the images of services without `build` and builds with `--pull`, which fetches newer base images. Without `build: true` it changes nothing.
 - `--recreate`: recreates every container (`up -d --force-recreate`), even unchanged ones. Volumes, databases and passwords are kept.
+
+**What a deploy would change.** `--dry-run` runs the deploy as far as it can without changing the server and compares the result with what is there:
+
+```
+Dry run: nothing is changed on the server.
+  instance myapp-staging (deployed, release 4)
+  sources (14 files):
+    changed  apps/myapp/staging/sources/docker-compose.yaml
+  services.database[main-db]: uses postgres postgres18
+  services.ingress[site]: uses caddy caddy-main
+  files:
+    changed  connectors/ingress/caddy-main/myapp-staging-site.yaml
+    changed  shared/ingress/caddy-main/conf/sites/myapp-staging-site.caddy
+    changed  apps/myapp/staging/compose/compost.override.yaml  (secret, not shown)
+  services:
+    backend  recreated: environment: APP_MODE
+    web      built again; recreated if its image changes
+    worker   created
+  records release 5
+```
+
+- **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
+- **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.
+- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `pulled` (every deploy without `build: true` pulls; a newer image recreates it) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
+
+`--diff` adds the changed lines of every file without secrets, as a unified diff. It needs `--dry-run`.
 
 **Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record, routing and scraping go, its data stays (collected logs and metrics stay in the monitoring app). Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
 
@@ -1433,7 +1459,7 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 
 ```sh
 compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecurebuild] [--force]
-compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run]
+compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run [--diff]]
 ```
 
 `server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
@@ -1445,7 +1471,7 @@ compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [-
 3. renders each shared app's files and uploads them, generating missing passwords;
 4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
-Without `--apply`, only steps 1–3 run. `--dry-run` shows what would happen and changes nothing. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
+Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, compared with the server: networks to create, the files of each shared app that would be added, changed or removed (files with secrets only named), dropped links and shared apps left out of the config, and what `--apply` would do with each shared app: `created`, `recreated` (its compose files or override changed, `--recreate`, or its last deploy didn't finish), `reloaded without a restart` (Caddy, when only its other files changed), `pulled` (`--pull`) or `unchanged`. `--diff` adds the changed lines of files without secrets. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
 `up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
@@ -1784,7 +1810,7 @@ Passwords and other per-instance values (domains, database credentials, OIDC use
 - Keep the real files out of Git, e.g. with `.compost-*.yaml` and `.compost.*.yaml` in `.gitignore`, keeping the examples with `!*.example.yaml`.
 - Files named `.compost-*.yaml` or `.compost.*.yaml`, and every file passed with `-f`, are never uploaded with the sources.
 - Passwords you leave out are generated on the first deploy (32 hexadecimal characters; OpenObserve's root password starts with `Compost-` to meet its rules), stored on the server and reused by later deploys.
-- On the server, secret files have mode `0600`. Secrets never appear in output, `--dry-run` (shown as `***`), stored configs or remote command lines.
+- On the server, secret files have mode `0600`. Secrets never appear in output, stored configs or remote command lines. `--dry-run` names files with secrets but never shows them, also with `--diff`, and shows variable names, not values.
 
 ## Local overlays
 
@@ -2567,7 +2593,8 @@ Options:
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-      --dry-run          Validate and show what would happen without changing the server
+      --dry-run          Validate and show what would change on the server, without changing it
+      --diff             With --dry-run: also show the changed lines of files without secrets
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
@@ -2755,7 +2782,8 @@ Options:
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-      --dry-run          Validate and show what would happen without changing the server
+      --dry-run          Validate and show what would change on the server, without changing it
+      --diff             With --dry-run: also show the changed lines of files without secrets
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)

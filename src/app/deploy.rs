@@ -7,6 +7,7 @@ use serde_yaml_ng::Value;
 
 use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
+use super::plan::AppPlan;
 use super::release::{self, Release};
 use super::restore::RestorePlan;
 use super::secrets::{self, Overlay};
@@ -14,17 +15,23 @@ use super::sources;
 use crate::config::app::{AppConfig, LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
+use crate::connector::dry_run::DryRun;
 use crate::error::CompostError;
 use crate::server::SERVER_CONFIG_FILE;
 use crate::server::compose::wait_until_ready;
 use crate::server::lock::Lock;
+use crate::server::plan as server_plan;
 use crate::server::state::{self, Report, Status};
 use crate::server::state_file::{DeployStatus, StateFile};
-use crate::shared::{self, AppCtx, Kind, Peer, Resolution, ServerCtx, SharedAppConfig};
+use crate::shared::{
+    self, AppCtx, Kind, Peer, RenderedFile, Resolution, ServerCtx, SharedAppConfig,
+};
 
 pub struct Options<'a> {
     pub apply: bool,
     pub dry_run: bool,
+    /// With `dry_run`: also print the changed lines of files without secrets.
+    pub diff: bool,
     pub force_unlock: bool,
     /// Also pull images that `build: true` would not: base images and
     /// services without `build`.
@@ -114,32 +121,15 @@ pub fn deploy(
 
     let project = app.instance();
     if options.dry_run {
-        out!("Dry run: nothing is changed on the server.");
-        out!("  instance {project}: {} files to upload", files.len());
-        for link in &links {
-            out!(
-                "  {}: uses {} {}",
-                link.path(),
-                link.shared.type_name,
-                link.shared.name
-            );
-        }
-        for link in &dropped {
-            out!(
-                "  link {} {} ({}): no longer configured, {}",
-                link.kind,
-                link.entry,
-                link.instance,
-                removal(link, &options.purge)
-            );
-        }
-        if options.secrets.is_some() {
-            out!(
-                "  secrets: would be stored in {}",
-                ctx.path(&secrets::path(&app.name, &app.prefix))
-            );
-        }
-        return Ok(());
+        return dry_run(
+            &ctx,
+            loaded,
+            &links,
+            &pinned_links,
+            &dropped,
+            &files,
+            options,
+        );
     }
 
     // 2. Upload and render.
@@ -152,27 +142,7 @@ pub fn deploy(
     connector.replace_dir(&ctx.path(&format!("{dir}/sources")), &archive)?;
     out!("  uploaded {} files", files.len());
 
-    let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
-    let mut contribution = Contribution::default();
-    for service in &app.app_services {
-        for (key, value) in &service.environment {
-            let value = env_value(value).context("environment values are checked on load")?;
-            contribution.set_env(&service.service, key, value)?;
-        }
-    }
-    for link in &links {
-        let link_ctx = AppCtx {
-            server: &ctx,
-            app,
-            shared: &link.shared,
-            peers: &peers,
-        };
-        // Fails on server-side conflicts, e.g. a domain used by another instance.
-        link.kind
-            .prepare_application(&link_ctx, link.entry, &mut contribution)
-            .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
-    }
-    let override_yaml = contribution.override_yaml(&loaded.compose)?;
+    let override_yaml = render_override(&ctx, loaded, &links)?;
     let write = |file: &str, text: &str, mode| {
         connector.write_file(&ctx.path(&format!("{dir}/{file}")), text.as_bytes(), mode)
     };
@@ -252,6 +222,131 @@ pub fn deploy(
             Err(not_ready(&format!("{project} failed: {err:#}")))
         }
     }
+}
+
+/// Run the links' render hooks, which write link records, and return the
+/// compose override with the variables and networks they add.
+fn render_override(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<String> {
+    let app = &loaded.config;
+    let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
+    let mut contribution = Contribution::default();
+    for service in &app.app_services {
+        for (key, value) in &service.environment {
+            let value = env_value(value).context("environment values are checked on load")?;
+            contribution.set_env(&service.service, key, value)?;
+        }
+    }
+    for link in links {
+        let link_ctx = AppCtx {
+            server: ctx,
+            app,
+            shared: &link.shared,
+            peers: &peers,
+        };
+        // Fails on server-side conflicts, e.g. a domain used by another instance.
+        link.kind
+            .prepare_application(&link_ctx, link.entry, &mut contribution)
+            .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
+    }
+    contribution.override_yaml(&loaded.compose)
+}
+
+/// `--dry-run`: render as a deploy would, through a connector that keeps the
+/// writes in memory, and compare the result with the server.
+fn dry_run(
+    ctx: &ServerCtx,
+    loaded: &LoadedApp,
+    links: &[Link],
+    pinned_links: &[PinnedLink],
+    dropped: &[PinnedLink],
+    uploads: &[sources::Upload],
+    options: &Options,
+) -> Result<()> {
+    let app = &loaded.config;
+    let dry = DryRun::new(ctx.connector);
+    let dry_ctx = ServerCtx {
+        connector: &dry,
+        home: ctx.home.clone(),
+    };
+    let override_yaml = render_override(&dry_ctx, loaded, links)?;
+    let mut previews = Vec::new();
+    if options.apply {
+        let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
+        for link in links {
+            let link_ctx = AppCtx {
+                server: &dry_ctx,
+                app,
+                shared: &link.shared,
+                peers: &peers,
+            };
+            previews.extend(
+                link.kind
+                    .preview_application(&link_ctx, link.entry)
+                    .with_context(|| link.path())?,
+            );
+        }
+    }
+
+    let dir = instance::dir(&app.name, &app.prefix);
+    let mut files = server_plan::captured_files(ctx, dry.writes());
+    files.push(RenderedFile::secret(
+        format!("{dir}/{}", instance::OVERRIDE_FILE),
+        override_yaml.clone(),
+    ));
+    files.push(RenderedFile::new(
+        format!("{dir}/{}", instance::CONFIG_FILE),
+        serde_yaml_ng::to_string(&app.without_secrets()?)?,
+    ));
+    let pinned = PinnedLinks {
+        links: pinned_links.to_vec(),
+        removing: dropped.to_vec(),
+    };
+    files.push(RenderedFile::new(
+        format!("{dir}/{}", instance::LINKS_FILE),
+        serde_yaml_ng::to_string(&pinned)?,
+    ));
+    if let Some(overlay) = options.secrets {
+        files.push(RenderedFile::secret(
+            secrets::path(&app.name, &app.prefix),
+            overlay.text.clone(),
+        ));
+    }
+    files.extend(previews);
+
+    let plan = AppPlan {
+        loaded,
+        uploads,
+        files,
+        override_yaml: &override_yaml,
+        links: links
+            .iter()
+            .map(|link| {
+                format!(
+                    "{}: uses {} {}",
+                    link.path(),
+                    link.shared.type_name,
+                    link.shared.name
+                )
+            })
+            .collect(),
+        dropped: dropped
+            .iter()
+            .map(|link| {
+                format!(
+                    "link {} {} ({}): no longer configured, {}",
+                    link.kind,
+                    link.entry,
+                    link.instance,
+                    removal(link, &options.purge)
+                )
+            })
+            .collect(),
+        apply: options.apply,
+        pull: options.pull,
+        recreate: options.recreate,
+        diff: options.diff,
+    };
+    super::plan::print(ctx, &plan)
 }
 
 /// Links of the last deploy (or still waiting for removal) that the config

@@ -8,8 +8,8 @@ use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered, Resolution,
-    ServerCtx, SharedAppConfig, parse_link,
+    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
+    RenderedFile, Resolution, ServerCtx, SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::IngressLink;
@@ -95,6 +95,16 @@ pub trait IngressType: Sync {
         Ok(false)
     }
 
+    /// Whether `reload_shared` can apply changed files, for `--dry-run`.
+    fn reloads(&self) -> bool {
+        false
+    }
+
+    /// Files `after_apply_application` would write, for `--dry-run`.
+    fn preview_application(&self, _ctx: &AppCtx, _link: &IngressLink) -> Result<Vec<RenderedFile>> {
+        Ok(Vec::new())
+    }
+
     /// Make the proxy route the link's domains to the app.
     fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()>;
 }
@@ -151,6 +161,10 @@ impl Kind for IngressKind {
         find_type(&config.type_name)?.reload_shared(ctx, config)
     }
 
+    fn reloads(&self, config: &SharedAppConfig) -> bool {
+        find_type(&config.type_name).is_ok_and(|t| t.reloads())
+    }
+
     fn apply_order(&self) -> i32 {
         20 // after databases: routes go live once the app runs
     }
@@ -184,6 +198,10 @@ impl Kind for IngressKind {
 
     fn after_apply_application(&self, ctx: &AppCtx, link: &Value) -> Result<()> {
         find_type(&ctx.shared.type_name)?.after_apply_application(ctx, &parse_link(link)?)
+    }
+
+    fn preview_application(&self, ctx: &AppCtx, link: &Value) -> Result<Vec<RenderedFile>> {
+        find_type(&ctx.shared.type_name)?.preview_application(ctx, &parse_link(link)?)
     }
 
     fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String> {

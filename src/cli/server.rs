@@ -287,6 +287,7 @@ pub fn deploy(
     let options = Options {
         apply,
         dry_run: args.dry_run,
+        diff: args.diff,
         force_unlock: args.force_unlock,
         pull: args.pull,
         recreate: args.recreate,

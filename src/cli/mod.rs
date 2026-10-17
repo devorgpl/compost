@@ -115,9 +115,12 @@ pub struct DeployArgs {
     /// Config files merged in order (repeatable or comma-separated)
     #[arg(short = 'f', long = "file", value_delimiter = ',')]
     pub files: Vec<PathBuf>,
-    /// Validate and show what would happen without changing the server
+    /// Validate and show what would change on the server, without changing it
     #[arg(long)]
     pub dry_run: bool,
+    /// With --dry-run: also show the changed lines of files without secrets
+    #[arg(long, requires = "dry_run")]
+    pub diff: bool,
     /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,

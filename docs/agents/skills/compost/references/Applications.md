@@ -242,7 +242,7 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run]
+compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
 ```
 
 `-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
@@ -261,6 +261,32 @@ The result is shown as by `app state`. Running the same deploy again keeps data 
 
 - `--pull`: with `build: true`, also pulls the images of services without `build` and builds with `--pull`, which fetches newer base images. Without `build: true` it changes nothing.
 - `--recreate`: recreates every container (`up -d --force-recreate`), even unchanged ones. Volumes, databases and passwords are kept.
+
+**What a deploy would change.** `--dry-run` runs the deploy as far as it can without changing the server and compares the result with what is there:
+
+```
+Dry run: nothing is changed on the server.
+  instance myapp-staging (deployed, release 4)
+  sources (14 files):
+    changed  apps/myapp/staging/sources/docker-compose.yaml
+  services.database[main-db]: uses postgres postgres18
+  services.ingress[site]: uses caddy caddy-main
+  files:
+    changed  connectors/ingress/caddy-main/myapp-staging-site.yaml
+    changed  shared/ingress/caddy-main/conf/sites/myapp-staging-site.caddy
+    changed  apps/myapp/staging/compose/compost.override.yaml  (secret, not shown)
+  services:
+    backend  recreated: environment: APP_MODE
+    web      built again; recreated if its image changes
+    worker   created
+  records release 5
+```
+
+- **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
+- **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.
+- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `pulled` (every deploy without `build: true` pulls; a newer image recreates it) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
+
+`--diff` adds the changed lines of every file without secrets, as a unified diff. It needs `--dry-run`.
 
 **Dropped links.** When a link of the last deploy is no longer in the config (removed, renamed, an optional ingress without domains, or now matching another shared app), the deploy removes it after the new containers run: its record, routing and scraping go, its data stays (collected logs and metrics stay in the monitoring app). Add `--purge database` (or `oidc`) to delete that data too. `--dry-run` lists them first.
 

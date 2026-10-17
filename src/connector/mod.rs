@@ -5,6 +5,7 @@
 //! reading and writing files) is built on top of it as default methods, so
 //! every connector behaves the same way.
 
+pub mod dry_run;
 pub mod local;
 mod ssh;
 

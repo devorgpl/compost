@@ -274,9 +274,10 @@ fn server_deploy_dry_run_changes_nothing() {
         .run(&["server", "deploy", "--dry-run", "--apply"], &[])
         .success()
         .stdout(contains("Dry run"))
-        .stdout(contains("networks: compost-db-postgres16, compost-ingress"))
+        .stdout(contains("network compost-db-postgres16: created"))
+        .stdout(contains("database   postgres16       created"))
         .stdout(contains(
-            "shared/database/postgres16/secrets/postgres.env  600  (secret)",
+            "added    shared/database/postgres16/secrets/postgres.env  (secret, not shown)",
         ));
     assert!(!server.server_home.exists());
 }
@@ -767,7 +768,9 @@ fn server_deploy_stores_the_secret_file() {
             &[],
         )
         .success()
-        .stdout(contains("secrets: would be stored in"));
+        .stdout(contains(
+            "added    secrets/server.yaml  (secret, not shown)",
+        ));
     assert!(!stored.exists());
 
     server
@@ -1411,6 +1414,145 @@ fn app_releases_are_pruned_and_removed_with_the_app() {
             "{log}"
         );
     }
+}
+
+/// Every file under `dir` with its contents, to show that a command changed nothing.
+fn snapshot(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn stdout_of(assert: &assert_cmd::assert::Assert) -> String {
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+#[test]
+fn app_deploy_dry_run_shows_what_changes() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let dry_run = |extra: &[&str]| {
+        let mut args = vec![
+            "app",
+            "deploy",
+            "--apply",
+            "--dry-run",
+            "-f",
+            "app/compost.yaml,app/.compost-staging.yaml",
+        ];
+        args.extend_from_slice(extra);
+        server.run(&args, &running).success()
+    };
+
+    let before = snapshot(&server.server_home);
+    let out = stdout_of(&dry_run(&["--diff"]));
+    for expected in [
+        "instance myapp-staging (deployed, release 1)",
+        "sources: unchanged (1 files)",
+        "files: unchanged",
+        "front-webapp    unchanged (built from cache)",
+        "records release 2",
+    ] {
+        assert!(out.contains(expected), "{expected:?} not in\n{out}");
+    }
+
+    // Another domain, variable and compose file; the password is never shown.
+    server.write_work_file(
+        "app/.compost-staging.yaml",
+        &APP_OVERLAY
+            .replace("staging.example.com", "new.example.com")
+            .replace("APP_MODE: staging", "APP_MODE: review"),
+    );
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: ., environment: {X: '1'}}, worker: {image: w}}",
+    );
+    let out = stdout_of(&dry_run(&["--diff"]));
+    for expected in [
+        "changed  apps/myapp/staging/sources/docker-compose.yaml",
+        "changed  connectors/ingress/caddy-main/myapp-staging-ui-front.yaml",
+        "changed  shared/ingress/caddy-main/conf/sites/myapp-staging-ui-front.caddy",
+        "changed  apps/myapp/staging/compose/compost.override.yaml  (secret, not shown)",
+        "+new.example.com",
+        "backend-webapp  recreated: environment: APP_MODE, X",
+        "front-webapp    built again; recreated if its image changes",
+        "worker          created",
+    ] {
+        assert!(out.contains(expected), "{expected:?} not in\n{out}");
+    }
+    assert!(!out.contains("pa$$word"), "{out}");
+    let out = stdout_of(&dry_run(&[]));
+    assert!(
+        !out.contains("+new.example.com"),
+        "no diff without --diff:\n{out}"
+    );
+
+    assert_eq!(snapshot(&server.server_home), before, "the server changed");
+    let log = server.take_docker_log();
+    for command in [" up ", " build", " pull", "docker tag"] {
+        assert!(!log.contains(command), "{command:?} in\n{log}");
+    }
+    server
+        .run(
+            &["app", "deploy", "--diff", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("--dry-run"));
+}
+
+#[test]
+fn server_deploy_dry_run_shows_reload_and_recreate() {
+    let server = server_with_shared_apps();
+    let dry_run = || {
+        server
+            .run(
+                &["server", "deploy", "--apply", "--dry-run", "--diff"],
+                &[("FAKE_DOCKER_RUNNING", "1")],
+            )
+            .success()
+    };
+    let out = stdout_of(&dry_run());
+    for expected in [
+        "database   postgres16       unchanged",
+        "ingress    caddy-main       unchanged",
+    ] {
+        assert!(out.contains(expected), "{expected:?} not in\n{out}");
+    }
+
+    let before = snapshot(&server.server_home);
+    server.write_work_file(
+        "compost-server.yaml",
+        &SERVER_CONFIG
+            .replace(
+                "{name: caddy-main, type: caddy}",
+                "{name: caddy-main, type: caddy, configuration: {sites: [{name: shop, domains: [shop.example.com], config: 'respond 200'}]}}",
+            )
+            .replace("version: 16", "version: 17"),
+    );
+    let out = stdout_of(&dry_run());
+    for expected in [
+        "ingress    caddy-main       reloaded without a restart",
+        "added    shared/ingress/caddy-main/conf/custom/shop.caddy",
+        "database   postgres16       recreated: compose files changed",
+        "-    image: postgres:16",
+        "changed  compost-server.yaml",
+    ] {
+        assert!(out.contains(expected), "{expected:?} not in\n{out}");
+    }
+    assert!(!out.contains("POSTGRES_PASSWORD="), "{out}");
+    assert_eq!(snapshot(&server.server_home), before, "the server changed");
 }
 
 #[test]
@@ -2349,7 +2491,9 @@ fn app_deploy_stores_the_secret_file() {
     deploy_with_secret(&["--dry-run"])
         .success()
         .stdout(contains("Deploying myapp-staging"))
-        .stdout(contains("secrets: would be stored in"));
+        .stdout(contains(
+            "added    secrets/apps/myapp/staging.yaml  (secret, not shown)",
+        ));
     assert!(!stored.exists());
 
     deploy_with_secret(&["--apply"])

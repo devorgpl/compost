@@ -149,7 +149,8 @@ Options:
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-      --dry-run          Validate and show what would happen without changing the server
+      --dry-run          Validate and show what would change on the server, without changing it
+      --diff             With --dry-run: also show the changed lines of files without secrets
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
@@ -337,7 +338,8 @@ Options:
       --no-apply         Only upload files, even when `deploy.apply` is set
   -v, --verbose          Print every command run on the server
   -f, --file <FILES>     Config files merged in order (repeatable or comma-separated)
-      --dry-run          Validate and show what would happen without changing the server
+      --dry-run          Validate and show what would change on the server, without changing it
+      --diff             With --dry-run: also show the changed lines of files without secrets
       --force-unlock     Remove a lock left behind by an interrupted compost command
       --pull             Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
       --recreate         Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)

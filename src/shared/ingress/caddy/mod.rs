@@ -101,6 +101,34 @@ enum Tls {
 }
 
 impl Caddy {
+    /// The site file of an ingress link.
+    fn site_text(&self, ctx: &AppCtx, link: &IngressLink) -> Result<String> {
+        let caddy: CaddyConfig = ctx.shared.configuration()?;
+        let mut routes = base::routes(ctx, link)?;
+        // The `/` route becomes the fallback for everything not matched before.
+        let fallback = routes
+            .iter()
+            .position(|r| r.path == "/")
+            .map(|i| routes.remove(i).upstream);
+        let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
+        let addresses: Vec<String> = link
+            .domains
+            .iter()
+            .map(|d| format!("{scheme}{d}"))
+            .collect();
+        render_template(
+            include_str!("templates/site.caddy.j2"),
+            context! {
+                instance => ctx.app.instance(),
+                entry => link.name.as_str(),
+                addresses => addresses.join(", "),
+                site_lines => self.site_lines(&caddy, link.security.as_ref(), &ctx.link_id(&link.name)),
+                routes => minijinja::value::Serde(&routes),
+                fallback,
+            },
+        )
+    }
+
     /// The security of a `caddysecurebuild` ingress, with defaults; `None` for `caddy`.
     fn security(&self, caddy: &CaddyConfig) -> Option<ServerSecurity> {
         self.secure
@@ -447,6 +475,10 @@ impl IngressType for Caddy {
         })
     }
 
+    fn reloads(&self) -> bool {
+        true
+    }
+
     /// Validate the configuration files, then reload them without a restart.
     fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
         let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
@@ -472,33 +504,19 @@ impl IngressType for Caddy {
         Ok(true)
     }
 
+    fn preview_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RenderedFile>> {
+        let site = self.site_text(ctx, link)?;
+        let path = site_path(ctx, &link.name);
+        let relative = path
+            .strip_prefix(&format!("{}/", ctx.server.home))
+            .unwrap_or(&path)
+            .to_string();
+        Ok(vec![RenderedFile::new(relative, site)])
+    }
+
     /// Write the site file, let Caddy validate it, then reload without downtime.
     fn after_apply_application(&self, ctx: &AppCtx, link: &IngressLink) -> Result<()> {
-        let caddy: CaddyConfig = ctx.shared.configuration()?;
-        let mut routes = base::routes(ctx, link)?;
-        // The `/` route becomes the fallback for everything not matched before.
-        let fallback = routes
-            .iter()
-            .position(|r| r.path == "/")
-            .map(|i| routes.remove(i).upstream);
-        let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
-        let addresses: Vec<String> = link
-            .domains
-            .iter()
-            .map(|d| format!("{scheme}{d}"))
-            .collect();
-        let site = render_template(
-            include_str!("templates/site.caddy.j2"),
-            context! {
-                instance => ctx.app.instance(),
-                entry => link.name.as_str(),
-                addresses => addresses.join(", "),
-                site_lines => self.site_lines(&caddy, link.security.as_ref(), &ctx.link_id(&link.name)),
-                routes => minijinja::value::Serde(&routes),
-                fallback,
-            },
-        )?;
-
+        let site = self.site_text(ctx, link)?;
         let connector = ctx.server.connector;
         let site_path = site_path(ctx, &link.name);
         let previous = connector.read_file(&site_path)?;
