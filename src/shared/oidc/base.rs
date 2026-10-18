@@ -16,9 +16,13 @@ use crate::shared::{
 pub use crate::shared::{PublicUrl, parse_url};
 
 /// Values a link can map to app variables.
-const LINK_VALUES: [&str; 5] = [
+const LINK_VALUES: [&str; 9] = [
     "oidc_issuer",
     "oidc_internal_url",
+    "oidc_base_url",
+    "oidc_internal_base_url",
+    "oidc_origin",
+    "oidc_jwks_uri",
     "oidc_realm",
     "oidc_client_id",
     "oidc_client_secret",
@@ -59,6 +63,24 @@ pub struct OidcLink {
     pub redirect_uris: Vec<String>,
     #[serde(default)]
     pub web_origins: Vec<String>,
+    /// Default: the redirect URIs (`+` in Keycloak).
+    #[serde(default)]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    /// PKCE method the client requires; none when unset.
+    #[serde(default)]
+    pub pkce: Option<Pkce>,
+    /// Logging in with a password sent by the client itself (resource owner password grant).
+    #[serde(default)]
+    pub direct_access_grants: bool,
+    /// The client's default scopes. Unset: the ones it has (on creation, the realm's defaults).
+    #[serde(default)]
+    pub default_scopes: Option<Vec<String>>,
+    /// Realm settings set on every deploy; unset ones keep their value.
+    #[serde(default)]
+    pub realm_settings: RealmSettings,
+    /// Realm roles, created when missing.
+    #[serde(default)]
+    pub roles: Vec<String>,
     /// Default: generated on the first deploy, then reused.
     #[serde(default)]
     pub client_secret: Option<String>,
@@ -83,9 +105,47 @@ pub struct OidcUser {
     pub first_name: Option<String>,
     #[serde(default)]
     pub last_name: Option<String>,
-    /// Set on every deploy when given.
+    /// Default `true` when `email` is given.
+    #[serde(default)]
+    pub email_verified: Option<bool>,
+    /// The user's ID, used only when the user is created.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Realm roles of the user, from the link's `roles`; added, never removed.
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Set on every deploy when given, unless `temporary`.
     #[serde(default)]
     pub password: Option<String>,
+    /// The password is set when the user is created, and must be changed at the first login.
+    #[serde(default)]
+    pub temporary: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum Pkce {
+    S256,
+    #[serde(rename = "plain")]
+    Plain,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealmSettings {
+    pub registration: Option<bool>,
+    pub reset_password: Option<bool>,
+    pub login_with_email: Option<bool>,
+    pub verify_email: Option<bool>,
+    pub brute_force_protection: Option<bool>,
+    pub ssl_required: Option<SslRequired>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SslRequired {
+    None,
+    External,
+    All,
 }
 
 fn any_version() -> String {
@@ -163,11 +223,34 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
         !link.redirect_uris.is_empty(),
         "redirect_uris: at least one is required (set them in the deployment overlay)"
     );
-    for uri in link.redirect_uris.iter().chain(&link.web_origins) {
+    let post_logout = link.post_logout_redirect_uris.iter().flatten();
+    for uri in link
+        .redirect_uris
+        .iter()
+        .chain(&link.web_origins)
+        .chain(post_logout)
+    {
+        // Keycloak joins post-logout URIs with `##`.
         ensure!(
-            !uri.is_empty() && !uri.contains(char::is_whitespace),
+            !uri.is_empty() && !uri.contains(char::is_whitespace) && !uri.contains("##"),
             "`{uri}` is not a valid URI"
         );
+    }
+    for (key, names) in [
+        ("roles", &link.roles),
+        (
+            "default_scopes",
+            link.default_scopes.as_ref().unwrap_or(&Vec::new()),
+        ),
+    ] {
+        let mut seen = HashSet::new();
+        for name in names {
+            ensure!(
+                is_role_name(name),
+                "{key}: `{name}` must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{0,254}}$"
+            );
+            ensure!(seen.insert(name), "{key}: `{name}` is listed twice");
+        }
     }
     ensure!(
         !(link.public_client && link.client_secret.is_some()),
@@ -195,6 +278,27 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
                 user.username
             );
         }
+        ensure!(
+            !user.temporary || user.password.is_some(),
+            "users: `{}` has `temporary: true` and no password",
+            user.username
+        );
+        if let Some(id) = &user.id {
+            ensure!(
+                !id.is_empty()
+                    && id.len() <= 36
+                    && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+                "users: id `{id}` of `{}` must be a UUID like 11111111-1111-1111-1111-111111111111",
+                user.username
+            );
+        }
+        for role in &user.roles {
+            ensure!(
+                link.roles.contains(role),
+                "users: role `{role}` of `{}` is not in `roles`",
+                user.username
+            );
+        }
     }
     Ok(())
 }
@@ -217,6 +321,15 @@ pub fn is_username(value: &str) -> bool {
             .next()
             .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._@-".contains(c))
+}
+
+/// `^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$`: realm roles and client scopes,
+/// safe in URLs and in single-quoted shell words.
+pub fn is_role_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    value.len() <= 255
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
 /// Realm and client ID: from the link, or `<app>-<prefix>` and `<app>-<prefix>-<entry>`.
@@ -355,14 +468,19 @@ pub fn prepare_application(
     let record = record(ctx, link)?;
     check_public_url(ctx, &record)?;
     let public_url = record.public_url.as_deref().unwrap_or(&endpoint.public_url);
+    let internal_issuer = format!("{}/realms/{}", endpoint.internal_url, record.realm);
     let values: BTreeMap<&str, String> = BTreeMap::from([
         (
             "oidc_issuer",
             format!("{public_url}/realms/{}", record.realm),
         ),
+        ("oidc_internal_url", internal_issuer.clone()),
+        ("oidc_base_url", public_url.to_string()),
+        ("oidc_internal_base_url", endpoint.internal_url.clone()),
+        ("oidc_origin", origin(public_url)),
         (
-            "oidc_internal_url",
-            format!("{}/realms/{}", endpoint.internal_url, record.realm),
+            "oidc_jwks_uri",
+            format!("{internal_issuer}/protocol/openid-connect/certs"),
         ),
         ("oidc_realm", record.realm.clone()),
         ("oidc_client_id", record.client_id.clone()),
@@ -385,6 +503,15 @@ pub fn prepare_application(
     ctx.server
         .connector
         .write_file(&record_path(ctx, &link.name), text.as_bytes(), 0o600)
+}
+
+/// `https://auth.example.com` of `https://auth.example.com/some/path`.
+fn origin(url: &str) -> String {
+    let start = url.find("://").map_or(0, |i| i + 3);
+    match url[start..].find('/') {
+        Some(end) => url[..start + end].to_string(),
+        None => url.to_string(),
+    }
 }
 
 /// The realm on its own domain: its paths, and `/resources` for the shared
@@ -471,7 +598,7 @@ mod tests {
             if !extra.contains("targets:") {
                 text.push_str(", targets: [backend]");
             }
-            if !extra.contains("redirect_uris:") {
+            if !extra.contains(" redirect_uris:") {
                 text.push_str(", redirect_uris: ['https://a.example.com/*']");
             }
             text + "}"
@@ -487,11 +614,68 @@ mod tests {
             (", users: [{username: 'a b'}]", "users: `a b`"),
             (", version: abc", "not a valid requirement"),
             (", public_url: login.example.com", "public_url"),
+            (", post_logout_redirect_uris: ['a##b']", "not a valid URI"),
+            (", roles: ['a b']", "roles: `a b`"),
+            (", roles: [x, x]", "roles: `x` is listed twice"),
+            (", default_scopes: [\"it's\"]", "default_scopes: `it's`"),
+            (", users: [{username: a, temporary: true}]", "no password"),
+            (", users: [{username: a, id: \"1'1\"}]", "must be a UUID"),
+            (
+                ", users: [{username: a, roles: [admin]}]",
+                "role `admin` of `a` is not in `roles`",
+            ),
         ] {
             let text = text(extra);
             let err = validate_link(&link(&text), &app()).unwrap_err().to_string();
             assert!(err.contains(expected), "{text}: {err}");
         }
+    }
+
+    #[test]
+    fn validates_realm_settings_roles_and_users() {
+        validate_link(
+            &link(&format!(
+                "{{{BASE}, pkce: S256, post_logout_redirect_uris: ['https://a.example.com/'], \
+                 default_scopes: [basic, web-origins], roles: [platform_admin, user], \
+                 realm_settings: {{registration: true, ssl_required: external}}, \
+                 users: [{{username: admin@x.org, id: 11111111-1111-1111-1111-111111111111, \
+                 roles: [platform_admin], password: p, temporary: true}}]}}"
+            )),
+            &app(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_settings_when_parsed() {
+        for (extra, expected) in [
+            ("pkce: S512", "unknown variant `S512`"),
+            (
+                "realm_settings: {ssl_required: some}",
+                "unknown variant `some`",
+            ),
+            (
+                "realm_settings: {registraton: true}",
+                "unknown field `registraton`",
+            ),
+        ] {
+            let err = serde_yaml_ng::from_str::<OidcLink>(&format!("{{{BASE}, {extra}}}"))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "{extra}: {err}");
+        }
+    }
+
+    #[test]
+    fn origin_drops_the_path() {
+        assert_eq!(
+            origin("https://auth.example.com"),
+            "https://auth.example.com"
+        );
+        assert_eq!(
+            origin("https://app.example.com:8443/auth"),
+            "https://app.example.com:8443"
+        );
     }
 
     #[test]

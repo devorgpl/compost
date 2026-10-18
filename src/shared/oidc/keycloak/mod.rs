@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_yaml_ng::Value;
 
-use super::base::{self, Endpoint, OidcLink, OidcRecord, PublicUrl};
+use super::base::{self, Endpoint, OidcLink, OidcRecord, Pkce, PublicUrl};
 use super::{KIND, OidcType};
 use crate::connector::shell_quote;
 use crate::shared::{
@@ -327,22 +327,52 @@ fn check_record(record: &OidcRecord) -> Result<()> {
     Ok(())
 }
 
-/// Idempotent: creates the realm when missing, creates or updates the client,
-/// creates missing users and sets the passwords given.
+/// Idempotent: creates the realm when missing and sets the settings given,
+/// creates missing roles, creates or updates the client, creates missing
+/// users, sets the passwords given and adds the users' roles.
 fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
     check_record(record)?;
+    let post_logout = match &link.post_logout_redirect_uris {
+        Some(uris) => uris.join("##"),
+        None => "+".to_string(),
+    };
+    let pkce = match link.pkce {
+        Some(Pkce::S256) => "S256",
+        Some(Pkce::Plain) => "plain",
+        None => "",
+    };
     let mut client = json!({
         "clientId": record.client_id,
         "enabled": true,
         "protocol": "openid-connect",
         "publicClient": link.public_client,
         "standardFlowEnabled": true,
-        "directAccessGrantsEnabled": false,
+        "directAccessGrantsEnabled": link.direct_access_grants,
         "redirectUris": link.redirect_uris,
         "webOrigins": link.web_origins,
+        "attributes": {
+            "post.logout.redirect.uris": post_logout,
+            "pkce.code.challenge.method": pkce,
+        },
     });
     if let Some(secret) = &record.client_secret {
         client["secret"] = json!(secret);
+    }
+    let settings = &link.realm_settings;
+    let mut realm = serde_json::Map::new();
+    for (key, value) in [
+        ("registrationAllowed", settings.registration),
+        ("resetPasswordAllowed", settings.reset_password),
+        ("loginWithEmailAllowed", settings.login_with_email),
+        ("verifyEmail", settings.verify_email),
+        ("bruteForceProtected", settings.brute_force_protection),
+    ] {
+        if let Some(value) = value {
+            realm.insert(key.into(), json!(value));
+        }
+    }
+    if let Some(ssl) = settings.ssl_required {
+        realm.insert("sslRequired".into(), json!(ssl));
     }
     let users: Vec<_> = link
         .users
@@ -354,7 +384,10 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
             });
             if let Some(email) = &user.email {
                 json["email"] = json!(email);
-                json["emailVerified"] = json!(true);
+                json["emailVerified"] = json!(user.email_verified.unwrap_or(true));
+            }
+            if let Some(id) = &user.id {
+                json["id"] = json!(id);
             }
             if let Some(first) = &user.first_name {
                 json["firstName"] = json!(first);
@@ -363,12 +396,24 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
                 json["lastName"] = json!(last);
             }
             let password_json = user.password.as_ref().map(|password| {
-                json!({"type": "password", "value": password, "temporary": false}).to_string()
+                json!({"type": "password", "value": password, "temporary": user.temporary})
+                    .to_string()
+            });
+            // The users API ignores `id`; a partial import keeps it, but
+            // gives only the roles it names.
+            let import_json = user.id.as_ref().map(|_| {
+                let mut imported = json.clone();
+                imported["realmRoles"] = json!([format!("default-roles-{}", record.realm)]);
+                json!({"ifResourceExists": "FAIL", "users": [imported]}).to_string()
             });
             context! {
                 username => user.username.as_str(),
+                id => user.id.as_deref(),
                 json => json.to_string(),
+                import_json,
                 password_json,
+                temporary => user.temporary,
+                roles => &user.roles,
             }
         })
         .collect();
@@ -379,6 +424,9 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
             realm => record.realm.as_str(),
             client_id => record.client_id.as_str(),
             client_json => client.to_string(),
+            realm_json => (!realm.is_empty()).then(|| serde_json::Value::Object(realm).to_string()),
+            roles => &link.roles,
+            default_scopes => link.default_scopes.as_ref(),
             // Empty clears it: the realm then uses the provider's URL.
             frontend_url => record.public_url.as_deref().unwrap_or(""),
             users,
@@ -420,6 +468,11 @@ fn run_script(ctx: &AppCtx, script: &str) -> Result<()> {
         .run(&command, Some(script.as_bytes()))?;
     if !output.success() {
         bail!("{}", output.stderr.trim());
+    }
+    for line in output.stdout.lines() {
+        if line.starts_with("warning: ") {
+            eprintln!("{line}");
+        }
     }
     Ok(())
 }
@@ -656,6 +709,74 @@ mod tests {
         );
         with_url.public_url = Some("https://x.com'; rm -rf /".into());
         assert!(provisioning_script(&link, &with_url).is_err());
+    }
+
+    #[test]
+    fn provisioning_script_sets_realm_roles_client_and_bootstrap_users() {
+        let link = link(
+            "{name: login, type: keycloak, targets: [x], redirect_uris: ['https://a.com/*'], pkce: S256, \
+             default_scopes: [basic, email], realm_settings: {registration: true, ssl_required: external}, \
+             roles: [platform_admin, user], \
+             users: [{username: admin@x.org, email: admin@x.org, id: 11111111-1111-1111-1111-111111111111, \
+                      roles: [platform_admin, user], password: first, temporary: true}, \
+                     {username: bob, password: b}]}",
+        );
+        let script = provisioning_script(&link, &record(&["admin@x.org", "bob"])).unwrap();
+        for expected in [
+            r#"{"registrationAllowed":true,"sslRequired":"external"}"#,
+            "*$'\\nplatform_admin\\n'*) ;; *) kc create roles -r \"$realm\" -s name='platform_admin'",
+            r#""attributes":{"pkce.code.challenge.method":"S256","post.logout.redirect.uris":"+"}"#,
+            r#""directAccessGrantsEnabled":false"#,
+            "wanted=' basic email '",
+            // The ID is kept by a partial import, with the realm's default roles.
+            r#""id":"11111111-1111-1111-1111-111111111111""#,
+            r#""realmRoles":["default-roles-a-main"]"#,
+            "elif [ \"$id\" != '11111111-1111-1111-1111-111111111111' ]; then",
+            "kc add-roles -r \"$realm\" --uid \"$id\" --rolename 'platform_admin' --rolename 'user'",
+            r#"{"temporary":true,"type":"password","value":"first"}"#,
+            r#"{"temporary":false,"type":"password","value":"b"}"#,
+        ] {
+            assert!(
+                script.contains(expected),
+                "missing {expected:?} in\n{script}"
+            );
+        }
+        // A temporary password is set only in the branch that creates the user.
+        let temporary = script.find(r#""value":"first""#).unwrap();
+        let created = script[..temporary]
+            .rfind("if [ -z \"$id\" ]; then")
+            .unwrap();
+        assert!(!script[created..temporary].contains("\nfi\n"), "{script}");
+        assert_eq!(
+            script.matches("partialImport").count(),
+            1,
+            "bob has no id: {script}"
+        );
+    }
+
+    #[test]
+    fn provisioning_script_without_the_new_keys_changes_only_the_client() {
+        let link = link(
+            "{name: login, type: keycloak, targets: [x], redirect_uris: ['https://a.com/*'], \
+             post_logout_redirect_uris: ['https://a.com/bye', 'https://a.com/'], direct_access_grants: true}",
+        );
+        let script = provisioning_script(&link, &record(&[])).unwrap();
+        assert!(
+            script.contains(r#""attributes":{"pkce.code.challenge.method":"","post.logout.redirect.uris":"https://a.com/bye##https://a.com/"}"#),
+            "{script}"
+        );
+        assert!(
+            script.contains(r#""directAccessGrantsEnabled":true"#),
+            "{script}"
+        );
+        for absent in [
+            "kc create roles",
+            "default-client-scopes",
+            "add-roles",
+            "kc update \"realms/$realm\" -f -",
+        ] {
+            assert!(!script.contains(absent), "{absent:?} in\n{script}");
+        }
     }
 
     #[test]

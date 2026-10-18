@@ -257,7 +257,7 @@ With [Garage](Servers-and-Shared-Apps.md#garage-and-s3-storage), every link gets
 
 ## OIDC links
 
-An OIDC link creates a realm, a client and optionally users in a Keycloak, and passes the client settings to services:
+An OIDC link creates a realm, a client and optionally roles and users in a Keycloak, and passes the client settings to services:
 
 ```yaml
 services:
@@ -271,7 +271,7 @@ services:
       redirect_uris: ["https://staging.example.com/*"]   # required, usually in the overlay
       web_origins: []
       client_secret: …                 # secret; generated on the first deploy, then kept
-      users:                           # secret; created if missing, passwords set on every deploy
+      users:                           # secret; created if missing, passwords set on every deploy (unless temporary)
         - {username: alice, email: alice@example.com, first_name: Alice, last_name: Doe, password: …}
       targets: [backend]
       environment:
@@ -284,9 +284,52 @@ services:
 |---|---|
 | `oidc_issuer` | `https://auth.example.com/realms/myapp` |
 | `oidc_internal_url` | `http://keycloak:8080/realms/myapp`, for server-to-server calls |
+| `oidc_base_url` | `https://auth.example.com`, for libraries that take a base URL and a realm (e.g. keycloak-js) |
+| `oidc_internal_base_url` | `http://keycloak:8080` |
+| `oidc_origin` | `https://auth.example.com`, e.g. for a CSP `connect-src` or `frame-src` |
+| `oidc_jwks_uri` | `http://keycloak:8080/realms/myapp/protocol/openid-connect/certs`, to check tokens without discovery |
 | `oidc_realm` | `myapp` |
 | `oidc_client_id` | `web` |
 | `oidc_client_secret` | empty for public clients |
+
+**Client settings** are set on every deploy, so changes made in the admin console don't last:
+
+```yaml
+      pkce: S256                        # or plain; default: none
+      post_logout_redirect_uris: ["https://staging.example.com/"]   # default: the redirect_uris
+      direct_access_grants: false       # logins with a password sent by the client; default false
+      default_scopes: [basic, web-origins, acr, profile, roles, email]   # default: unchanged
+```
+
+Without `post_logout_redirect_uris`, logout may redirect to any of the `redirect_uris` (`+` in Keycloak). `default_scopes` replaces the client's default scopes when set; a new client starts with the realm's defaults, which are the list above in Keycloak 26.
+
+**Realm settings and roles.** `realm_settings` sets the keys it lists on every deploy and leaves the others as they are, so a setting changed in the admin console stays unless the link sets it. `roles` creates realm roles that are missing; compost never deletes them, except with the whole realm. Links that share a realm share these, so they should agree:
+
+```yaml
+      realm_settings:
+        registration: true              # users register themselves
+        reset_password: true            # "forgot password" on the login page
+        login_with_email: true
+        verify_email: false
+        brute_force_protection: true
+        ssl_required: external          # none, external or all
+      roles: [platform_admin, tenant_admin, user]
+```
+
+**Users for bootstrap accounts.** A user's `roles` (from the link's `roles`) are added on every deploy, never removed. With `temporary: true`, the password is set only when compost creates the user, and must be changed at the first login, so later deploys keep the one the user chose. `id` gives the user a fixed ID when compost creates it, for an app that recognizes its first admin by ID:
+
+```yaml
+      users:
+        - username: admin@example.com
+          email: admin@example.com
+          email_verified: true          # default true when email is set
+          id: 11111111-1111-1111-1111-111111111111
+          roles: [platform_admin, user]
+          password: …                   # secret
+          temporary: true
+```
+
+User IDs are unique in the whole Keycloak, not per realm: two instances on one Keycloak (e.g. staging and production) can't create users with the same `id`, and the second deploy fails. If the user already exists with another ID, the deploy keeps it and warns.
 
 **A realm on its own domain.** Add `public_url` to the link and an ingress route that serves it:
 

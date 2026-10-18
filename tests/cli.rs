@@ -4360,6 +4360,10 @@ services:
       environment:
         OIDC_ISSUER: oidc_issuer
         OIDC_INTERNAL_URL: oidc_internal_url
+        OIDC_BASE_URL: oidc_base_url
+        OIDC_INTERNAL_BASE_URL: oidc_internal_base_url
+        OIDC_ORIGIN: oidc_origin
+        OIDC_JWKS_URI: oidc_jwks_uri
         OIDC_CLIENT_ID: oidc_client_id
         OIDC_CLIENT_SECRET: oidc_client_secret
 app_services:
@@ -4396,6 +4400,10 @@ fn oidc_link_creates_client_and_sets_variables() {
     for expected in [
         "OIDC_ISSUER: https://auth.example.com/realms/myapp-main",
         "OIDC_INTERNAL_URL: http://keycloak:8080/realms/myapp-main",
+        "OIDC_BASE_URL: https://auth.example.com\n",
+        "OIDC_INTERNAL_BASE_URL: http://keycloak:8080\n",
+        "OIDC_ORIGIN: https://auth.example.com\n",
+        "OIDC_JWKS_URI: http://keycloak:8080/realms/myapp-main/protocol/openid-connect/certs",
         "OIDC_CLIENT_ID: myapp-main-login",
         "OIDC_CLIENT_SECRET: ",
         "compost-oidc-keycloak: {}",

@@ -23,28 +23,89 @@ if ! kc get "realms/$realm" </dev/null >/dev/null 2>&1; then
   kc create realms -s realm="$realm" -s enabled=true </dev/null
 fi
 kc update "realms/$realm" -s 'attributes.frontendUrl={{ frontend_url }}' </dev/null
+{%- if realm_json %}
+kc update "realms/$realm" -f - <<'COMPOST_JSON'
+{{ realm_json }}
+COMPOST_JSON
+{%- endif %}
+{%- if roles %}
+# Each kcadm call starts a JVM: read what exists once.
+existing=$'\n'$(kc get roles -r "$realm" --fields name --format csv --noquotes </dev/null)$'\n'
+{%- for role in roles %}
+case "$existing" in *$'\n{{ role }}\n'*) ;; *) kc create roles -r "$realm" -s name='{{ role }}' </dev/null ;; esac
+{%- endfor %}
+{%- endif %}
 id=$(kc get clients -r "$realm" -q clientId='{{ client_id }}' --fields id --format csv --noquotes </dev/null)
 if [ -z "$id" ]; then
   kc create clients -r "$realm" -f - <<'COMPOST_JSON'
 {{ client_json }}
 COMPOST_JSON
+  id=$(kc get clients -r "$realm" -q clientId='{{ client_id }}' --fields id --format csv --noquotes </dev/null)
 else
   kc update "clients/$id" -r "$realm" -f - <<'COMPOST_JSON'
 {{ client_json }}
 COMPOST_JSON
 fi
+{%- if default_scopes is not none %}
+# Client updates ignore the scopes: remove the others, then add the missing ones.
+wanted=' {{ default_scopes | join(" ") }} '
+current=$(kc get "clients/$id/default-client-scopes" -r "$realm" --fields id,name --format csv --noquotes </dev/null)
+have=' '
+while IFS=, read -r scope name; do
+  if [ -z "$scope" ]; then continue; fi
+  case "$wanted" in
+    *" $name "*) have="$have$name " ;;
+    *) kc delete "clients/$id/default-client-scopes/$scope" -r "$realm" </dev/null ;;
+  esac
+done <<< "$current"
+scopes=''
+for wanted_name in $wanted; do
+  case "$have" in *" $wanted_name "*) continue ;; esac
+  if [ -z "$scopes" ]; then
+    scopes=$(kc get client-scopes -r "$realm" --fields id,name --format csv --noquotes </dev/null)
+  fi
+  scope=''
+  while IFS=, read -r found name; do
+    if [ "$name" = "$wanted_name" ]; then scope=$found; fi
+  done <<< "$scopes"
+  if [ -z "$scope" ]; then echo "client scope \`$wanted_name\` does not exist in realm $realm" >&2; exit 1; fi
+  kc update "clients/$id/default-client-scopes/$scope" -r "$realm" -b '{}' </dev/null
+done
+{%- endif %}
 {%- for user in users %}
 id=$(kc get users -r "$realm" -q username='{{ user.username }}' -q exact=true --fields id --format csv --noquotes </dev/null)
 if [ -z "$id" ]; then
+{%- if user.import_json %}
+  if ! kc create partialImport -r "$realm" -f - >/dev/null <<'COMPOST_JSON'
+{{ user.import_json }}
+COMPOST_JSON
+  then
+    echo "cannot create user {{ user.username }} with id {{ user.id }}: user IDs are unique in the whole Keycloak, is it used in another realm?" >&2
+    exit 1
+  fi
+{%- else %}
   kc create users -r "$realm" -f - <<'COMPOST_JSON'
 {{ user.json }}
 COMPOST_JSON
+{%- endif %}
   id=$(kc get users -r "$realm" -q username='{{ user.username }}' -q exact=true --fields id --format csv --noquotes </dev/null)
+{%- if user.temporary %}
+  kc update "users/$id/reset-password" -r "$realm" -f - <<'COMPOST_JSON'
+{{ user.password_json }}
+COMPOST_JSON
+{%- endif %}
+{%- if user.id %}
+elif [ "$id" != '{{ user.id }}' ]; then
+  echo "warning: user {{ user.username }} in realm $realm has id $id, not {{ user.id }}; it was created before"
+{%- endif %}
 fi
-{%- if user.password_json %}
+{%- if user.password_json and not user.temporary %}
 kc update "users/$id/reset-password" -r "$realm" -f - <<'COMPOST_JSON'
 {{ user.password_json }}
 COMPOST_JSON
+{%- endif %}
+{%- if user.roles %}
+kc add-roles -r "$realm" --uid "$id"{% for role in user.roles %} --rolename '{{ role }}'{% endfor %} </dev/null
 {%- endif %}
 {%- endfor %}
 {%- endif %}

@@ -142,9 +142,15 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `public_url` | – | The realm's own domain; needs an ingress route with `link: oidc/<entry>` |
 | `redirect_uris` | required | |
 | `web_origins` | `[]` | |
+| `post_logout_redirect_uris` | the `redirect_uris` | |
+| `pkce` | – | `S256` or `plain` |
+| `direct_access_grants` | `false` | Resource owner password grant |
+| `default_scopes` | unchanged | The client's default scopes |
+| `realm_settings` | `{}` | `registration`, `reset_password`, `login_with_email`, `verify_email`, `brute_force_protection` (`true`/`false`), `ssl_required` (`none`, `external`, `all`); unset keys are not changed |
+| `roles` | `[]` | Realm roles, created if missing |
 | `client_secret` | generated | Secret |
-| `users[]` | `[]` | `username`, `email`, `first_name`, `last_name`, `password`. Secret |
-| `targets`, `environment` | | Values: `oidc_issuer`, `oidc_internal_url`, `oidc_realm`, `oidc_client_id`, `oidc_client_secret` |
+| `users[]` | `[]` | `username`, `email`, `email_verified` (default `true` with `email`), `first_name`, `last_name`, `id` (when created), `roles` (from `roles`), `password`, `temporary` (password set only when created, changed at first login). Secret |
+| `targets`, `environment` | | Values: `oidc_issuer`, `oidc_internal_url`, `oidc_base_url`, `oidc_internal_base_url`, `oidc_origin`, `oidc_jwks_uri`, `oidc_realm`, `oidc_client_id`, `oidc_client_secret` |
 
 ### `services.workflow[]`
 
