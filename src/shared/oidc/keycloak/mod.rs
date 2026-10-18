@@ -132,10 +132,15 @@ impl OidcType for Keycloak {
         let secrets_path = secrets_path(&config.name);
 
         // The bootstrap admin is only created on the first start, so the
-        // password is generated once and then reused.
-        let existing = ctx
+        // password is generated once and then reused. A server restore puts
+        // back the root connector, not the secrets file.
+        let existing = match ctx
             .read(&secrets_path)?
-            .and_then(|text| read_variable(&text, PASSWORD_VARIABLE));
+            .and_then(|text| read_variable(&text, PASSWORD_VARIABLE))
+        {
+            Some(password) => Some(password),
+            None => root_connector_password(ctx, &config.name)?,
+        };
         let password = match (keycloak.admin_password, existing) {
             (Some(new), Some(old)) if new != old => bail!(
                 "admin_password differs from the one already on the server; \
@@ -285,6 +290,17 @@ fn internal_url(name: &str) -> String {
 
 fn secrets_path(name: &str) -> String {
     format!("{}/secrets/keycloak.env", shared_dir(KIND, name))
+}
+
+/// `admin_password` of the root connector an earlier deploy wrote.
+fn root_connector_password(ctx: &ServerCtx, name: &str) -> Result<Option<String>> {
+    let path = format!("{}/root-connector.yaml", connectors_dir(KIND, name));
+    let Some(text) = ctx.read(&path)? else {
+        return Ok(None);
+    };
+    let connector: Value = serde_yaml_ng::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("invalid {}: {e}", ctx.path(&path)))?;
+    Ok(connector["admin_password"].as_str().map(str::to_string))
 }
 
 /// The value of a `NAME='…'` line written by `render`.
@@ -563,6 +579,27 @@ mod tests {
             )
             .unwrap_err();
             assert!(err.to_string().contains("differs"), "{err}");
+        }
+
+        #[test]
+        fn restored_root_connector_keeps_the_password() {
+            let home = TempDir::new().unwrap();
+            let first = render(&home, KC).unwrap();
+            // A server restore writes the connectors back, not the secrets file.
+            let connector = first
+                .files
+                .iter()
+                .find(|f| f.path.ends_with("root-connector.yaml"))
+                .unwrap();
+            let path = home.path().join(&connector.path);
+            LOCAL
+                .write_file(path.to_str().unwrap(), connector.contents.as_bytes(), 0o600)
+                .unwrap();
+            let restored = render(&home, KC).unwrap();
+            assert_eq!(
+                file(&first, "keycloak.env"),
+                file(&restored, "keycloak.env")
+            );
         }
     }
 
