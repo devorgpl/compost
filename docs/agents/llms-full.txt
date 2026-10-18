@@ -2803,10 +2803,12 @@ shared:
 | `webhook` | `url`; `headers` (a map, e.g. `{Authorization: Bearer …}`). Receives JSON: `title`, `severity`, `message`, `server`, `event`, `time` | `url`, `headers` |
 | `slack`, `mattermost` | `webhook_url` of an incoming webhook | `webhook_url` |
 | `discord` | `webhook_url` of a channel webhook | `webhook_url` |
-| `matrix` | `homeserver`; `room`, the room ID (`!…:server`, under Room settings → Advanced); `access_token` of an account that has joined the room | `access_token` |
+| `matrix` | `homeserver`; `room`, the room ID under Room settings → Advanced (`!…:server`, or `!` and 43 characters with no server part for rooms of version 12, the default for new rooms on current homeservers); `access_token` of an account that has joined the room | `access_token` |
 | `email` | `smtp_url` (`smtps://host:465`, or `smtp://host:587` with STARTTLS); `username`, `password` (optional); `from`; `to` (a list); `require_tls` (default `true`: never send in clear text) | `password` |
 
 Secret keys go in the secrets file. They are left out of the stored `compost-server.yaml` and kept in the app's env file on the server, so later deploys don't need them again; a new value replaces the old one. All values must fit on one line.
+
+Matrix messages are not end-to-end encrypted. In an encrypted room, the homeserver accepts them and Element shows them with a warning.
 
 `server deploy` builds compost's image for communication apps on the server (`compost-communication:<hash>`, from [`images/communication`](https://github.com/devorgpl/compost/tree/master/images/communication): Alpine with `curl` and `jq`), checks that it answers, and shows the app as `on demand` in `server state`. It has no containers, so `server logs` has nothing to show and server backups don't save anything of it.
 

@@ -172,9 +172,13 @@ fn variables(config: &SharedAppConfig) -> Result<Vec<(String, Option<String>)>> 
         "matrix" => {
             let c: MatrixConfig = parse(config)?;
             check_url("homeserver", &c.homeserver, &["https", "http"])?;
+            // `!opaque:server` up to room version 11; from version 12, `!` and
+            // a hash with no server part.
             ensure!(
-                c.room.starts_with('!') && c.room.contains(':'),
-                "room must be a room ID like `!abc123:example.org` (Room settings → Advanced)"
+                c.room.len() > 1
+                    && c.room.starts_with('!')
+                    && !c.room.contains(char::is_whitespace),
+                "room must be a room ID like `!abc123:example.org` or, from room version 12, `!` and 43 characters (Room settings → Advanced)"
             );
             vars.push((var("homeserver"), Some(c.homeserver)));
             vars.push((var("room"), Some(c.room)));
@@ -430,7 +434,14 @@ mod tests {
         assert!(CommunicationKind
             .validate_shared(&config("{name: m, type: matrix, configuration: {homeserver: 'https://m.org', room: '!a:m.org'}}"))
             .is_ok());
+        assert!(CommunicationKind
+            .validate_shared(&config("{name: m, type: matrix, configuration: {homeserver: 'https://m.org', room: '!BoT2QmUxo7jb_jPR63HWuenlhF7njSkjIG_MxZLCpco'}}"))
+            .is_ok());
         assert!(err("{name: m, type: matrix, configuration: {homeserver: 'https://m.org', room: '#a:m.org'}}").contains("room ID"));
+        assert!(
+            err("{name: m, type: matrix, configuration: {homeserver: 'https://m.org', room: '!'}}")
+                .contains("room ID")
+        );
         assert!(
             err(
                 "{name: m, type: email, configuration: {smtp_url: 'mail:25', from: a@b, to: [c@d]}}"
