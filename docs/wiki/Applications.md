@@ -243,6 +243,7 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 
 ```sh
 compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
+                   [--backup <profile> | --no-backup]
 ```
 
 `-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
@@ -250,7 +251,7 @@ compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--pr
 A deploy:
 
 1. validates the config and checks the compose file's service names (exit 2 on errors);
-2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken);
+2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken); with `--apply` and `deployment.backup` (or `--backup <profile>`), backs up the deployed instance with that [profile](Backup-and-Restore.md#before-a-deploy), and stops if the backup fails;
 3. uploads the sources: the whole folder with `build: true` or `attach_sources: true`, otherwise only the compose file. Left out: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and patterns in `.compostignore` (gitignore syntax);
 4. writes the override file and link records. **Without `--apply` it stops here.**
 5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
@@ -281,6 +282,8 @@ Dry run: nothing is changed on the server.
     worker   created
   records release 5
 ```
+
+With `deployment.backup`, a line after the instance's says which profile backs it up first.
 
 - **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
 - **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.

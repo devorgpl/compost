@@ -1,6 +1,7 @@
 //! Configuration files: local compost home, server config, merging.
 
 pub mod app;
+pub mod backup;
 pub mod local;
 pub mod merge;
 pub mod server;

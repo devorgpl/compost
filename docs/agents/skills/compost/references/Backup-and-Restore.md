@@ -7,6 +7,7 @@ compost app backup myapp-prod --link main-db --format raw   # just the SQL dump
 compost app restore myapp-prod-….compost.tar.gz --prefix review -f review.yaml   # a copy of the app
 compost server backup                               # shared apps: data, config, secrets
 compost server restore prod-….compost.tar.gz          # onto a new server, then `app restore`
+compost backup run daily                            # a profile: shared apps and every instance, old archives deleted
 compost backup list                                 # archives on the server
 ```
 
@@ -14,20 +15,103 @@ Backups take the server's lock, so they never run during a deploy.
 
 ## Targets
 
-Where archives go: `--target` for backups, `--source` for restores. The default is `backup.target` in `compost-server.yaml`, else `local`.
+Where archives go: `--target` for backups, `--source` for restores and `backup list`. Without one, a backup goes to its [profile](#profiles)'s target, else the app's `backup.target` (in `compost.yaml`), else `backup.target` in `compost-server.yaml`, else `local`.
 
 | Target | Meaning |
 |---|---|
 | `local` | Streamed through the SSH connection to this machine and packed here. Nothing stays on the server. `-o` is a file or folder here. |
 | `server` | Packed on the server in its backup folder (`backup.server_path`, default `~/.compost-server/backups`). No data crosses the network. `-o` and restore archives are file names in that folder, or absolute paths. |
-| `s3` | Not implemented yet (exit 2). |
+| a name from `backup.targets` | A target you define. `type: server` is another folder on the server, e.g. a mounted disk; it works like `server`. |
 
 ```yaml
 # compost-server.yaml
 backup:
   target: server
   server_path: backups      # absolute, or relative to compost's folder on the server
+  targets:
+    nas: {type: server, path: /mnt/nas/compost}
 ```
+
+`app backup --all` without a profile writes one archive, to `--target` or the server's `backup.target`; an app's own `backup.target` applies to backups of that app alone and to profiles.
+
+## Profiles
+
+A profile names a kind of backup: what it saves, where it goes and how many archives of it to keep. Define them in `compost-server.yaml`, where they apply to the shared apps and every app:
+
+```yaml
+# compost-server.yaml
+backup:
+  target: server
+  profiles:
+    daily:     {include: [links], keep: 7}                      # databases only
+    weekly:    {include: [links, sources, volumes], keep: 4, target: nas}
+    predeploy: {keep: 3, server: false}                         # apps only; see below
+```
+
+```sh
+compost backup run daily                         # shared apps and every instance, one archive each
+compost app backup myapp-prod --profile weekly   # one instance
+compost app backup --all --profile weekly        # every instance, one archive each
+compost server backup --profile daily            # the shared apps
+compost app backup myapp-prod --profile weekly --target local   # flags override the profile
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `include` | `links,sources,volumes` | Parts of an app backup (as `--include`) |
+| `links` | all | Only these links (as `--link`) |
+| `format` | `compost` | As `--format` |
+| `target` | the app's, then the server's `backup.target` | Where the archives go |
+| `keep` | all | Archives kept per instance (and for the shared apps) at the target; older ones are deleted after each backup with the profile |
+| `server` | `true` | `compost-server.yaml` only: `false` leaves the shared apps out of `backup run` and refuses `server backup --profile` |
+
+An app changes a profile for itself, opts out of it or adds its own in `compost.yaml`. Its profiles also take the app's backup settings, `volumes`, `stop`, `before_backup` and `after_backup`, which replace the app's `backup` keys for that profile:
+
+```yaml
+# compost.yaml
+backup:
+  volumes: [uploads]
+  profiles:
+    weekly: {keep: 8}                     # the other keys come from the server's profile
+    daily: false                          # left out of `backup run daily`
+    anonymized:                           # this app's own profile
+      include: [volumes]
+      volumes: [anon-dumps]
+      format: raw
+      keep: 2
+      before_backup:
+        - run: anonymizer                 # dumps the database and anonymizes it into anon-dumps; `profiles: [backup]`
+                                          # in the compose file keeps `app deploy` from starting it
+```
+
+The keys of the app's profile win over the server's, and a key neither sets comes from the app's `backup` settings. Lists replace, they don't add up. The app's profiles take effect with its next `app deploy`, like its other backup settings.
+
+An archive of a profile is named `<instance>-<profile>-<time>`, or `<server>-<profile>-<time>` for the shared apps, and its manifest names the profile. Archives without a profile are never deleted by `keep`.
+
+`backup run` carries on when one instance fails, then exits with an error naming every failure.
+
+### Deleting old archives
+
+`keep` applies after each backup with the profile. To apply it to archives already there, or with another number:
+
+```sh
+compost backup prune                       # every profile with `keep`, at each profile's target
+compost backup prune --profile daily --keep 3 --target nas --yes
+```
+
+It lists what it deletes and asks unless `--yes`. With `--target local` it looks in the current folder.
+
+## Before a deploy
+
+`deployment.backup` names a profile that `app deploy --apply` runs before it changes an instance that is already deployed:
+
+```yaml
+# compost.yaml
+deployment:
+  backup: predeploy
+```
+
+The backup uses the deployed instance's data and links, with the profile as the config being deployed defines it. If it fails, the deploy stops before changing anything. `--backup <profile>` picks another profile for one deploy, `--no-backup` skips it, and `--dry-run` says which one would run. `app restore` and `app rollback` don't take this backup.
 
 ## Formats
 

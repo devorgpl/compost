@@ -8,36 +8,20 @@ use anyhow::{Context, Result, bail};
 use super::instance::{self, Instance, Selector};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
 use super::{secrets, steps, volumes};
-use crate::backup::{self, Backup, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope};
+use crate::backup::profile::{self, AppRun, Flags};
+use crate::backup::{
+    self, Backup, Destination, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope,
+    retention,
+};
 use crate::config::app::StopServices;
-use crate::config::server::{BackupTarget, ServerConfig};
+use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::server::lock::Lock;
 use crate::server::state_file::StateFile;
 use crate::shared::{self, AppCtx, ServerCtx};
 
-/// Parts of an instance a backup can hold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Component {
-    /// Data and configuration of links (database dumps, ingress sites)
-    Links,
-    /// Uploaded sources (only the compose file when sources are not uploaded)
-    Sources,
-    /// Named volumes listed under `backup.volumes`
-    Volumes,
-    /// Docker images of the services, as `docker save` writes them
-    Images,
-}
-
-/// Without `--include`: everything but images, or only links when `--link` is given.
-pub fn components(include: &[Component], links: &[String]) -> Vec<Component> {
-    match (include, links) {
-        ([], []) => vec![Component::Links, Component::Sources, Component::Volumes],
-        ([], _) => vec![Component::Links],
-        (include, _) => include.to_vec(),
-    }
-}
+pub use crate::backup::{Component, components};
 
 /// `--link` values: `<entry>` or `<kind>:<entry>`.
 pub fn link_selected(filters: &[String], kind: &str, entry: &str) -> bool {
@@ -54,10 +38,8 @@ pub enum Which {
 }
 
 pub struct Options {
-    pub include: Vec<Component>,
-    pub links: Vec<String>,
-    pub format: Format,
-    pub target: Option<BackupTarget>,
+    /// `--profile`, `--include`, `--link`, `--format` and `--target`.
+    pub flags: Flags,
     pub output: Option<PathBuf>,
     /// Stop every service while volumes are copied, whatever `backup.stop` says.
     pub stop: bool,
@@ -91,12 +73,8 @@ pub fn backup(
 ) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let server_config = instance::server_config(&ctx)?;
-    let output = output(
-        &ctx,
-        &server_config,
-        options.target,
-        options.output.as_ref(),
-    )?;
+    let settings = server_config.backup.as_ref();
+    let flags = &options.flags;
 
     let (scope, selected) = match which {
         Which::One(selector) => (Scope::App, vec![instance::resolve(&ctx, selector)?]),
@@ -119,51 +97,144 @@ pub fn backup(
             instance::load(&ctx, name, prefix)?.ok_or_else(|| not_deployed(name, prefix))?;
         instances.push(found);
     }
-    check_link_filters(&instances, &options.links)?;
-    let components = components(&options.include, &options.links);
+    check_link_filters(&instances, &flags.links)?;
+    if let Some(name) = &flags.profile {
+        let apps: Vec<_> = instances.iter().map(|i| &i.app).collect();
+        if !profile::defined(settings, &apps, name) {
+            return Err(profile::unknown_profile(name));
+        }
+        if scope == Scope::Apps && options.output.is_some() {
+            return Err(config_err(
+                "with --all and --profile, every instance gets its own archive: leave out -o",
+            ));
+        }
+    }
+    let mut runs = Vec::new();
+    for instance in &instances {
+        let name = flags.profile.as_deref().unwrap_or_default();
+        match profile::app_run(settings, &instance.app, flags) {
+            Some(run) => runs.push((instance, run)),
+            None if scope == Scope::App => {
+                return Err(profile::not_for_app(name, &instance.app.instance()));
+            }
+            None => out!(
+                "Skipping {}: profile {name} is not defined for it, or it opted out",
+                instance.app.instance()
+            ),
+        }
+    }
 
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
-    let mut backup = Backup::new(
-        connector,
-        options.format,
-        Manifest::new(scope, server_name),
-        output,
-    )?;
-    for instance in &instances {
-        out!("Backing up {}:", instance.app.instance());
-        backup_instance(
-            &ctx,
-            &server_config,
-            instance,
-            &components,
-            options,
-            &mut backup,
-        )?;
+    match (scope, &flags.profile) {
+        // `--all` without a profile: one archive, at the flag's or the server's target.
+        (Scope::Apps, None) => {
+            let output = output(
+                &ctx,
+                &server_config,
+                flags.target.as_deref(),
+                options.output.as_ref(),
+            )?;
+            let format = flags.format.unwrap_or_default();
+            let mut backup =
+                Backup::new(connector, format, Manifest::new(scope, server_name), output)?;
+            for (instance, run) in &runs {
+                out!("Backing up {}:", instance.app.instance());
+                backup_instance(
+                    &ctx,
+                    &server_config,
+                    instance,
+                    run,
+                    options.stop,
+                    &mut backup,
+                )?;
+            }
+            let location = backup.finish(&format!("apps-{}", backup::timestamp()))?;
+            out!("Backup written to {location}");
+            Ok(())
+        }
+        _ => {
+            let mut failed = Vec::new();
+            for (instance, run) in &runs {
+                let written = write_one(
+                    &ctx,
+                    &server_config,
+                    server_name,
+                    instance,
+                    run,
+                    flags.profile.as_deref(),
+                    options.output.as_ref(),
+                    options.stop,
+                );
+                match written {
+                    Err(err) if runs.len() == 1 => return Err(err),
+                    Err(err) => {
+                        eprintln!("error: {}: {err:#}", instance.app.instance());
+                        failed.push(instance.app.instance());
+                    }
+                    Ok(()) => {}
+                }
+            }
+            if failed.is_empty() {
+                Ok(())
+            } else {
+                bail!("the backup failed for {}", failed.join(", "))
+            }
+        }
     }
-    let stem = match scope {
-        Scope::App => format!("{}-{}", instances[0].app.instance(), backup::timestamp()),
-        _ => format!("apps-{}", backup::timestamp()),
+}
+
+/// Back up one instance into its own archive, then delete the profile's
+/// archives beyond its `keep`. The caller holds the server's lock.
+#[allow(clippy::too_many_arguments)]
+pub fn write_one(
+    ctx: &ServerCtx,
+    server_config: &ServerConfig,
+    server_name: &str,
+    instance: &Instance,
+    run: &AppRun,
+    profile: Option<&str>,
+    path: Option<&PathBuf>,
+    stop: bool,
+) -> Result<()> {
+    let output = output(ctx, server_config, run.target.as_deref(), path)?;
+    let mut manifest = Manifest::new(Scope::App, server_name);
+    manifest.profile = profile.map(String::from);
+    let mut backup = Backup::new(ctx.connector, run.format, manifest, output)?;
+    let owner = instance.app.instance();
+    match profile {
+        Some(profile) => out!("Backing up {owner} (profile {profile}):"),
+        None => out!("Backing up {owner}:"),
+    }
+    backup_instance(ctx, server_config, instance, run, stop, &mut backup)?;
+    let stem = match profile {
+        Some(profile) => format!("{owner}-{profile}-{}", backup::timestamp()),
+        None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
     out!("Backup written to {location}");
+    if let (Some(profile), Some(keep)) = (profile, run.keep) {
+        retention::apply(&location.store(ctx.connector), &owner, profile, keep)?;
+    }
     Ok(())
 }
 
-/// Where the backup goes, from the flags and the server's `backup` settings.
+/// Where the backup goes: the `target` (a flag's or a profile's), else the
+/// server's `backup.target`; `path` is the `-o` flag.
 pub fn output(
     ctx: &ServerCtx,
     server_config: &ServerConfig,
-    target: Option<BackupTarget>,
+    target: Option<&str>,
     path: Option<&PathBuf>,
 ) -> Result<Output> {
-    let settings = server_config.backup.as_ref();
-    Ok(match backup::resolve_target(target, settings)? {
-        BackupTarget::Server => Output::Server {
-            dir: backup::server_dir(ctx, settings),
-            name: path.map(|p| p.display().to_string()),
+    Ok(
+        match backup::resolve_target(ctx, server_config.backup.as_ref(), target)? {
+            Destination::Server { dir } => Output::Server {
+                dir,
+                name: path.map(|p| p.display().to_string()),
+            },
+            Destination::Local => Output::Local(path.cloned()),
         },
-        _ => Output::Local(path.cloned()),
-    })
+    )
 }
 
 /// Every `--link` must name a link of at least one selected instance.
@@ -187,10 +258,11 @@ fn backup_instance(
     ctx: &ServerCtx,
     server_config: &ServerConfig,
     instance: &Instance,
-    components: &[Component],
-    options: &Options,
+    run: &AppRun,
+    stop: bool,
     backup: &mut Backup,
 ) -> Result<()> {
+    let components = &run.include;
     let app = &instance.app;
     let server_dir = instance::dir(&app.name, &app.prefix);
     let id = InstanceRef {
@@ -208,7 +280,7 @@ fn backup_instance(
     }
     // The overlay from `secret deploy`, which the effective config lacks.
     // Configuration, so not part of raw output.
-    let stored = match options.format {
+    let stored = match run.format {
         Format::Compost => ctx.read(&secrets::path(&app.name, &app.prefix))?,
         Format::Raw => None,
     };
@@ -232,19 +304,10 @@ fn backup_instance(
 
     // The steps prepare the data that links and volumes save.
     if components.contains(&Component::Links) || components.contains(&Component::Volumes) {
-        let before = steps::run(ctx, app, "before_backup", &app.backup.before_backup);
-        let saved = before.and_then(|()| {
-            save_data(
-                ctx,
-                server_config,
-                instance,
-                components,
-                options,
-                backup,
-                &dir,
-            )
-        });
-        steps::run_after(ctx, app, "after_backup", &app.backup.after_backup);
+        let before = steps::run(ctx, app, "before_backup", &run.before_backup);
+        let saved =
+            before.and_then(|()| save_data(ctx, server_config, instance, run, stop, backup, &dir));
+        steps::run_after(ctx, app, "after_backup", &run.after_backup);
         saved?;
     }
 
@@ -267,17 +330,18 @@ fn save_data(
     ctx: &ServerCtx,
     server_config: &ServerConfig,
     instance: &Instance,
-    components: &[Component],
-    options: &Options,
+    run: &AppRun,
+    stop: bool,
     backup: &mut Backup,
     dir: &str,
 ) -> Result<()> {
     let app = &instance.app;
+    let components = &run.include;
     if components.contains(&Component::Links) {
         for link in instance
             .links
             .iter()
-            .filter(|l| link_selected(&options.links, &l.kind, &l.entry))
+            .filter(|l| link_selected(&run.links, &l.kind, &l.entry))
         {
             let (Some(kind), Some(shared_app)) = (
                 shared::find_kind(&link.kind),
@@ -301,9 +365,9 @@ fn save_data(
         }
     }
 
-    if components.contains(&Component::Volumes) && !app.backup.volumes.is_empty() {
+    if components.contains(&Component::Volumes) && !run.volumes.is_empty() {
         let compose = stored_compose_file(ctx, instance)?;
-        let stop = match (&app.backup.stop, options.stop) {
+        let stop = match (&run.stop, stop) {
             (_, true) | (Some(StopServices::All(true)), _) => Some(volumes::Services::All),
             (Some(StopServices::Some(services)), _) => Some(volumes::Services::Only(services)),
             _ => None,
@@ -311,7 +375,7 @@ fn save_data(
         let _stopped = stop
             .map(|which| volumes::Stopped::stop(ctx, app, which))
             .transpose()?;
-        for volume in &app.backup.volumes {
+        for volume in &run.volumes {
             let docker_volume = app.docker_volume(&compose, volume);
             if !volumes::exists(ctx.connector, &docker_volume)? {
                 eprintln!("warning: volume {docker_volume} does not exist yet; skipped");

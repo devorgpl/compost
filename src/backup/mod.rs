@@ -3,19 +3,22 @@
 //! only describe items as scripts; this module moves the bytes.
 
 mod archive;
+pub mod profile;
+pub mod retention;
 mod source;
 mod writer;
 
 use std::time::SystemTime;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 pub use archive::{InstanceRef, Manifest, Scope, SharedRef};
 pub use source::Archive;
 pub use writer::{Backup, Output, human_size};
 
-use crate::config::server::{BackupSettings, BackupTarget};
-use crate::error::config_err;
+use crate::config::backup::unknown_target;
+use crate::config::server::{BackupSettings, TargetConfig};
 use crate::shared::ServerCtx;
 
 /// Default archive folder of the `server` target, relative to `COMPOST_SERVER_HOME`.
@@ -23,11 +26,35 @@ const DEFAULT_SERVER_PATH: &str = "backups";
 
 /// `compost`: archive with a manifest, restorable by compost. `raw`: the plain
 /// files (one file as is, several as a tar.gz), for use outside compost.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum Format {
     #[default]
     Compost,
     Raw,
+}
+
+/// Parts of an instance a backup can hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Component {
+    /// Data and configuration of links (database dumps, ingress sites)
+    Links,
+    /// Uploaded sources (only the compose file when sources are not uploaded)
+    Sources,
+    /// Named volumes listed under `backup.volumes`
+    Volumes,
+    /// Docker images of the services, as `docker save` writes them
+    Images,
+}
+
+/// Without `--include`: everything but images, or only links when `--link` is given.
+pub fn components(include: &[Component], links: &[String]) -> Vec<Component> {
+    match (include, links) {
+        ([], []) => vec![Component::Links, Component::Sources, Component::Volumes],
+        ([], _) => vec![Component::Links],
+        (include, _) => include.to_vec(),
+    }
 }
 
 /// Configuration and secrets (`Meta`) are part of compost archives only; `raw`
@@ -95,29 +122,52 @@ impl<'a, 'c> ItemReader<'a, 'c> {
     }
 }
 
-/// The `--target`/`--source` flag, else the server's `backup.target`, else local.
-pub fn resolve_target(
-    flag: Option<BackupTarget>,
-    settings: Option<&BackupSettings>,
-) -> Result<BackupTarget> {
-    let target = flag
-        .or_else(|| settings.map(|s| s.target))
-        .unwrap_or_default();
-    if target == BackupTarget::S3 {
-        return Err(config_err("the s3 backup target is not implemented yet"));
-    }
-    Ok(target)
+/// Where the archives of a target are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Destination {
+    /// This machine; data is streamed through the connector.
+    Local,
+    /// A folder on the server (absolute path).
+    Server { dir: String },
 }
 
-/// Absolute archive folder of the `server` target.
-pub fn server_dir(ctx: &ServerCtx, settings: Option<&BackupSettings>) -> String {
-    let path = settings
-        .and_then(|s| s.server_path.as_deref())
-        .unwrap_or(DEFAULT_SERVER_PATH);
-    if path.starts_with('/') {
-        path.to_string()
-    } else {
-        ctx.path(path)
+/// The target `name` (a `--target`/`--source` flag or a profile's), else the
+/// server's `backup.target`, else `local`.
+pub fn resolve_target(
+    ctx: &ServerCtx,
+    settings: Option<&BackupSettings>,
+    name: Option<&str>,
+) -> Result<Destination> {
+    let name = name
+        .or_else(|| settings.and_then(|s| s.target.as_deref()))
+        .unwrap_or("local");
+    let absolute = |path: &str| {
+        if path.starts_with('/') {
+            path.to_string()
+        } else {
+            ctx.path(path)
+        }
+    };
+    match name {
+        "local" => Ok(Destination::Local),
+        "server" => Ok(Destination::Server {
+            dir: absolute(
+                settings
+                    .and_then(|s| s.server_path.as_deref())
+                    .unwrap_or(DEFAULT_SERVER_PATH),
+            ),
+        }),
+        name => {
+            let targets = settings
+                .map(BackupSettings::target_names)
+                .unwrap_or_default();
+            match settings.and_then(|s| s.targets.get(name)) {
+                Some(TargetConfig::Server { path }) => Ok(Destination::Server {
+                    dir: absolute(path),
+                }),
+                None => Err(unknown_target("", name, &targets)),
+            }
+        }
     }
 }
 
@@ -134,22 +184,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn target_defaults_to_local_and_s3_is_not_implemented() {
-        assert_eq!(resolve_target(None, None).unwrap(), BackupTarget::Local);
-        let server = BackupSettings {
-            target: BackupTarget::Server,
-            ..BackupSettings::default()
+    fn targets() {
+        let connector = crate::connector::local::Local { verbose: false };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: "/home/c/.compost-server".into(),
         };
+        let settings: BackupSettings = serde_yaml_ng::from_str(
+            "{target: server, targets: {nas: {type: server, path: /mnt/nas}, rel: {type: server, path: b2}}}",
+        )
+        .unwrap();
+        let resolve = |settings, name| resolve_target(&ctx, settings, name);
+        assert_eq!(resolve(None, None).unwrap(), Destination::Local);
+        let server = |dir: &str| Destination::Server { dir: dir.into() };
         assert_eq!(
-            resolve_target(None, Some(&server)).unwrap(),
-            BackupTarget::Server
+            resolve(Some(&settings), None).unwrap(),
+            server("/home/c/.compost-server/backups")
         );
         assert_eq!(
-            resolve_target(Some(BackupTarget::Local), Some(&server)).unwrap(),
-            BackupTarget::Local
+            resolve(Some(&settings), Some("local")).unwrap(),
+            Destination::Local
         );
-        let err = resolve_target(Some(BackupTarget::S3), None).unwrap_err();
-        assert!(err.to_string().contains("not implemented"), "{err}");
+        assert_eq!(
+            resolve(Some(&settings), Some("nas")).unwrap(),
+            server("/mnt/nas")
+        );
+        assert_eq!(
+            resolve(Some(&settings), Some("rel")).unwrap(),
+            server("/home/c/.compost-server/b2")
+        );
+        let err = resolve(Some(&settings), Some("s3")).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown backup target `s3`"),
+            "{err}"
+        );
     }
 
     #[test]

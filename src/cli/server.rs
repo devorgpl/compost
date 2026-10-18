@@ -8,7 +8,6 @@ use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
 use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry};
-use crate::config::server::BackupTarget;
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector::{self, ConnectOptions};
 use crate::error::{CompostError, config_err};
@@ -77,9 +76,10 @@ pub struct ServerRestoreArgs {
     /// Only this shared app (repeatable or comma-separated)
     #[arg(long, value_delimiter = ',')]
     pub shared: Vec<String>,
-    /// Where the archive is (default: `backup.target` of compost-server.yaml, else local)
-    #[arg(long, value_enum)]
-    pub source: Option<BackupTarget>,
+    /// Where the archive is: `local`, `server` or a name from `backup.targets`
+    /// (default: `backup.target` of compost-server.yaml, else local)
+    #[arg(long, value_name = "TARGET")]
+    pub source: Option<String>,
     /// Do not ask for confirmation
     #[arg(long)]
     pub yes: bool,
@@ -361,8 +361,7 @@ pub fn backup(
     let connector = connector::open(&server, home, connect)?;
     let options = BackupOptions {
         shared: args.shared,
-        format: args.output.format,
-        target: args.output.target,
+        flags: args.output.flags(Vec::new(), Vec::new())?,
         output: args.output.output,
         force_unlock: args.force_unlock,
     };
@@ -405,7 +404,7 @@ pub fn restore(
 pub fn backup_list(
     home: &CompostHome,
     server: Option<&str>,
-    source: Option<BackupTarget>,
+    source: Option<&str>,
     connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
@@ -416,6 +415,47 @@ pub fn backup_list(
         server.server_home(),
         &manager.manager_key,
         source,
+    )
+}
+
+/// `compost backup run`
+pub fn backup_run(
+    home: &CompostHome,
+    server: Option<&str>,
+    profile: &str,
+    force_unlock: bool,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    check_name("backup profile", profile)?;
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    backup::run_profile(
+        connector.as_ref(),
+        &server.name,
+        server.server_home(),
+        &manager.manager_key,
+        profile,
+        force_unlock,
+    )
+}
+
+/// `compost backup prune`
+pub fn backup_prune(
+    home: &CompostHome,
+    server: Option<&str>,
+    options: &backup::PruneOptions,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    backup::prune(
+        connector.as_ref(),
+        &server.name,
+        server.server_home(),
+        &manager.manager_key,
+        options,
     )
 }
 

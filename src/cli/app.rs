@@ -13,7 +13,6 @@ use crate::app::instance::Selector;
 use crate::app::{deploy, exec, list, remove, restore, rollback, secrets, state};
 use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{CompostHome, ServerEntry};
-use crate::config::server::BackupTarget;
 use crate::config::{check_name, merge};
 use crate::connector::{self, ConnectOptions};
 use crate::error::config_err;
@@ -84,6 +83,13 @@ pub struct AppDeployArgs {
     /// deploy with, replacing the stored one; later deploys use it without the file
     #[arg(long, value_name = "FILE")]
     pub secret: Option<PathBuf>,
+    /// With --apply, back up the deployed instance with this profile first
+    /// (default: `deployment.backup`); a failed backup stops the deploy
+    #[arg(long, value_name = "PROFILE", conflicts_with = "no_backup")]
+    pub backup: Option<String>,
+    /// Skip the backup that `deployment.backup` takes before the deploy
+    #[arg(long)]
+    pub no_backup: bool,
 }
 
 #[derive(Debug, Args)]
@@ -108,10 +114,10 @@ pub struct RemoveArgs {
 pub struct AppBackupArgs {
     #[command(flatten)]
     pub instance: InstanceArgs,
-    /// Back up every instance on the server into one archive
+    /// Back up every instance on the server: into one archive, or with --profile one archive each
     #[arg(long, conflicts_with_all = ["instance", "files", "app", "prefix"])]
     pub all: bool,
-    /// Parts to save (default: links,sources,volumes; only links with --link)
+    /// Parts to save (default: the profile's, else links,sources,volumes; only links with --link)
     #[arg(long, value_enum, value_delimiter = ',')]
     pub include: Vec<Component>,
     /// Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
@@ -150,9 +156,10 @@ pub struct AppRestoreArgs {
     /// Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
     #[arg(long)]
     pub link: Vec<String>,
-    /// Where the archive is (default: `backup.target` of compost-server.yaml, else local)
-    #[arg(long, value_enum)]
-    pub source: Option<BackupTarget>,
+    /// Where the archive is: `local`, `server` or a name from `backup.targets`
+    /// (default: `backup.target` of compost-server.yaml, else local)
+    #[arg(long, value_name = "TARGET")]
+    pub source: Option<String>,
     /// Overwrite databases and volumes that already hold data
     #[arg(long)]
     pub replace: bool,
@@ -279,10 +286,7 @@ pub fn run(
                 Which::One(selector(&args.instance)?)
             };
             let options = backup::Options {
-                include: args.include,
-                links: args.link,
-                format: args.output.format,
-                target: args.output.target,
+                flags: args.output.flags(args.include, args.link)?,
                 output: args.output.output,
                 stop: args.stop,
                 force_unlock: args.force_unlock,
@@ -462,7 +466,12 @@ fn deploy(
         prefix,
         purge,
         secret,
+        backup,
+        no_backup,
     } = args;
+    if let Some(profile) = &backup {
+        check_name("backup profile", profile)?;
+    }
     let mut files = config_files(&args.files)?;
     // The name comes from the files; the prefix may come from --secret, which
     // takes the place of the stored overlay: right after the first file.
@@ -512,6 +521,13 @@ fn deploy(
         };
         out!("  using {what} {path}");
     }
+    let backup_profile = if no_backup {
+        None
+    } else {
+        backup
+            .as_deref()
+            .or(loaded.config.deployment.backup.as_deref())
+    };
     let options = deploy::Options {
         apply: args.apply(home, server)?,
         dry_run: args.dry_run,
@@ -523,6 +539,10 @@ fn deploy(
         purge,
         secrets: overlay.as_ref(),
         pinned: None,
+        backup: backup_profile.map(|profile| deploy::PreDeployBackup {
+            server_name: &server.name,
+            profile,
+        }),
     };
     deploy::deploy(
         connector.as_ref(),

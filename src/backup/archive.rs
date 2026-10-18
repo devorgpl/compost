@@ -16,6 +16,9 @@ pub struct Manifest {
     pub created_at: String,
     /// Name of the server the backup was taken from.
     pub server: String,
+    /// The `--profile` it was taken with, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<InstanceRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -81,6 +84,7 @@ impl Manifest {
             compost_version: env!("CARGO_PKG_VERSION").to_string(),
             created_at: humantime::format_rfc3339_seconds(SystemTime::now()).to_string(),
             server: server.to_string(),
+            profile: None,
             instances: Vec::new(),
             shared: Vec::new(),
             items: Vec::new(),

@@ -368,13 +368,22 @@ compost app remove myapp-review --purge database --volumes --yes
 
 ## Nightly backups
 
-```sh
-# crontab on your machine
-30 2 * * *  compost -s prod app backup --all --target server
-45 2 * * *  compost -s prod server backup --target server
+```yaml
+# compost-server.yaml
+backup:
+  target: server
+  profiles:
+    daily:  {include: [links], keep: 7}     # databases only
+    weekly: {keep: 4}                       # links, sources and volumes
 ```
 
-`compost -s prod backup list` shows what's there.
+```sh
+# crontab on your machine
+30 2 * * 1-6  compost -s prod backup run daily
+30 2 * * 0    compost -s prod backup run weekly
+```
+
+Each run backs up the shared apps and every instance into their own archives on the server and deletes the oldest beyond `keep`. `compost -s prod backup list` shows what's there. See [Profiles](Backup-and-Restore.md#profiles).
 
 ## An app with its own database
 

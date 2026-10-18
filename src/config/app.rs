@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
+use super::backup::AppProfile;
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared;
@@ -60,6 +61,12 @@ pub struct BackupConfig {
     /// After the data is loaded and the services started.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after_restore: Vec<Step>,
+    /// Target of this app's backups, over the server's `backup.target`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Profiles: overrides of the server's, `false` to opt out, or the app's own.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, AppProfile>,
 }
 
 impl BackupConfig {
@@ -70,6 +77,8 @@ impl BackupConfig {
             && self.after_backup.is_empty()
             && self.before_restore.is_empty()
             && self.after_restore.is_empty()
+            && self.target.is_none()
+            && self.profiles.is_empty()
     }
 
     /// The step lists with their keys, for messages.
@@ -93,7 +102,7 @@ pub enum StopServices {
 
 /// A command run in a service of the instance: `exec` in its running
 /// container, or `run` as a one-off container that must exit with 0.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,7 +115,7 @@ pub struct Step {
     pub command: Option<StepCommand>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum StepCommand {
     Shell(String),
@@ -180,6 +189,9 @@ pub struct Deployment {
     /// Releases kept on the server for `app rollback`; 0 keeps none.
     #[serde(skip_serializing_if = "is_default_releases")]
     pub releases: u32,
+    /// Backup profile that `app deploy --apply` runs before it changes a deployed instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
 }
 
 fn is_default_source_dir(dir: &str) -> bool {
@@ -207,6 +219,7 @@ impl Default for Deployment {
             build: false,
             attach_sources: false,
             releases: DEFAULT_RELEASES,
+            backup: None,
         }
     }
 }
@@ -384,6 +397,47 @@ impl AppConfig {
         }
     }
 
+    /// Volumes, services to stop and steps of `backup` or one of its profiles (`path`).
+    fn check_backup_parts(
+        &self,
+        compose: &ComposeFile,
+        path: &str,
+        volumes: &[String],
+        stop: Option<&StopServices>,
+        steps: &[(&str, &[Step])],
+    ) -> Result<()> {
+        let file = &self.deployment.compose_file;
+        let mut seen = HashSet::new();
+        for volume in volumes {
+            if !seen.insert(volume) {
+                return Err(config_err(format!(
+                    "{path}.volumes: `{volume}` is listed more than once"
+                )));
+            }
+            if !compose.volumes.contains_key(volume) {
+                return Err(config_err(format!(
+                    "{path}.volumes: `{volume}` is not a named volume in {file}"
+                )));
+            }
+        }
+        if let Some(StopServices::Some(services)) = stop {
+            for service in services {
+                if !compose.services.contains_key(service) {
+                    return Err(config_err(format!(
+                        "{path}.stop: service `{service}` is not in {file}"
+                    )));
+                }
+            }
+        }
+        for (key, steps) in steps {
+            for (index, step) in steps.iter().enumerate() {
+                step.validate(compose)
+                    .map_err(|e| config_err(format!("{path}.{key}[{index}]: {e:#}")))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Core checks, then delegation to each kind (spec §6.3).
     fn validate(&self, compose: &ComposeFile) -> Result<()> {
         check_name("app name", &self.name)?;
@@ -418,35 +472,43 @@ impl AppConfig {
             }
         }
 
-        let mut volumes = HashSet::new();
-        for volume in &self.backup.volumes {
-            if !volumes.insert(volume) {
-                return Err(config_err(format!(
-                    "backup.volumes: `{volume}` is listed more than once"
-                )));
-            }
-            if !compose.volumes.contains_key(volume) {
-                return Err(config_err(format!(
-                    "backup.volumes: `{volume}` is not a named volume in {}",
-                    self.deployment.compose_file
-                )));
-            }
-        }
-        if let Some(StopServices::Some(services)) = &self.backup.stop {
-            for service in services {
-                if !compose.services.contains_key(service) {
-                    return Err(config_err(format!(
-                        "backup.stop: service `{service}` is not in {}",
-                        self.deployment.compose_file
-                    )));
-                }
+        let backup = &self.backup;
+        self.check_backup_parts(
+            compose,
+            "backup",
+            &backup.volumes,
+            backup.stop.as_ref(),
+            &backup.steps(),
+        )?;
+        if let Some(target) = &backup.target {
+            if target.trim().is_empty() {
+                return Err(config_err("backup.target: must not be empty"));
             }
         }
-        for (key, steps) in self.backup.steps() {
-            for (index, step) in steps.iter().enumerate() {
-                step.validate(compose)
-                    .map_err(|e| config_err(format!("backup.{key}[{index}]: {e:#}")))?;
+        for (name, profile) in &backup.profiles {
+            profile.validate(name)?;
+            if let AppProfile::Settings(profile) = profile {
+                let empty = Vec::new();
+                self.check_backup_parts(
+                    compose,
+                    &format!("backup.profiles.{name}"),
+                    profile.volumes.as_ref().unwrap_or(&empty),
+                    profile.stop.as_ref(),
+                    &[
+                        (
+                            "before_backup",
+                            profile.before_backup.as_deref().unwrap_or_default(),
+                        ),
+                        (
+                            "after_backup",
+                            profile.after_backup.as_deref().unwrap_or_default(),
+                        ),
+                    ],
+                )?;
             }
+        }
+        if let Some(profile) = &self.deployment.backup {
+            check_name("deployment.backup profile", profile)?;
         }
 
         for (kind_name, links) in &self.services {
@@ -708,6 +770,41 @@ services:
 
         let err = error("{name: a, backup: {volumes: [data]}}");
         assert!(err.contains("`data` is not a named volume"), "{err}");
+    }
+
+    #[test]
+    fn backup_profiles() {
+        let config = validate(
+            "{name: a, deployment: {backup: predeploy}, backup: {target: nas, profiles: {
+               daily: false,
+               anon: {include: [volumes], before_backup: [{run: backend-migration}], stop: [backend-webapp]}}}}",
+        )
+        .unwrap();
+        assert_eq!(config.deployment.backup.as_deref(), Some("predeploy"));
+        assert_eq!(config.backup.profiles["daily"], AppProfile::Enabled(false));
+        for (text, message) in [
+            (
+                "{profiles: {anon: {stop: [nope]}}}",
+                "backup.profiles.anon.stop: service `nope` is not in",
+            ),
+            (
+                "{profiles: {anon: {volumes: [nope]}}}",
+                "backup.profiles.anon.volumes: `nope` is not a named volume",
+            ),
+            (
+                "{profiles: {anon: {before_backup: [{exec: front-webapp}]}}}",
+                "backup.profiles.anon.before_backup[0]: `exec` needs a `command`",
+            ),
+            (
+                "{profiles: {anon: {server: true}}}",
+                "only a profile of compost-server.yaml",
+            ),
+            ("{profiles: {daily: true}}", "use `false` to opt out"),
+            ("{target: ''}", "backup.target: must not be empty"),
+        ] {
+            let err = error(&format!("{{name: a, backup: {text}}}"));
+            assert!(err.contains(message), "{text}: {err}");
+        }
     }
 
     #[test]

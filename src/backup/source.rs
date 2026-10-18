@@ -217,7 +217,8 @@ mod tests {
             Output::Local(Some(out.path().to_path_buf())),
         )
         .finish("a-p-1")
-        .unwrap();
+        .unwrap()
+        .to_string();
         assert!(path.ends_with("a-p-1.compost.tar.gz"), "{path}");
         let mode = fs::metadata(&path).unwrap().permissions();
         assert_eq!(
@@ -245,7 +246,10 @@ mod tests {
             dir: dir.clone(),
             name: None,
         };
-        let path = backup(Format::Compost, output).finish("a-p-1").unwrap();
+        let path = backup(Format::Compost, output)
+            .finish("a-p-1")
+            .unwrap()
+            .to_string();
         assert_eq!(path, format!("{dir}/a-p-1.compost.tar.gz (on the server)"));
         // Only the archive is left, no staging folder.
         let left: Vec<_> = fs::read_dir(&dir)
@@ -275,7 +279,8 @@ mod tests {
         let out = TempDir::new().unwrap();
         let path = backup(Format::Raw, Output::Local(Some(out.path().to_path_buf())))
             .finish("a-p-1")
-            .unwrap();
+            .unwrap()
+            .to_string();
         assert!(path.ends_with("a-p-1-main-db.sql"), "{path}");
         assert_eq!(fs::read_to_string(&path).unwrap(), "SELECT 1;");
 

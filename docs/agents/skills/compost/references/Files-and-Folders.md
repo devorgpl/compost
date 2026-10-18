@@ -49,7 +49,7 @@ infra/
 ├── state.yaml                        status of shared apps and instances
 ├── lock/                             exists while a command changes the server
 ├── tmp/                              short-lived files, e.g. client credentials for external databases
-├── backups/                          archives of the `server` backup target
+├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`
 ├── shared/

@@ -41,6 +41,7 @@ deployment:
   build: false                         # true: `docker compose build` on the server; false: `pull`
   attach_sources: false                # upload the whole folder; forced true by build: true
   releases: 5                          # releases kept on the server for `app rollback`; 0 keeps none
+  backup: predeploy                    # backup profile run before `app deploy --apply` changes a deployed instance
 services:
   ingress: [ … ]                       # see Applications
   database: [ … ]
@@ -58,6 +59,10 @@ backup:
   after_backup: [ … ]
   before_restore: [ … ]
   after_restore: [ … ]
+  target: nas                          # where this app's backups go
+  profiles:                            # changes to the server's profiles, `false` to opt out, or the app's own
+    daily: false
+    anonymized: {include: [volumes], volumes: [anon-dumps], before_backup: [ … ]}
 ```
 
 ### `backup`
@@ -68,6 +73,8 @@ backup:
 | `stop` | none | Compose services stopped while the volumes are copied, or `true` for all; `--stop` stops all |
 | `before_backup`, `after_backup` | `[]` | Steps run before anything is saved and after it is saved |
 | `before_restore`, `after_restore` | `[]` | Steps run before data is loaded into a deployed instance and after it is loaded |
+| `target` | the server's `backup.target` | Target of this app's backups: `local`, `server` or a name from the server's `backup.targets`. A profile's target wins over it |
+| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
@@ -169,9 +176,16 @@ shared:
   monitoring:
     - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
 backup:
-  target: local                        # local | server | s3 (not implemented)
+  target: local                        # local | server | a name from targets
   server_path: backups                 # folder of the server target
+  targets:
+    nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
+  profiles:
+    daily: {include: [links], keep: 7, target: nas}
+    predeploy: {keep: 3, server: false}
 ```
+
+`profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 

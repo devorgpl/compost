@@ -2213,7 +2213,188 @@ fn app_backup_of_one_link_as_raw_dump() {
             &[("FAKE_DOCKER_RUNNING", "1")],
         )
         .code(2)
-        .stderr(contains("s3 backup target is not implemented"));
+        .stderr(contains(
+            "unknown backup target `s3` (known: local, server)",
+        ));
+}
+
+#[test]
+fn backup_profiles_targets_and_retention() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}backup:
+  target: server
+  targets: {{nas: {{type: server, path: nas}}}}
+  profiles:
+    daily: {{include: [links], keep: 2}}
+    predeploy: {{target: nas, keep: 1, server: false}}
+"
+        ),
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.write_work_file(
+        "app/compost.yaml",
+        &format!(
+            "{APP_CONFIG}backup:
+  profiles:
+    anon: {{include: [sources], keep: 1}}
+"
+        )
+        .replace("  build: true\n", "  build: true\n  backup: predeploy\n"),
+    );
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
+    let deploy = [
+        "app",
+        "deploy",
+        "--apply",
+        "-f",
+        "app/compost.yaml,app/.compost-staging.yaml",
+    ];
+    // The first deploy has nothing to back up.
+    server
+        .run(&deploy, &running)
+        .success()
+        .stdout(contains("profile predeploy").not());
+    let files = |dir: &str| -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(server.server_home.join(dir))
+            .map(|entries| {
+                entries
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let backups = server.server_home.join("backups");
+    fs::create_dir_all(&backups).unwrap();
+    for old in [
+        "dev-daily-20200101-030000.compost.tar.gz",
+        "dev-daily-20200102-030000.compost.tar.gz",
+        "myapp-staging-daily-20200101-030000.compost.tar.gz",
+        "myapp-staging-anon-20200101-030000.compost.tar.gz",
+        "myapp-staging-20200101-030000.compost.tar.gz",
+    ] {
+        fs::write(backups.join(old), "old").unwrap();
+    }
+
+    // `backup run`: the shared apps and every instance, one archive each; then retention.
+    server
+        .run(&["backup", "run", "daily"], &running)
+        .success()
+        .stdout(contains("Backing up dev (profile daily):"))
+        .stdout(contains("Backing up myapp-staging (profile daily):"))
+        .stdout(contains(
+            "deleted dev-daily-20200101-030000.compost.tar.gz (profile daily keeps 2)",
+        ));
+    let names = files("backups");
+    assert!(
+        !names.contains(&"dev-daily-20200101-030000.compost.tar.gz".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"dev-daily-20200102-030000.compost.tar.gz".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"myapp-staging-daily-20200101-030000.compost.tar.gz".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"myapp-staging-20200101-030000.compost.tar.gz".to_string()),
+        "archives without a profile stay: {names:?}"
+    );
+    assert_eq!(
+        names
+            .iter()
+            .filter(|n| n.starts_with("myapp-staging-daily-"))
+            .count(),
+        2,
+        "{names:?}"
+    );
+    let log = server.take_docker_log();
+    assert!(log.contains("pg_dumpall"), "{log}");
+    assert!(log.contains("pg_dump -U postgres"), "{log}");
+
+    // An app-only profile, with what it includes.
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "--profile", "anon"],
+            &running,
+        )
+        .success()
+        .stdout(contains("apps/myapp/staging/sources.tar"))
+        .stdout(contains("links/").not())
+        .stdout(contains(
+            "deleted myapp-staging-anon-20200101-030000.compost.tar.gz",
+        ));
+    server
+        .run(&["app", "backup", "--all", "--profile", "nope"], &running)
+        .code(2)
+        .stderr(contains("no backup profile `nope`"));
+    server
+        .run(&["server", "backup", "--profile", "predeploy"], &running)
+        .code(2)
+        .stderr(contains("does not back up the shared apps"));
+    server
+        .run(&["server", "backup", "--profile", "anon"], &running)
+        .code(2)
+        .stderr(contains("does not back up the shared apps"));
+
+    // `deployment.backup`: shown by a dry run, taken before the deploy, skipped with --no-backup.
+    server
+        .run(&[&deploy[..], &["--dry-run"]].concat(), &running)
+        .success()
+        .stdout(contains(
+            "backs up myapp-staging first with profile predeploy (target nas)",
+        ));
+    assert!(files("nas").is_empty());
+    server
+        .run(&deploy, &running)
+        .success()
+        .stdout(contains("Backing up myapp-staging (profile predeploy):"));
+    let nas = files("nas");
+    assert_eq!(nas.len(), 1, "{nas:?}");
+    assert!(nas[0].starts_with("myapp-staging-predeploy-"), "{nas:?}");
+    server
+        .run(&[&deploy[..], &["--no-backup"]].concat(), &running)
+        .success()
+        .stdout(contains("profile predeploy").not());
+    server
+        .run(&["backup", "list", "--source", "nas"], &running)
+        .success()
+        .stdout(contains(nas[0].as_str()));
+
+    // `backup prune` deletes what the profiles don't keep, after asking.
+    fs::write(
+        backups.join("myapp-staging-anon-20200101-030000.compost.tar.gz"),
+        "old",
+    )
+    .unwrap();
+    server
+        .run(&["backup", "prune", "--profile", "anon"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+    server
+        .run(&["backup", "prune", "--yes"], &running)
+        .success()
+        .stdout(contains(
+            "delete myapp-staging-anon-20200101-030000.compost.tar.gz",
+        ))
+        .stdout(contains("Deleted 1 archive."));
+    server
+        .run(&["backup", "prune", "--yes"], &running)
+        .success()
+        .stdout(contains("Nothing to delete"));
 }
 
 #[test]

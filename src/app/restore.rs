@@ -14,9 +14,9 @@ use super::backup::{
 use super::instance::{self, Instance};
 use super::state::{initialized_server, not_deployed, stored_compose_file};
 use super::{deploy, secrets, steps, volumes};
-use crate::backup::{self, Archive, InstanceRef, ItemReader, Manifest, Scope};
+use crate::backup::{self, Archive, Destination, InstanceRef, ItemReader, Manifest, Scope};
 use crate::config::app::{AppConfig, ComposeFile};
-use crate::config::server::{BackupTarget, ServerConfig};
+use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::error::{CompostError, config_err};
 use crate::server::compose::wait_until_ready;
@@ -29,7 +29,7 @@ const RESTORED_CONFIG: &str = ".compost-restore.yaml";
 
 pub struct Options {
     pub archive: String,
-    pub source: Option<BackupTarget>,
+    pub source: Option<String>,
     /// `<app>-<prefix>` of the instance in the archive.
     pub instance: Option<String>,
     pub all: bool,
@@ -52,7 +52,12 @@ pub fn restore(
 ) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let server_config = instance::server_config(&ctx)?;
-    let archive = open_archive(&ctx, &server_config, options.source, &options.archive)?;
+    let archive = open_archive(
+        &ctx,
+        &server_config,
+        options.source.as_deref(),
+        &options.archive,
+    )?;
     if archive.manifest.scope == Scope::Server {
         return Err(config_err(format!(
             "{} is a server backup; restore it with `compost server restore`",
@@ -76,21 +81,23 @@ pub fn restore(
 pub fn open_archive<'c>(
     ctx: &ServerCtx<'c>,
     server_config: &ServerConfig,
-    source: Option<BackupTarget>,
+    source: Option<&str>,
     path: &str,
 ) -> Result<Archive<'c>> {
-    let settings = server_config.backup.as_ref();
-    if backup::resolve_target(source, settings)? == BackupTarget::Server {
-        let path = if path.starts_with('/') {
-            path.to_string()
-        } else {
-            format!("{}/{path}", backup::server_dir(ctx, settings))
-        };
-        out!("Unpacking {path} on the server ...");
-        Archive::open_server(ctx.connector, &path)
-    } else {
-        out!("Reading {path} ...");
-        Archive::open_local(ctx.connector, Path::new(path))
+    match backup::resolve_target(ctx, server_config.backup.as_ref(), source)? {
+        Destination::Server { dir } => {
+            let path = if path.starts_with('/') {
+                path.to_string()
+            } else {
+                format!("{dir}/{path}")
+            };
+            out!("Unpacking {path} on the server ...");
+            Archive::open_server(ctx.connector, &path)
+        }
+        Destination::Local => {
+            out!("Reading {path} ...");
+            Archive::open_local(ctx.connector, Path::new(path))
+        }
     }
 }
 
@@ -250,6 +257,7 @@ fn restore_deployment(
         purge: Vec::new(),
         secrets: None,
         pinned: None,
+        backup: None,
     };
     deploy::deploy(
         ctx.connector,

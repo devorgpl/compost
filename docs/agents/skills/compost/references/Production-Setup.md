@@ -103,13 +103,14 @@ Set where backups go in `compost-server.yaml` and deploy it:
 ```yaml
 backup:
   target: server       # archives stay on the server, in ~/.compost-server/backups
+  profiles:
+    daily: {keep: 7}   # the shared apps and every app; the 7 newest archives of each are kept
 ```
 
 Then, e.g. from cron on your machine:
 
 ```sh
-compost app backup --all
-compost server backup
+compost backup run daily
 ```
 
 See [Backup and restore](Backup-and-Restore.md), also for moving to a new server.

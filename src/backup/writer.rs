@@ -24,6 +24,43 @@ pub enum Output {
     Server { dir: String, name: Option<String> },
 }
 
+/// Where a finished backup was written.
+#[derive(Debug)]
+pub enum Location {
+    Local(PathBuf),
+    /// Absolute path on the server.
+    Server(String),
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Location::Local(path) => write!(f, "{}", path.display()),
+            Location::Server(path) => write!(f, "{path} (on the server)"),
+        }
+    }
+}
+
+impl Location {
+    /// The folder the archive is in, for retention.
+    pub fn store<'c>(&self, connector: &'c dyn Connector) -> super::retention::Store<'c> {
+        use super::retention::Store;
+        match self {
+            Location::Local(path) => Store::Local(match path.parent() {
+                Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+                _ => PathBuf::from("."),
+            }),
+            Location::Server(path) => Store::Server {
+                connector,
+                dir: path
+                    .rsplit_once('/')
+                    .map_or(".", |(dir, _)| dir)
+                    .to_string(),
+            },
+        }
+    }
+}
+
 enum Staging {
     Local {
         dir: TempDir,
@@ -157,7 +194,7 @@ impl<'c> Backup<'c> {
 
     /// Pack the items into the output file and return where it is.
     /// `stem` is the default name without extension, e.g. `myapp-staging-20261015-120000`.
-    pub fn finish(self, stem: &str) -> Result<String> {
+    pub fn finish(self, stem: &str) -> Result<Location> {
         let items: Vec<String> = self.manifest.items.iter().map(|i| i.path.clone()).collect();
         let (default_name, packed) = match (self.format, items.as_slice()) {
             (_, []) => bail!("nothing to back up"),
@@ -199,7 +236,7 @@ impl<'c> Backup<'c> {
                     return Err(anyhow::Error::from(err)
                         .context(format!("cannot write {}", target.display())));
                 }
-                Ok(target.display().to_string())
+                Ok(Location::Local(target))
             }
             Staging::Server {
                 dir,
@@ -230,7 +267,7 @@ impl<'c> Backup<'c> {
                 self.connector.exec(&format!(
                     "if [ -e {quoted} ]; then echo \"{target} already exists\" >&2; exit 1; fi; {script}"
                 ))?;
-                Ok(format!("{target} (on the server)"))
+                Ok(Location::Server(target))
             }
         }
     }

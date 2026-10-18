@@ -28,6 +28,8 @@ pub struct AppPlan<'a> {
     pub links: Vec<String>,
     /// Links of the last deploy that the config no longer has.
     pub dropped: Vec<String>,
+    /// The backup `--apply` takes first, e.g. `backs up myapp-prod first with profile predeploy (target server)`.
+    pub backup: Option<String>,
     pub apply: bool,
     pub pull: bool,
     pub recreate: bool,
@@ -49,6 +51,9 @@ pub fn print(ctx: &ServerCtx, plan: &AppPlan) -> Result<()> {
     };
     out!("Dry run: nothing is changed on the server.");
     out!("  instance {project} ({status})");
+    if let Some(backup) = &plan.backup {
+        out!("  {backup}");
+    }
 
     let sources = source_changes(ctx, &dir, plan.uploads, plan.diff)?;
     if sources.is_empty() {

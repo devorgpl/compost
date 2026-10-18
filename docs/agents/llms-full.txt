@@ -340,13 +340,14 @@ Set where backups go in `compost-server.yaml` and deploy it:
 ```yaml
 backup:
   target: server       # archives stay on the server, in ~/.compost-server/backups
+  profiles:
+    daily: {keep: 7}   # the shared apps and every app; the 7 newest archives of each are kept
 ```
 
 Then, e.g. from cron on your machine:
 
 ```sh
-compost app backup --all
-compost server backup
+compost backup run daily
 ```
 
 See [Backup and restore](Backup-and-Restore.md), also for moving to a new server.
@@ -732,13 +733,22 @@ compost app remove myapp-review --purge database --volumes --yes
 
 ## Nightly backups
 
-```sh
-# crontab on your machine
-30 2 * * *  compost -s prod app backup --all --target server
-45 2 * * *  compost -s prod server backup --target server
+```yaml
+# compost-server.yaml
+backup:
+  target: server
+  profiles:
+    daily:  {include: [links], keep: 7}     # databases only
+    weekly: {keep: 4}                       # links, sources and volumes
 ```
 
-`compost -s prod backup list` shows what's there.
+```sh
+# crontab on your machine
+30 2 * * 1-6  compost -s prod backup run daily
+30 2 * * 0    compost -s prod backup run weekly
+```
+
+Each run backs up the shared apps and every instance into their own archives on the server and deletes the oldest beyond `keep`. `compost -s prod backup list` shows what's there. See [Profiles](Backup-and-Restore.md#profiles).
 
 ## An app with its own database
 
@@ -1322,6 +1332,7 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 
 ```sh
 compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
+                   [--backup <profile> | --no-backup]
 ```
 
 `-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
@@ -1329,7 +1340,7 @@ compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--pr
 A deploy:
 
 1. validates the config and checks the compose file's service names (exit 2 on errors);
-2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken);
+2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken); with `--apply` and `deployment.backup` (or `--backup <profile>`), backs up the deployed instance with that [profile](Backup-and-Restore.md#before-a-deploy), and stops if the backup fails;
 3. uploads the sources: the whole folder with `build: true` or `attach_sources: true`, otherwise only the compose file. Left out: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and patterns in `.compostignore` (gitignore syntax);
 4. writes the override file and link records. **Without `--apply` it stops here.**
 5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
@@ -1360,6 +1371,8 @@ Dry run: nothing is changed on the server.
     worker   created
   records release 5
 ```
+
+With `deployment.backup`, a line after the instance's says which profile backs it up first.
 
 - **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
 - **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.
@@ -1946,6 +1959,7 @@ compost app backup myapp-prod --link main-db --format raw   # just the SQL dump
 compost app restore myapp-prod-….compost.tar.gz --prefix review -f review.yaml   # a copy of the app
 compost server backup                               # shared apps: data, config, secrets
 compost server restore prod-….compost.tar.gz          # onto a new server, then `app restore`
+compost backup run daily                            # a profile: shared apps and every instance, old archives deleted
 compost backup list                                 # archives on the server
 ```
 
@@ -1953,20 +1967,103 @@ Backups take the server's lock, so they never run during a deploy.
 
 ## Targets
 
-Where archives go: `--target` for backups, `--source` for restores. The default is `backup.target` in `compost-server.yaml`, else `local`.
+Where archives go: `--target` for backups, `--source` for restores and `backup list`. Without one, a backup goes to its [profile](#profiles)'s target, else the app's `backup.target` (in `compost.yaml`), else `backup.target` in `compost-server.yaml`, else `local`.
 
 | Target | Meaning |
 |---|---|
 | `local` | Streamed through the SSH connection to this machine and packed here. Nothing stays on the server. `-o` is a file or folder here. |
 | `server` | Packed on the server in its backup folder (`backup.server_path`, default `~/.compost-server/backups`). No data crosses the network. `-o` and restore archives are file names in that folder, or absolute paths. |
-| `s3` | Not implemented yet (exit 2). |
+| a name from `backup.targets` | A target you define. `type: server` is another folder on the server, e.g. a mounted disk; it works like `server`. |
 
 ```yaml
 # compost-server.yaml
 backup:
   target: server
   server_path: backups      # absolute, or relative to compost's folder on the server
+  targets:
+    nas: {type: server, path: /mnt/nas/compost}
 ```
+
+`app backup --all` without a profile writes one archive, to `--target` or the server's `backup.target`; an app's own `backup.target` applies to backups of that app alone and to profiles.
+
+## Profiles
+
+A profile names a kind of backup: what it saves, where it goes and how many archives of it to keep. Define them in `compost-server.yaml`, where they apply to the shared apps and every app:
+
+```yaml
+# compost-server.yaml
+backup:
+  target: server
+  profiles:
+    daily:     {include: [links], keep: 7}                      # databases only
+    weekly:    {include: [links, sources, volumes], keep: 4, target: nas}
+    predeploy: {keep: 3, server: false}                         # apps only; see below
+```
+
+```sh
+compost backup run daily                         # shared apps and every instance, one archive each
+compost app backup myapp-prod --profile weekly   # one instance
+compost app backup --all --profile weekly        # every instance, one archive each
+compost server backup --profile daily            # the shared apps
+compost app backup myapp-prod --profile weekly --target local   # flags override the profile
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `include` | `links,sources,volumes` | Parts of an app backup (as `--include`) |
+| `links` | all | Only these links (as `--link`) |
+| `format` | `compost` | As `--format` |
+| `target` | the app's, then the server's `backup.target` | Where the archives go |
+| `keep` | all | Archives kept per instance (and for the shared apps) at the target; older ones are deleted after each backup with the profile |
+| `server` | `true` | `compost-server.yaml` only: `false` leaves the shared apps out of `backup run` and refuses `server backup --profile` |
+
+An app changes a profile for itself, opts out of it or adds its own in `compost.yaml`. Its profiles also take the app's backup settings, `volumes`, `stop`, `before_backup` and `after_backup`, which replace the app's `backup` keys for that profile:
+
+```yaml
+# compost.yaml
+backup:
+  volumes: [uploads]
+  profiles:
+    weekly: {keep: 8}                     # the other keys come from the server's profile
+    daily: false                          # left out of `backup run daily`
+    anonymized:                           # this app's own profile
+      include: [volumes]
+      volumes: [anon-dumps]
+      format: raw
+      keep: 2
+      before_backup:
+        - run: anonymizer                 # dumps the database and anonymizes it into anon-dumps; `profiles: [backup]`
+                                          # in the compose file keeps `app deploy` from starting it
+```
+
+The keys of the app's profile win over the server's, and a key neither sets comes from the app's `backup` settings. Lists replace, they don't add up. The app's profiles take effect with its next `app deploy`, like its other backup settings.
+
+An archive of a profile is named `<instance>-<profile>-<time>`, or `<server>-<profile>-<time>` for the shared apps, and its manifest names the profile. Archives without a profile are never deleted by `keep`.
+
+`backup run` carries on when one instance fails, then exits with an error naming every failure.
+
+### Deleting old archives
+
+`keep` applies after each backup with the profile. To apply it to archives already there, or with another number:
+
+```sh
+compost backup prune                       # every profile with `keep`, at each profile's target
+compost backup prune --profile daily --keep 3 --target nas --yes
+```
+
+It lists what it deletes and asks unless `--yes`. With `--target local` it looks in the current folder.
+
+## Before a deploy
+
+`deployment.backup` names a profile that `app deploy --apply` runs before it changes an instance that is already deployed:
+
+```yaml
+# compost.yaml
+deployment:
+  backup: predeploy
+```
+
+The backup uses the deployed instance's data and links, with the profile as the config being deployed defines it. If it fails, the deploy stops before changing anything. `--backup <profile>` picks another profile for one deploy, `--no-backup` skips it, and `--dry-run` says which one would run. `app restore` and `app rollback` don't take this backup.
 
 ## Formats
 
@@ -2165,6 +2262,7 @@ deployment:
   build: false                         # true: `docker compose build` on the server; false: `pull`
   attach_sources: false                # upload the whole folder; forced true by build: true
   releases: 5                          # releases kept on the server for `app rollback`; 0 keeps none
+  backup: predeploy                    # backup profile run before `app deploy --apply` changes a deployed instance
 services:
   ingress: [ … ]                       # see Applications
   database: [ … ]
@@ -2182,6 +2280,10 @@ backup:
   after_backup: [ … ]
   before_restore: [ … ]
   after_restore: [ … ]
+  target: nas                          # where this app's backups go
+  profiles:                            # changes to the server's profiles, `false` to opt out, or the app's own
+    daily: false
+    anonymized: {include: [volumes], volumes: [anon-dumps], before_backup: [ … ]}
 ```
 
 ### `backup`
@@ -2192,6 +2294,8 @@ backup:
 | `stop` | none | Compose services stopped while the volumes are copied, or `true` for all; `--stop` stops all |
 | `before_backup`, `after_backup` | `[]` | Steps run before anything is saved and after it is saved |
 | `before_restore`, `after_restore` | `[]` | Steps run before data is loaded into a deployed instance and after it is loaded |
+| `target` | the server's `backup.target` | Target of this app's backups: `local`, `server` or a name from the server's `backup.targets`. A profile's target wins over it |
+| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
@@ -2293,9 +2397,16 @@ shared:
   monitoring:
     - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
 backup:
-  target: local                        # local | server | s3 (not implemented)
+  target: local                        # local | server | a name from targets
   server_path: backups                 # folder of the server target
+  targets:
+    nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
+  profiles:
+    daily: {include: [links], keep: 7, target: nas}
+    predeploy: {keep: 3, server: false}
 ```
+
+`profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
@@ -2408,7 +2519,7 @@ infra/
 ├── state.yaml                        status of shared apps and instances
 ├── lock/                             exists while a command changes the server
 ├── tmp/                              short-lived files, e.g. client credentials for external databases
-├── backups/                          archives of the `server` backup target
+├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`
 ├── shared/
@@ -2509,7 +2620,7 @@ Commands:
   disconnect  Forget the default server
   app         Deploy and inspect user applications
   connector   Inspect links between applications and shared apps
-  backup      Inspect backups
+  backup      Run backup profiles, list and prune backups
   secret      Store application secrets on the server for `app deploy`
   config      Set and show preferences, e.g. `deploy.apply`
   agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
@@ -2664,44 +2775,16 @@ Back up shared applications (data, configuration and secrets)
 Usage: compost server backup [OPTIONS]
 
 Options:
-  -s, --server <SERVER>
-          Target server (default: `COMPOST_SERVER`, then the current context)
-          
-          [env: COMPOST_SERVER=]
-
-      --shared <SHARED>
-          Only this shared app (repeatable or comma-separated)
-
-      --format <FORMAT>
-          `compost` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
-          
-          [default: compost]
-          [possible values: compost, raw]
-
-  -v, --verbose
-          Print every command run on the server
-
-  -o, --output <OUTPUT>
-          Output file or folder (with `--target server`: a file name in the server's backup folder)
-
-      --ssh-key-file <PATH>
-          SSH private key for this command, instead of the server's `identity_file`
-          
-          [env: COMPOST_SSH_KEY_FILE=]
-
-      --target <TARGET>
-          Where to write (default: `backup.target` of compost-server.yaml, else local)
-
-          Possible values:
-          - local:  This machine; data is streamed through the connector
-          - server: A folder on the server
-          - s3:     An S3 bucket (not implemented yet)
-
-      --force-unlock
-          Remove a lock left behind by an interrupted compost command
-
-  -h, --help
-          Print help (see a summary with '-h')
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --shared <SHARED>      Only this shared app (repeatable or comma-separated)
+      --profile <NAME>       Backup profile from `backup.profiles`: what to save, where, and how many archives to keep. The other options override it
+  -v, --verbose              Print every command run on the server
+      --format <FORMAT>      `compost` (restorable archive, the default) or `raw` (plain files: one as is, several as tar.gz) [possible values: compost, raw]
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -o, --output <OUTPUT>      Output file or folder (with a target on the server: a file name in its folder)
+      --target <TARGET>      Where to write: `local`, `server` or a name from `backup.targets` (default: the profile's, the app's `backup.target`, then the server's, else local)
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
 ```
 
 ## `compost server restore`
@@ -2712,42 +2795,17 @@ Restore shared applications from a server backup
 Usage: compost server restore [OPTIONS] <ARCHIVE>
 
 Arguments:
-  <ARCHIVE>
-          Archive written by `compost server backup` (with `--source server`: a file in the server's backup folder)
+  <ARCHIVE>  Archive written by `compost server backup` (with `--source server`: a file in the server's backup folder)
 
 Options:
-  -s, --server <SERVER>
-          Target server (default: `COMPOST_SERVER`, then the current context)
-          
-          [env: COMPOST_SERVER=]
-
-      --shared <SHARED>
-          Only this shared app (repeatable or comma-separated)
-
-      --source <SOURCE>
-          Where the archive is (default: `backup.target` of compost-server.yaml, else local)
-
-          Possible values:
-          - local:  This machine; data is streamed through the connector
-          - server: A folder on the server
-          - s3:     An S3 bucket (not implemented yet)
-
-  -v, --verbose
-          Print every command run on the server
-
-      --ssh-key-file <PATH>
-          SSH private key for this command, instead of the server's `identity_file`
-          
-          [env: COMPOST_SSH_KEY_FILE=]
-
-      --yes
-          Do not ask for confirmation
-
-      --force-unlock
-          Remove a lock left behind by an interrupted compost command
-
-  -h, --help
-          Print help (see a summary with '-h')
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --shared <SHARED>      Only this shared app (repeatable or comma-separated)
+      --source <TARGET>      Where the archive is: `local`, `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml, else local)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
 ```
 
 ## `compost server logs`
@@ -2884,6 +2942,8 @@ Options:
       --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
       --purge <PURGE>        Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
       --secret <FILE>        Overlay with secrets (e.g. .compost.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
+      --backup <PROFILE>     With --apply, back up the deployed instance with this profile first (default: `deployment.backup`); a failed backup stops the deploy
+      --no-backup            Skip the backup that `deployment.backup` takes before the deploy
   -h, --help                 Print help
 ```
 
@@ -3036,10 +3096,10 @@ Options:
           [env: COMPOST_SSH_KEY_FILE=]
 
       --all
-          Back up every instance on the server into one archive
+          Back up every instance on the server: into one archive, or with --profile one archive each
 
       --include <INCLUDE>
-          Parts to save (default: links,sources,volumes; only links with --link)
+          Parts to save (default: the profile's, else links,sources,volumes; only links with --link)
 
           Possible values:
           - links:   Data and configuration of links (database dumps, ingress sites)
@@ -3050,22 +3110,19 @@ Options:
       --link <LINK>
           Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
 
+      --profile <NAME>
+          Backup profile from `backup.profiles`: what to save, where, and how many archives to keep. The other options override it
+
       --format <FORMAT>
-          `compost` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
+          `compost` (restorable archive, the default) or `raw` (plain files: one as is, several as tar.gz)
           
-          [default: compost]
           [possible values: compost, raw]
 
   -o, --output <OUTPUT>
-          Output file or folder (with `--target server`: a file name in the server's backup folder)
+          Output file or folder (with a target on the server: a file name in its folder)
 
       --target <TARGET>
-          Where to write (default: `backup.target` of compost-server.yaml, else local)
-
-          Possible values:
-          - local:  This machine; data is streamed through the connector
-          - server: A folder on the server
-          - s3:     An S3 bucket (not implemented yet)
+          Where to write: `local`, `server` or a name from `backup.targets` (default: the profile's, the app's `backup.target`, then the server's, else local)
 
       --stop
           Stop every service while volumes are copied, for a consistent copy (default: those in `backup.stop`)
@@ -3126,13 +3183,8 @@ Options:
       --link <LINK>
           Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
 
-      --source <SOURCE>
-          Where the archive is (default: `backup.target` of compost-server.yaml, else local)
-
-          Possible values:
-          - local:  This machine; data is streamed through the connector
-          - server: A folder on the server
-          - s3:     An S3 bucket (not implemented yet)
+      --source <TARGET>
+          Where the archive is: `local`, `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml, else local)
 
       --replace
           Overwrite databases and volumes that already hold data
@@ -3226,18 +3278,56 @@ Options:
 ## `compost backup`
 
 ```text
-Inspect backups
+Run backup profiles, list and prune backups
 
 Usage: compost backup [OPTIONS] <COMMAND>
 
 Commands:
-  list  List the archives in the server's backup folder
-  help  Print this message or the help of the given subcommand(s)
+  run    Back up with a profile: the shared apps (when compost-server.yaml defines the profile) and every instance it applies to, each into its own archive
+  prune  Delete the archives of backup profiles beyond the number their `keep` sets
+  list   List the archives in the server's backup folder
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost backup run`
+
+```text
+Back up with a profile: the shared apps (when compost-server.yaml defines the profile) and every instance it applies to, each into its own archive
+
+Usage: compost backup run [OPTIONS] <PROFILE>
+
+Arguments:
+  <PROFILE>  Profile from `backup.profiles` of compost-server.yaml or compost.yaml
+
+Options:
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost backup prune`
+
+```text
+Delete the archives of backup profiles beyond the number their `keep` sets
+
+Usage: compost backup prune [OPTIONS]
+
+Options:
+      --profile <PROFILE>    Only this profile's archives (default: every profile)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --target <TARGET>      Look at this target instead of each profile's: `local` (the current folder), `server` or a name from `backup.targets`
+  -v, --verbose              Print every command run on the server
+      --keep <KEEP>          Keep this many archives of each instance and profile, instead of the profile's `keep`
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --yes                  Do not ask for confirmation
   -h, --help                 Print help
 ```
 
@@ -3249,29 +3339,11 @@ List the archives in the server's backup folder
 Usage: compost backup list [OPTIONS]
 
 Options:
-  -s, --server <SERVER>
-          Target server (default: `COMPOST_SERVER`, then the current context)
-          
-          [env: COMPOST_SERVER=]
-
-      --source <SOURCE>
-          Where backups are (default: `backup.target` of compost-server.yaml)
-
-          Possible values:
-          - local:  This machine; data is streamed through the connector
-          - server: A folder on the server
-          - s3:     An S3 bucket (not implemented yet)
-
-  -v, --verbose
-          Print every command run on the server
-
-      --ssh-key-file <PATH>
-          SSH private key for this command, instead of the server's `identity_file`
-          
-          [env: COMPOST_SSH_KEY_FILE=]
-
-  -h, --help
-          Print help (see a summary with '-h')
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --source <TARGET>      Where backups are: `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
 ```
 
 ## `compost secret`

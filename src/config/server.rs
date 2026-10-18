@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 use super::app::{AppConfig, link_name};
+use super::backup::{BUILTIN_TARGETS, Profile, check_target};
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared::{self, Kind, Monitored, Resolution, SharedAppConfig, SharedMonitoring};
@@ -123,31 +124,71 @@ fn without_unknown_apps(overlay: &mut Value, config: &Value) -> Vec<String> {
     removed
 }
 
-/// Where `backup` writes archives and `restore` reads them by default.
+/// Where `backup` writes archives and `restore` reads them by default, and
+/// the backup profiles.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupSettings {
-    #[serde(default)]
-    pub target: BackupTarget,
+    /// `local`, `server` or a name from `targets`. Default `local`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// Archive folder of the `server` target: absolute, or relative to
     /// `COMPOST_SERVER_HOME`. Default `backups`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_path: Option<String>,
-    /// Settings of the `s3` target (not implemented yet).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub s3: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub targets: BTreeMap<String, TargetConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, Profile>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum BackupTarget {
-    /// This machine; data is streamed through the connector.
-    #[default]
-    Local,
-    /// A folder on the server.
-    Server,
-    /// An S3 bucket (not implemented yet).
-    S3,
+/// A named backup target.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum TargetConfig {
+    /// Another folder on the server, e.g. a mounted disk.
+    Server {
+        /// Absolute, or relative to `COMPOST_SERVER_HOME`.
+        path: String,
+    },
+}
+
+impl BackupSettings {
+    fn validate(&self) -> Result<()> {
+        if let Some(path) = &self.server_path {
+            if path.trim().is_empty() {
+                return Err(config_err("backup.server_path must not be empty"));
+            }
+        }
+        for (name, target) in &self.targets {
+            let path = format!("backup.targets.{name}");
+            check_name("backup target name", name)?;
+            if BUILTIN_TARGETS.contains(&name.as_str()) {
+                return Err(config_err(format!(
+                    "{path}: `{name}` is a built-in target; choose another name"
+                )));
+            }
+            match target {
+                TargetConfig::Server { path: dir } if dir.trim().is_empty() => {
+                    return Err(config_err(format!("{path}.path must not be empty")));
+                }
+                TargetConfig::Server { .. } => {}
+            }
+        }
+        let names = self.target_names();
+        if let Some(target) = &self.target {
+            check_target("backup.target", target, &names)?;
+        }
+        for (name, profile) in &self.profiles {
+            profile.validate_server(name, &names)?;
+        }
+        Ok(())
+    }
+
+    /// Names of `targets`.
+    pub fn target_names(&self) -> Vec<&str> {
+        self.targets.keys().map(String::as_str).collect()
+    }
 }
 
 impl ServerConfig {
@@ -367,10 +408,8 @@ impl ServerConfig {
         }
         self.start_order()
             .map_err(|e| config_err(format!("{e:#}")))?;
-        if let Some(path) = self.backup.as_ref().and_then(|b| b.server_path.as_ref()) {
-            if path.trim().is_empty() {
-                return Err(config_err("backup.server_path must not be empty"));
-            }
+        if let Some(backup) = &self.backup {
+            backup.validate()?;
         }
         Ok(())
     }
@@ -482,9 +521,31 @@ shared:
     fn backup_settings() {
         let config = parse("backup: {target: server, server_path: /srv/backups}").unwrap();
         let backup = config.backup.unwrap();
-        assert_eq!(backup.target, BackupTarget::Server);
-        assert!(error("backup: {target: ftp}").contains("unknown variant `ftp`"));
+        assert_eq!(backup.target.as_deref(), Some("server"));
+        assert!(error("backup: {target: ftp}").contains("unknown backup target `ftp`"));
         assert!(error("backup: {server_path: ''}").contains("must not be empty"));
+
+        let config = parse(
+            "backup: {target: nas, targets: {nas: {type: server, path: /mnt/nas}}, \
+             profiles: {daily: {include: [links], keep: 7, target: nas}}}",
+        )
+        .unwrap();
+        let backup = config.backup.unwrap();
+        assert_eq!(
+            backup.targets["nas"],
+            TargetConfig::Server {
+                path: "/mnt/nas".into()
+            }
+        );
+        assert_eq!(backup.profiles["daily"].keep, Some(7));
+        assert!(error("backup: {targets: {server: {type: server, path: x}}}").contains("built-in"));
+        assert!(
+            error("backup: {targets: {x: {type: server, path: x, port: 1}}}")
+                .contains("unknown field `port`")
+        );
+        assert!(
+            error("backup: {profiles: {daily: {target: nas}}}").contains("unknown backup target")
+        );
     }
 
     #[test]

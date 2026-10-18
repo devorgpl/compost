@@ -11,10 +11,12 @@ use super::secrets as server_secrets;
 use super::state::{self, Status};
 use super::state_file::StateFile;
 use crate::app::{self, backup::output, instance, restore::open_archive};
+use crate::backup::profile::{self, Flags};
+use crate::backup::retention::{self, Store};
 use crate::backup::{
-    self, Backup, Format, ItemReader, ItemWriter, Manifest, Role, Scope, SharedRef,
+    self, Backup, Destination, ItemReader, ItemWriter, Manifest, Role, Scope, SharedRef,
 };
-use crate::config::server::{BackupTarget, ServerConfig};
+use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::error::{CompostError, config_err};
 use crate::shared::{self, ServerCtx, SharedAppConfig, connectors_dir};
@@ -27,15 +29,15 @@ const SECRETS_ITEM: &str = "server/secrets.yaml";
 pub struct BackupOptions {
     /// Only these shared apps (default: all).
     pub shared: Vec<String>,
-    pub format: Format,
-    pub target: Option<BackupTarget>,
+    /// `--profile`, `--format` and `--target`.
+    pub flags: Flags,
     pub output: Option<PathBuf>,
     pub force_unlock: bool,
 }
 
 pub struct RestoreOptions {
     pub archive: String,
-    pub source: Option<BackupTarget>,
+    pub source: Option<String>,
     /// Only these shared apps (default: all in the archive).
     pub shared: Vec<String>,
     pub yes: bool,
@@ -75,16 +77,24 @@ pub fn backup(
             "the server has no shared applications to back up",
         ));
     }
-    let output = output(&ctx, &config, options.target, options.output.as_ref())?;
+    let flags = &options.flags;
+    let run = profile::server_run(config.backup.as_ref(), flags)
+        .ok_or_else(|| profile::not_for_server(flags.profile.as_deref().unwrap_or_default()))?;
+    let output = output(
+        &ctx,
+        &config,
+        run.target.as_deref(),
+        options.output.as_ref(),
+    )?;
 
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
-    let mut backup = Backup::new(
-        connector,
-        options.format,
-        Manifest::new(Scope::Server, server_name),
-        output,
-    )?;
-    out!("Backing up {server_name}:");
+    let mut manifest = Manifest::new(Scope::Server, server_name);
+    manifest.profile = flags.profile.clone();
+    let mut backup = Backup::new(connector, run.format, manifest, output)?;
+    match &flags.profile {
+        Some(profile) => out!("Backing up {server_name} (profile {profile}):"),
+        None => out!("Backing up {server_name}:"),
+    }
     let stored = ctx
         .read(super::SERVER_CONFIG_FILE)?
         .context("the server has no compost-server.yaml")?;
@@ -133,15 +143,22 @@ pub fn backup(
             .with_context(|| format!("{kind_name} {}", app.name))?;
     }
 
-    let stem = match selected.as_slice() {
-        [(_, one)] if !options.shared.is_empty() => {
-            format!("{server_name}-{}-{}", one.name, backup::timestamp())
-        }
-        _ => format!("{server_name}-{}", backup::timestamp()),
+    // A profile's archives hold every shared app: retention compares them by name.
+    let owner = match selected.as_slice() {
+        [(_, one)] if !options.shared.is_empty() => format!("{server_name}-{}", one.name),
+        _ => server_name.to_string(),
+    };
+    let stem = match &flags.profile {
+        Some(profile) => format!("{owner}-{profile}-{}", backup::timestamp()),
+        None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
     out!("Backup written to {location}");
     out!("It holds secrets (passwords of the shared apps and their links): keep it safe.");
+    if let (Some(profile), Some(keep), true) = (&flags.profile, run.keep, options.shared.is_empty())
+    {
+        retention::apply(&location.store(connector), &owner, profile, keep)?;
+    }
     Ok(())
 }
 
@@ -164,7 +181,7 @@ pub fn restore(
     };
     let ctx = ServerCtx { connector, home };
     let current = instance::server_config(&ctx)?;
-    let archive = open_archive(&ctx, &current, options.source, &options.archive)?;
+    let archive = open_archive(&ctx, &current, options.source.as_deref(), &options.archive)?;
     if archive.manifest.scope != Scope::Server {
         return Err(config_err(format!(
             "{} is an application backup; restore it with `compost app restore`",
@@ -364,42 +381,236 @@ fn restore_records(
     archive.feed(CONNECTORS_ITEM, b"", &script)
 }
 
-/// `compost backup list`: archives in the server's backup folder.
+/// `compost backup list`: archives at the server's backup folder or another target there.
 pub fn list(
     connector: &dyn Connector,
     server_home: &str,
     manager_key: &str,
-    source: Option<BackupTarget>,
+    source: Option<&str>,
+) -> Result<()> {
+    let ctx = app::state::initialized_server(connector, server_home, manager_key)?;
+    let config = instance::server_config(&ctx)?;
+    let Destination::Server { dir } = backup::resolve_target(&ctx, config.backup.as_ref(), source)?
+    else {
+        return Err(config_err(
+            "backups go to this machine (target local); pass --source server (or a named target) to list a backup folder on the server",
+        ));
+    };
+    let store = Store::Server { connector, dir };
+    let rows = store.list()?;
+    if rows.is_empty() {
+        out!("No backups in {store}");
+        return Ok(());
+    }
+    out!("{store}:");
+    let width = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+    for (name, size) in rows {
+        out!("  {name:<width$}  {}", backup::human_size(size));
+    }
+    Ok(())
+}
+
+/// `compost backup run`: back up the shared apps (when the server defines the
+/// profile for them) and every instance the profile applies to, each into its
+/// own archive. Carries on after a failure and reports all of them.
+pub fn run_profile(
+    connector: &dyn Connector,
+    server_name: &str,
+    server_home: &str,
+    manager_key: &str,
+    profile: &str,
+    force_unlock: bool,
 ) -> Result<()> {
     let ctx = app::state::initialized_server(connector, server_home, manager_key)?;
     let config = instance::server_config(&ctx)?;
     let settings = config.backup.as_ref();
-    if backup::resolve_target(source, settings)? != BackupTarget::Server {
-        return Err(config_err(
-            "backups go to this machine (target local); pass --source server to list the server's backup folder",
-        ));
+    let records = StateFile::load(&ctx)?.apps;
+    let mut apps = Vec::new();
+    for record in &records {
+        if let Some(found) = instance::load(&ctx, &record.name, &record.prefix)? {
+            apps.push(found.app);
+        }
     }
-    let dir = backup::server_dir(&ctx, settings);
-    let listing = connector.exec(&format!(
-        "cd {} 2>/dev/null || exit 0; for f in *; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"$(wc -c < \"$f\")\" \"$f\"; done; true",
-        shell_quote(&dir)
-    ))?;
-    let mut rows: Vec<(u64, &str)> = listing
-        .lines()
-        .filter_map(|line| {
-            let (size, name) = line.split_once('\t')?;
-            Some((size.trim().parse().ok()?, name))
-        })
+    let app_refs: Vec<_> = apps.iter().collect();
+    if !profile::defined(settings, &app_refs, profile) {
+        return Err(profile::unknown_profile(profile));
+    }
+    let flags = Flags {
+        profile: Some(profile.to_string()),
+        ..Flags::default()
+    };
+
+    let mut failed = Vec::new();
+    let server_applies = profile::server_run(settings, &flags).is_some()
+        && settings.is_some_and(|s| s.profiles.contains_key(profile))
+        && config.shared_apps().next().is_some();
+    if server_applies {
+        let options = BackupOptions {
+            shared: Vec::new(),
+            flags: flags.clone(),
+            output: None,
+            force_unlock,
+        };
+        if let Err(err) = backup(connector, server_name, server_home, manager_key, &options) {
+            eprintln!("error: shared apps: {err:#}");
+            failed.push("the shared apps".to_string());
+        }
+    }
+    if !records.is_empty() {
+        let options = app::backup::Options {
+            flags,
+            output: None,
+            stop: false,
+            force_unlock,
+        };
+        let which = app::backup::Which::All;
+        if let Err(err) = app::backup::backup(
+            connector,
+            server_name,
+            server_home,
+            manager_key,
+            &which,
+            &options,
+        ) {
+            eprintln!("error: {err:#}");
+            failed.push("applications".to_string());
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "backup run {profile} failed for {}",
+            failed.join(" and ")
+        ))
+    }
+}
+
+pub struct PruneOptions {
+    /// Only this profile's archives (default: every profile with `keep`).
+    pub profile: Option<String>,
+    /// Look at this target instead of each profile's.
+    pub target: Option<String>,
+    /// Keep this many instead of each profile's `keep`.
+    pub keep: Option<u32>,
+    pub yes: bool,
+}
+
+/// `compost backup prune`: delete the archives of profiles beyond their `keep`.
+pub fn prune(
+    connector: &dyn Connector,
+    server_name: &str,
+    server_home: &str,
+    manager_key: &str,
+    options: &PruneOptions,
+) -> Result<()> {
+    let ctx = app::state::initialized_server(connector, server_home, manager_key)?;
+    let config = instance::server_config(&ctx)?;
+    let settings = config.backup.as_ref();
+    let mut apps = Vec::new();
+    for record in StateFile::load(&ctx)?.apps {
+        if let Some(found) = instance::load(&ctx, &record.name, &record.prefix)? {
+            apps.push(found.app);
+        }
+    }
+    let empty = std::collections::BTreeMap::new();
+    let server_profiles = settings.map_or(&empty, |s| &s.profiles);
+    let mut names: Vec<&str> = server_profiles
+        .keys()
+        .chain(apps.iter().flat_map(|a| a.backup.profiles.keys()))
+        .map(String::as_str)
         .collect();
-    if rows.is_empty() {
-        out!("No backups in {dir}");
+    names.sort_unstable();
+    names.dedup();
+    if let Some(profile) = &options.profile {
+        if !names.contains(&profile.as_str()) {
+            return Err(profile::unknown_profile(profile));
+        }
+        names.retain(|name| name == profile);
+    }
+
+    // (target, owner, profile, keep) of every owner's archives that have a `keep`.
+    let mut groups: Vec<(Option<String>, String, &str, u32)> = Vec::new();
+    for name in names {
+        let flags = Flags {
+            profile: Some(name.to_string()),
+            ..Flags::default()
+        };
+        if server_profiles.contains_key(name) {
+            if let Some(run) = profile::server_run(settings, &flags) {
+                if let Some(keep) = options.keep.or(run.keep) {
+                    let target = options.target.clone().or(run.target);
+                    groups.push((target, server_name.to_string(), name, keep));
+                }
+            }
+        }
+        for app_config in &apps {
+            if let Some(run) = profile::app_run(settings, app_config, &flags) {
+                if let Some(keep) = options.keep.or(run.keep) {
+                    let target = options.target.clone().or(run.target);
+                    groups.push((target, app_config.instance(), name, keep));
+                }
+            }
+        }
+    }
+    if groups.is_empty() {
+        out!("No profile sets `keep` (pass --keep to choose how many to keep)");
         return Ok(());
     }
-    rows.sort_by(|a, b| a.1.cmp(b.1));
-    out!("{dir}:");
-    let width = rows.iter().map(|(_, n)| n.len()).max().unwrap_or(0);
-    for (size, name) in rows {
-        out!("  {name:<width$}  {}", backup::human_size(size));
+
+    // List each folder once.
+    let mut stores: Vec<(Store, Vec<(String, u64)>)> = Vec::new();
+    let mut doomed: Vec<(usize, String, u64)> = Vec::new();
+    for (target, owner, name, keep) in &groups {
+        let store = match backup::resolve_target(&ctx, settings, target.as_deref())? {
+            Destination::Server { dir } => Store::Server { connector, dir },
+            Destination::Local => Store::Local(PathBuf::from(".")),
+        };
+        let index = match stores
+            .iter()
+            .position(|(s, _)| s.to_string() == store.to_string())
+        {
+            Some(index) => index,
+            None => {
+                let rows = store.list()?;
+                stores.push((store, rows));
+                stores.len() - 1
+            }
+        };
+        let rows = &stores[index].1;
+        let prefix = retention::prefix(owner, name);
+        for expired in retention::expired(rows.iter().map(|(n, _)| n.as_str()), &prefix, *keep) {
+            let size = rows
+                .iter()
+                .find(|(n, _)| n == expired)
+                .map_or(0, |(_, s)| *s);
+            doomed.push((index, expired.to_string(), size));
+        }
+    }
+    doomed.sort();
+    doomed.dedup();
+    if doomed.is_empty() {
+        out!("Nothing to delete: no profile has more archives than it keeps.");
+        return Ok(());
+    }
+    let mut last = None;
+    for (index, name, size) in &doomed {
+        if last != Some(*index) {
+            out!("{}:", stores[*index].0);
+            last = Some(*index);
+        }
+        out!("  delete {name}  {}", backup::human_size(*size));
+    }
+    if !options.yes && !app::confirm()? {
+        out!("Cancelled.");
+        return Ok(());
+    }
+    for (index, name, _) in &doomed {
+        stores[*index].0.delete(name)?;
+    }
+    match doomed.len() {
+        1 => out!("Deleted 1 archive."),
+        n => out!("Deleted {n} archives."),
     }
     Ok(())
 }

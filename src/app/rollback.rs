@@ -146,6 +146,7 @@ pub fn rollback(
         purge: Vec::new(),
         secrets: None,
         pinned: Some(target),
+        backup: None,
     };
     deploy::deploy(
         connector,

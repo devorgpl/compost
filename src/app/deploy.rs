@@ -12,6 +12,7 @@ use super::release::{self, Release};
 use super::restore::RestorePlan;
 use super::secrets::{self, Overlay};
 use super::sources;
+use crate::backup::profile::{self, AppRun, Flags};
 use crate::config::app::{AppConfig, LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
@@ -46,6 +47,42 @@ pub struct Options<'a> {
     pub secrets: Option<&'a Overlay>,
     /// Start the images of this release instead of pulling or building (`app rollback`).
     pub pinned: Option<&'a Release>,
+    /// Back up the deployed instance before changing it (`deployment.backup`).
+    pub backup: Option<PreDeployBackup<'a>>,
+}
+
+/// A backup that `--apply` takes before it changes a deployed instance.
+pub struct PreDeployBackup<'a> {
+    /// The server's name, for archive names.
+    pub server_name: &'a str,
+    pub profile: &'a str,
+}
+
+/// The deployed instance and the settings of the backup before the deploy;
+/// `None` for an instance that isn't deployed yet. The profile is the one the
+/// config being deployed defines.
+fn pre_deploy_backup(
+    ctx: &ServerCtx,
+    app: &AppConfig,
+    profile: &str,
+) -> Result<Option<(Instance, AppRun, ServerConfig)>> {
+    let Some(deployed) = instance::load(ctx, &app.name, &app.prefix)? else {
+        return Ok(None);
+    };
+    let server_config = instance::server_config(ctx)?;
+    let settings = server_config.backup.as_ref();
+    let flags = Flags {
+        profile: Some(profile.to_string()),
+        ..Flags::default()
+    };
+    let run = profile::app_run(settings, app, &flags).ok_or_else(|| {
+        if profile::defined(settings, &[app], profile) {
+            profile::not_for_app(profile, &app.instance())
+        } else {
+            profile::unknown_profile(profile)
+        }
+    })?;
+    Ok(Some((deployed, run, server_config)))
 }
 
 /// A link of the app, resolved to a shared app on the server.
@@ -120,20 +157,49 @@ pub fn deploy(
     let files = sources::collect(loaded, config_files)?;
 
     let project = app.instance();
+    let backup = match (&options.backup, options.apply) {
+        (Some(backup), true) => pre_deploy_backup(&ctx, app, backup.profile)?
+            .map(|(deployed, run, server_config)| (backup, deployed, run, server_config)),
+        _ => None,
+    };
     if options.dry_run {
-        return dry_run(
-            &ctx,
-            loaded,
-            &links,
-            &pinned_links,
-            &dropped,
-            &files,
-            options,
-        );
+        let backup = backup.map(|(backup, _, run, server_config)| {
+            let target = run
+                .target
+                .or_else(|| server_config.backup.and_then(|b| b.target))
+                .unwrap_or_else(|| "local".into());
+            format!(
+                "backs up {project} first with profile {} (target {target})",
+                backup.profile
+            )
+        });
+        let plan = DryRunInput {
+            links: &links,
+            pinned_links: &pinned_links,
+            dropped: &dropped,
+            uploads: &files,
+            backup,
+        };
+        return dry_run(&ctx, loaded, &plan, options);
     }
 
     // 2. Upload and render.
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
+    if let Some((backup, deployed, run, server_config)) = &backup {
+        let written = super::backup::write_one(
+            &ctx,
+            server_config,
+            backup.server_name,
+            deployed,
+            run,
+            Some(backup.profile),
+            None,
+            false,
+        );
+        written.context(
+            "the backup before the deploy failed; nothing was changed (--no-backup skips it)",
+        )?;
+    }
     // Read under the lock: a command that finished since the preflight may have
     // changed it, and saving an older copy would undo its changes.
     let mut state_file = StateFile::load(&ctx)?;
@@ -253,15 +319,29 @@ fn render_override(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Resul
 
 /// `--dry-run`: render as a deploy would, through a connector that keeps the
 /// writes in memory, and compare the result with the server.
+/// What `deploy` worked out before the dry run starts.
+struct DryRunInput<'a> {
+    links: &'a [Link<'a>],
+    pinned_links: &'a [PinnedLink],
+    dropped: &'a [PinnedLink],
+    uploads: &'a [sources::Upload],
+    /// The line about the backup before the deploy, if one would run.
+    backup: Option<String>,
+}
+
 fn dry_run(
     ctx: &ServerCtx,
     loaded: &LoadedApp,
-    links: &[Link],
-    pinned_links: &[PinnedLink],
-    dropped: &[PinnedLink],
-    uploads: &[sources::Upload],
+    input: &DryRunInput,
     options: &Options,
 ) -> Result<()> {
+    let DryRunInput {
+        links,
+        pinned_links,
+        dropped,
+        uploads,
+        ..
+    } = *input;
     let app = &loaded.config;
     let dry = DryRun::new(ctx.connector);
     let dry_ctx = ServerCtx {
@@ -341,6 +421,7 @@ fn dry_run(
                 )
             })
             .collect(),
+        backup: input.backup.clone(),
         apply: options.apply,
         pull: options.pull,
         recreate: options.recreate,

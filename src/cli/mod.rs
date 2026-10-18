@@ -15,8 +15,8 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
 use crate::backup::Format;
+use crate::backup::profile::Flags;
 use crate::config::local::{CompostHome, ServerEntry};
-use crate::config::server::BackupTarget;
 use crate::connector::ConnectOptions;
 use crate::error::config_err;
 
@@ -60,7 +60,7 @@ pub enum Command {
     /// Inspect links between applications and shared apps
     #[command(subcommand)]
     Connector(ConnectorCommand),
-    /// Inspect backups
+    /// Run backup profiles, list and prune backups
     #[command(subcommand)]
     Backup(BackupCommand),
     /// Store application secrets on the server for `app deploy`
@@ -96,11 +96,36 @@ pub enum ServerCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum BackupCommand {
+    /// Back up with a profile: the shared apps (when compost-server.yaml defines the
+    /// profile) and every instance it applies to, each into its own archive
+    Run {
+        /// Profile from `backup.profiles` of compost-server.yaml or compost.yaml
+        profile: String,
+        /// Remove a lock left behind by an interrupted compost command
+        #[arg(long)]
+        force_unlock: bool,
+    },
+    /// Delete the archives of backup profiles beyond the number their `keep` sets
+    Prune {
+        /// Only this profile's archives (default: every profile)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Look at this target instead of each profile's: `local` (the current folder),
+        /// `server` or a name from `backup.targets`
+        #[arg(long, value_name = "TARGET")]
+        target: Option<String>,
+        /// Keep this many archives of each instance and profile, instead of the profile's `keep`
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        keep: Option<u32>,
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
     /// List the archives in the server's backup folder
     List {
-        /// Where backups are (default: `backup.target` of compost-server.yaml)
-        #[arg(long, value_enum)]
-        source: Option<BackupTarget>,
+        /// Where backups are: `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml)
+        #[arg(long, value_name = "TARGET")]
+        source: Option<String>,
     },
 }
 
@@ -188,15 +213,40 @@ impl DeployArgs {
 /// Where and how a backup is written.
 #[derive(Debug, Args)]
 pub struct BackupOutputArgs {
-    /// `compost` (restorable archive) or `raw` (plain files: one as is, several as tar.gz)
-    #[arg(long, value_enum, default_value_t = Format::Compost)]
-    pub format: Format,
-    /// Output file or folder (with `--target server`: a file name in the server's backup folder)
+    /// Backup profile from `backup.profiles`: what to save, where, and how many archives to keep.
+    /// The other options override it
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+    /// `compost` (restorable archive, the default) or `raw` (plain files: one as is, several as tar.gz)
+    #[arg(long, value_enum)]
+    pub format: Option<Format>,
+    /// Output file or folder (with a target on the server: a file name in its folder)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
-    /// Where to write (default: `backup.target` of compost-server.yaml, else local)
-    #[arg(long, value_enum)]
-    pub target: Option<BackupTarget>,
+    /// Where to write: `local`, `server` or a name from `backup.targets`
+    /// (default: the profile's, the app's `backup.target`, then the server's, else local)
+    #[arg(long, value_name = "TARGET")]
+    pub target: Option<String>,
+}
+
+impl BackupOutputArgs {
+    /// The flags that override a profile; `include` and `links` are `app backup`'s.
+    pub fn flags(
+        &self,
+        include: Vec<crate::backup::Component>,
+        links: Vec<String>,
+    ) -> Result<Flags> {
+        if let Some(profile) = &self.profile {
+            crate::config::check_name("backup profile", profile)?;
+        }
+        Ok(Flags {
+            profile: self.profile.clone(),
+            include,
+            links,
+            format: self.format,
+            target: self.target.clone(),
+        })
+    }
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -231,8 +281,26 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::Restore(args)) => {
             server::restore(&home, server, args, &connect)
         }
+        Command::Backup(BackupCommand::Run {
+            profile,
+            force_unlock,
+        }) => server::backup_run(&home, server, &profile, force_unlock, &connect),
+        Command::Backup(BackupCommand::Prune {
+            profile,
+            target,
+            keep,
+            yes,
+        }) => {
+            let options = crate::server::backup::PruneOptions {
+                profile,
+                target,
+                keep,
+                yes,
+            };
+            server::backup_prune(&home, server, &options, &connect)
+        }
         Command::Backup(BackupCommand::List { source }) => {
-            server::backup_list(&home, server, source, &connect)
+            server::backup_list(&home, server, source.as_deref(), &connect)
         }
     }
 }
