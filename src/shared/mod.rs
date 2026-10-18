@@ -7,6 +7,7 @@
 pub mod communication;
 pub mod database;
 pub mod ingress;
+pub mod keyvalue;
 pub mod monitoring;
 pub mod oidc;
 
@@ -499,6 +500,7 @@ static KINDS: &[&dyn Kind] = &[
     &communication::CommunicationKind,
     &database::DatabaseKind,
     &ingress::IngressKind,
+    &keyvalue::KeyValueKind,
     &monitoring::MonitoringKind,
     &oidc::OidcKind,
 ];

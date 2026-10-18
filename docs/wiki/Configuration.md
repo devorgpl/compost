@@ -109,6 +109,17 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `db_name`, `db_user` | `<app>_<prefix>_<entry>` | Overlay. `^[a-z_][a-z0-9_]{0,62}$` |
 | `db_password` | generated | Overlay, secret. Required for an external database without root credentials |
 
+### `services.keyvalue[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name |
+| `type` | required | `valkey` or `redis` |
+| `version` | `"*"` | Requirement on the major version |
+| `instance` | – | Pin a shared app by name |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `kv_host`, `kv_port`, `kv_user`, `kv_password`, `kv_db`, `kv_prefix`, `kv_url` |
+
 ### `services.oidc[]`
 
 | Key | Default | Meaning |
@@ -172,6 +183,8 @@ shared:
     - {name: postgres18, type: postgres, version: 18, image: postgres:18-alpine}
     - {name: shop-db, type: postgres, version: 16, external: {host: db, network: shop_default}}
     - {name: mariadb11, type: mariadb, version: 11}
+  keyvalue:
+    - {name: valkey, type: valkey, version: 9}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:

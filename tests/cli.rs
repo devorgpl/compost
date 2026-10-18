@@ -172,7 +172,8 @@ case "$*" in
   "compose "*" exec "*"pg_dumpall"*)
     [ -z "$FAKE_BACKUP_FAIL" ] || { echo "pg_dumpall: connection refused" >&2; exit 1; }
     cat >> "$FAKE_DOCKER_LOG" ;;
-  "compose "*" exec "*" -N -B'") cat >> "$FAKE_DOCKER_LOG"; echo "${FAKE_TABLES:-0}" ;;
+  "compose "*" exec "*" -N -B") cat >> "$FAKE_DOCKER_LOG"; echo "${FAKE_TABLES:-0}" ;;
+  "compose "*" exec "*" ACL LOAD") echo OK ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
@@ -3128,6 +3129,14 @@ fn mariadb_links_get_a_database_and_user() {
     let log = server.take_docker_log();
     assert!(log.contains("exec mariadb-dump -uroot --single-transaction --routines --triggers --no-tablespaces shop_production_customer_orders"), "{log}");
 
+    // An empty database loads without --replace.
+    server
+        .run(
+            &["app", "restore", "b.tar.gz", "--include", "links", "--yes"],
+            &running,
+        )
+        .success()
+        .stdout(contains("loading database shop_production_customer_orders"));
     server
         .run(
             &["app", "restore", "b.tar.gz", "--include", "links", "--yes"],
@@ -3174,6 +3183,83 @@ fn mariadb_links_get_a_database_and_user() {
             .take_docker_log()
             .contains("DROP USER IF EXISTS 'shop_production_customer_orders'@'%'")
     );
+}
+
+#[test]
+fn keyvalue_links_get_their_own_valkey_database() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  keyvalue:\n    - {name: valkey, type: valkey, configuration: {password: rootpw}}\n",
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    let dir = server.server_home.join("shared/keyvalue/valkey");
+    let compose = fs::read_to_string(dir.join("compose.yaml")).unwrap();
+    assert!(compose.contains("image: valkey/valkey:9"), "{compose}");
+    let conf = fs::read_to_string(dir.join("conf/server.conf")).unwrap();
+    assert!(
+        conf.contains("appendonly yes") && conf.contains("databases 256"),
+        "{conf}"
+    );
+    server.take_docker_log();
+
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nprefix: prod\napp_services: [{name: backend, service: backend}]\n\
+         services:\n  keyvalue:\n    - {name: cache, type: valkey, targets: [backend], environment: {CACHE_URL: kv_url}}\n",
+    );
+    server.write_work_file("app/docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "keyvalue   cache            valkey: database 1, user shop-prod-cache",
+        ));
+    let acl = fs::read_to_string(dir.join("conf/users.acl")).unwrap();
+    assert!(acl.contains("user shop-prod-cache on #"), "{acl}");
+    assert!(acl.ends_with("-@admin -flushall -swapdb db=1\n"), "{acl}");
+    assert!(!acl.contains("rootpw"), "only hashes: {acl}");
+    let override_file = fs::read_to_string(
+        server
+            .server_home
+            .join("apps/shop/prod/compose/compost.override.yaml"),
+    )
+    .unwrap();
+    assert!(
+        override_file.contains("CACHE_URL: redis://shop-prod-cache:"),
+        "{override_file}"
+    );
+    assert!(override_file.contains("@valkey:6379/1"), "{override_file}");
+    assert!(
+        override_file.contains("compost-kv-valkey"),
+        "{override_file}"
+    );
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("REDISCLI_AUTH=\"$KV_PASSWORD\" exec valkey-cli --no-auth-warning ACL LOAD"),
+        "{log}"
+    );
+    assert!(!log.contains("rootpw"), "{log}");
+
+    server
+        .run(
+            &["app", "remove", "shop-prod", "--purge", "keyvalue", "--yes"],
+            &running,
+        )
+        .success();
+    assert!(
+        server
+            .take_docker_log()
+            .contains("valkey-cli --no-auth-warning -n 1 FLUSHDB")
+    );
+    let acl = fs::read_to_string(dir.join("conf/users.acl")).unwrap();
+    assert!(!acl.contains("shop-prod-cache"), "{acl}");
 }
 
 #[test]

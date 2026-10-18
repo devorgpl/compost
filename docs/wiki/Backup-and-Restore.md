@@ -206,7 +206,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 
 | Part | Saved |
 |---|---|
-| `links` | Database dumps (`pg_dump`, plain SQL); ingress and monitoring records and site files, for reference. Collected logs and metrics are not part of an app backup |
+| `links` | Database dumps (plain SQL); ingress, monitoring and key-value records and site files, for reference. Collected logs and metrics and key-value data are not part of an app backup |
 | `sources` | The uploaded sources (only the compose file when the folder isn't uploaded) |
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |

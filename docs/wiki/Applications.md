@@ -158,6 +158,36 @@ In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults 
       db_password: …           # in the overlay
 ```
 
+## Key-value links
+
+A key-value link gives services a Valkey or Redis server of their own to use, e.g. as a cache, for sessions or for job queues:
+
+```yaml
+services:
+  keyvalue:
+    - name: cache
+      type: valkey             # or redis
+      version: "*"             # requirement on the major version
+      instance: valkey         # optional: this shared app, when several match
+      targets: [backend, worker]
+      environment:
+        REDIS_URL: kv_url
+```
+
+| Link value | Example |
+|---|---|
+| `kv_host` | `valkey` |
+| `kv_port` | `6379` |
+| `kv_user` | `myapp-staging-cache` |
+| `kv_password` | generated on the first deploy, then kept |
+| `kv_db` | `3` on Valkey; `0` on Redis |
+| `kv_prefix` | `myapp-staging-cache:` on Redis; empty on Valkey |
+| `kv_url` | `redis://myapp-staging-cache:…@valkey:6379/3` |
+
+**Valkey** gives every link its own logical database and a user locked to it: the app can't read, change or flush another app's keys, and needs no changes. **Redis** has no such lock, so every link gets a user limited to the key prefix `kv_prefix`, and **the app must put that prefix in front of its keys**: most libraries have a setting for it (e.g. `prefix` in ioredis, Laravel's `REDIS_PREFIX`, `key_prefix` in Django's cache). Commands that see every key (`KEYS`, `FLUSHDB`, `FLUSHALL`) are refused there. Use Valkey when an app can't set a prefix.
+
+`--purge keyvalue` on `app remove` (or for a dropped link) deletes the link's keys; otherwise they stay. App backups don't save them: a cache comes back by itself, and a server backup holds everything.
+
 ## OIDC links
 
 An OIDC link creates a realm, a client and optionally users in a Keycloak, and passes the client settings to services:

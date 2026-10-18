@@ -23,7 +23,7 @@ Candidate features, taken from what similar tools offer (Kamal, Uncloud, Coolify
 
 ## Nice to have
 
-9. **In progress.** Done: `mariadb` and `mysql` database types. Next: a `keyvalue` kind (Valkey, Redis), then a `storage` kind (Garage, external S3). Dropped: MinIO (community edition source-only since October 2025, archived April 2026) and OpenIO (off the market since OVHcloud bought it in 2020); RustFS (1.0 in September 2026) and SeaweedFS are candidates for the storage kind later.
+9. **In progress.** Done: `mariadb` and `mysql` database types; a `keyvalue` kind (`valkey` with a database per app, `redis` with a key prefix per app). Next: a `storage` kind (Garage, external S3). Dropped: MinIO (community edition source-only since October 2025, archived April 2026) and OpenIO (off the market since OVHcloud bought it in 2020); RustFS (1.0 in September 2026) and SeaweedFS are candidates for the storage kind later.
    **More shared app types:** Redis/Valkey, MySQL/MariaDB, S3-compatible storage (Garage, MinIO), an SMTP relay. Coolify's many one-click services are its main draw, and the link model (a database or user per instance) works the same way for these.
 10. **`server bootstrap`:** install Docker and create `compostuser` over SSH, as Kamal and Uncloud do. Today Docker is a requirement users install themselves.
 11. **Done:** `server prune [--dry-run] [--yes]` shows disk usage (disk, `docker system df`, backups and releases) and removes unused tagged images, dangling images and the build cache, keeping release images.

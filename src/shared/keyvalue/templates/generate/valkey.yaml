@@ -1,0 +1,4 @@
+    # Valkey: a Redis-compatible key-value store; each linked app gets its own database.
+    - name: valkey
+      type: valkey
+      version: 9

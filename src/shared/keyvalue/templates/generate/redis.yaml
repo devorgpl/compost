@@ -1,0 +1,4 @@
+    # Redis; each linked app gets a user limited to its own key prefix.
+    - name: redis
+      type: redis
+      version: 8

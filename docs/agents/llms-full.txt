@@ -38,7 +38,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `valkey` and `redis` (kind `keyvalue`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
@@ -1295,6 +1295,36 @@ In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults 
       db_password: …           # in the overlay
 ```
 
+## Key-value links
+
+A key-value link gives services a Valkey or Redis server of their own to use, e.g. as a cache, for sessions or for job queues:
+
+```yaml
+services:
+  keyvalue:
+    - name: cache
+      type: valkey             # or redis
+      version: "*"             # requirement on the major version
+      instance: valkey         # optional: this shared app, when several match
+      targets: [backend, worker]
+      environment:
+        REDIS_URL: kv_url
+```
+
+| Link value | Example |
+|---|---|
+| `kv_host` | `valkey` |
+| `kv_port` | `6379` |
+| `kv_user` | `myapp-staging-cache` |
+| `kv_password` | generated on the first deploy, then kept |
+| `kv_db` | `3` on Valkey; `0` on Redis |
+| `kv_prefix` | `myapp-staging-cache:` on Redis; empty on Valkey |
+| `kv_url` | `redis://myapp-staging-cache:…@valkey:6379/3` |
+
+**Valkey** gives every link its own logical database and a user locked to it: the app can't read, change or flush another app's keys, and needs no changes. **Redis** has no such lock, so every link gets a user limited to the key prefix `kv_prefix`, and **the app must put that prefix in front of its keys**: most libraries have a setting for it (e.g. `prefix` in ioredis, Laravel's `REDIS_PREFIX`, `key_prefix` in Django's cache). Commands that see every key (`KEYS`, `FLUSHDB`, `FLUSHALL`) are refused there. Use Valkey when an app can't set a prefix.
+
+`--purge keyvalue` on `app remove` (or for a dropped link) deletes the link's keys; otherwise they stay. App backups don't save them: a cache comes back by itself, and a server backup holds everything.
+
 ## OIDC links
 
 An OIDC link creates a realm, a client and optionally users in a Keycloak, and passes the client settings to services:
@@ -1584,7 +1614,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -1763,6 +1793,34 @@ shared:
 Like Postgres, it is reached only on `compost-db-<name>`, at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
 
 Backups use `mariadb-dump` / `mysqldump` with `--single-transaction`, so InnoDB tables are copied consistently without stopping the app. App dumps leave out `DEFINER` clauses, so they load into a copy with another user. A server backup holds every database, user and grant, and restores onto the same major version.
+
+### valkey and redis (`keyvalue`)
+
+A key-value store that apps link to (see [Key-value links](Applications.md#key-value-links)). Valkey is the open-source (BSD) fork of Redis; Redis 8 is licensed AGPLv3 or RSAL/SSPL.
+
+```yaml
+shared:
+  keyvalue:
+    - name: valkey
+      type: valkey             # or redis
+      version: 9               # redis: 8
+      configuration:
+        max_memory: 512mb
+        eviction: allkeys-lru  # for a cache
+        password: …            # in .compost-server.secrets.yaml
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `9` (valkey), `8` (redis) | Major version. Valkey needs 9.1 or newer (the `9` image is): it locks each app's user to its own database |
+| `image` | `valkey/valkey:<version>`, `redis:<version>` | |
+| `configuration.password` | generated | Password of the `default` user, for compost and you. Secret; a new value replaces the old one with the next deploy |
+| `configuration.max_memory` | none | e.g. `512mb`: above it the server evicts keys by `eviction` |
+| `configuration.eviction` | `noeviction` | `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, `volatile-lru`, `volatile-lfu`, `volatile-random` or `volatile-ttl` |
+
+It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
+
+A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
 
 ### keycloak (`oidc`)
 
@@ -2257,7 +2315,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 
 | Part | Saved |
 |---|---|
-| `links` | Database dumps (`pg_dump`, plain SQL); ingress and monitoring records and site files, for reference. Collected logs and metrics are not part of an app backup |
+| `links` | Database dumps (plain SQL); ingress, monitoring and key-value records and site files, for reference. Collected logs and metrics and key-value data are not part of an app backup |
 | `sources` | The uploaded sources (only the compose file when the folder isn't uploaded) |
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |
@@ -2617,6 +2675,17 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `db_name`, `db_user` | `<app>_<prefix>_<entry>` | Overlay. `^[a-z_][a-z0-9_]{0,62}$` |
 | `db_password` | generated | Overlay, secret. Required for an external database without root credentials |
 
+### `services.keyvalue[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name |
+| `type` | required | `valkey` or `redis` |
+| `version` | `"*"` | Requirement on the major version |
+| `instance` | – | Pin a shared app by name |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `kv_host`, `kv_port`, `kv_user`, `kv_password`, `kv_db`, `kv_prefix`, `kv_url` |
+
 ### `services.oidc[]`
 
 | Key | Default | Meaning |
@@ -2680,6 +2749,8 @@ shared:
     - {name: postgres18, type: postgres, version: 18, image: postgres:18-alpine}
     - {name: shop-db, type: postgres, version: 16, external: {host: db, network: shop_default}}
     - {name: mariadb11, type: mariadb, version: 11}
+  keyvalue:
+    - {name: valkey, type: valkey, version: 9}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
@@ -2845,6 +2916,11 @@ infra/
 │   │   ├── compose.yaml
 │   │   ├── compose.override.yaml     networks and database settings from its links
 │   │   └── secrets/keycloak.env      admin user and password
+│   ├── keyvalue/valkey/
+│   │   ├── compose.yaml
+│   │   ├── conf/server.conf, conf/users.acl   settings; users of the links (password hashes)
+│   │   ├── data/                     snapshot and append-only files
+│   │   └── secrets/password.env      password of the `default` user
 │   ├── communication/ops-chat/       a communication app: no compose project
 │   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
 │   │   ├── image                     the image to run
@@ -2886,6 +2962,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
+| Key-value network | `compost-kv-<name>`; host name `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
 | A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |

@@ -79,7 +79,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -258,6 +258,34 @@ shared:
 Like Postgres, it is reached only on `compost-db-<name>`, at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
 
 Backups use `mariadb-dump` / `mysqldump` with `--single-transaction`, so InnoDB tables are copied consistently without stopping the app. App dumps leave out `DEFINER` clauses, so they load into a copy with another user. A server backup holds every database, user and grant, and restores onto the same major version.
+
+### valkey and redis (`keyvalue`)
+
+A key-value store that apps link to (see [Key-value links](Applications.md#key-value-links)). Valkey is the open-source (BSD) fork of Redis; Redis 8 is licensed AGPLv3 or RSAL/SSPL.
+
+```yaml
+shared:
+  keyvalue:
+    - name: valkey
+      type: valkey             # or redis
+      version: 9               # redis: 8
+      configuration:
+        max_memory: 512mb
+        eviction: allkeys-lru  # for a cache
+        password: …            # in .compost-server.secrets.yaml
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `9` (valkey), `8` (redis) | Major version. Valkey needs 9.1 or newer (the `9` image is): it locks each app's user to its own database |
+| `image` | `valkey/valkey:<version>`, `redis:<version>` | |
+| `configuration.password` | generated | Password of the `default` user, for compost and you. Secret; a new value replaces the old one with the next deploy |
+| `configuration.max_memory` | none | e.g. `512mb`: above it the server evicts keys by `eviction` |
+| `configuration.eviction` | `noeviction` | `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, `volatile-lru`, `volatile-lfu`, `volatile-random` or `volatile-ttl` |
+
+It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
+
+A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
 
 ### keycloak (`oidc`)
 
