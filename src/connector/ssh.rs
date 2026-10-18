@@ -43,8 +43,9 @@ impl Ssh {
         .map(String::from)
         .into();
         args.push(self.port.to_string());
+        // Only this key, so ssh does not try the agent's keys first.
         if let Some(key) = &self.identity_file {
-            args.extend(["-i".to_string(), key.clone()]);
+            args.extend(["-i", key, "-o", "IdentitiesOnly=yes"].map(String::from));
         }
         // The first command opens a connection in the background; later
         // commands reuse it instead of connecting and authenticating again.
@@ -133,6 +134,8 @@ mod tests {
                 "-i",
                 "~/.ssh/id_ed25519",
                 "-o",
+                "IdentitiesOnly=yes",
+                "-o",
                 "ControlMaster=auto",
                 "-o",
                 "ControlPath=/home/u/.compost/ssh/%C",
@@ -159,6 +162,11 @@ mod tests {
         let dashes = args.iter().position(|a| a == "--").unwrap();
         assert_eq!(args[dashes - 1], "-t");
         assert!(!ssh.args("true", false).contains(&"-t".to_string()));
+        // Without a key, ssh picks one from its config and agent as usual.
+        assert!(
+            !ssh.args("true", false)
+                .contains(&"IdentitiesOnly=yes".to_string())
+        );
     }
 
     #[test]

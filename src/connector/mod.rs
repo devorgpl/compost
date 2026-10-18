@@ -10,6 +10,7 @@ pub mod local;
 mod ssh;
 
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -17,6 +18,7 @@ use anyhow::{Context, Result, bail};
 use crate::config::local::{
     CompostHome, ConnectorConfig, DEFAULT_SSH_PORT, DEFAULT_SSH_USER, ServerEntry,
 };
+use crate::error::config_err;
 
 /// Exit status used by `read_file` to signal "file does not exist".
 const MISSING_FILE_STATUS: i32 = 100;
@@ -197,10 +199,31 @@ pub trait Connector {
     }
 }
 
+/// How this run connects, from the global command-line options.
+pub struct ConnectOptions {
+    /// Print every script before it runs.
+    pub verbose: bool,
+    /// Replaces the server's `identity_file` (`--ssh-key-file`).
+    pub ssh_key_file: Option<PathBuf>,
+}
+
 /// The connector configured for a server in servers.yaml.
-pub fn open(server: &ServerEntry, home: &CompostHome, verbose: bool) -> Result<Box<dyn Connector>> {
+pub fn open(
+    server: &ServerEntry,
+    home: &CompostHome,
+    options: &ConnectOptions,
+) -> Result<Box<dyn Connector>> {
+    let verbose = options.verbose;
     Ok(match &server.connector {
-        ConnectorConfig::Local => Box::new(local::Local { verbose }),
+        ConnectorConfig::Local => {
+            if options.ssh_key_file.is_some() {
+                return Err(config_err(format!(
+                    "--ssh-key-file only applies to SSH servers; {} is local",
+                    server.name
+                )));
+            }
+            Box::new(local::Local { verbose })
+        }
         ConnectorConfig::Ssh {
             address,
             port,
@@ -210,11 +233,36 @@ pub fn open(server: &ServerEntry, home: &CompostHome, verbose: bool) -> Result<B
             address: address.clone(),
             port: port.unwrap_or(DEFAULT_SSH_PORT),
             user: user.clone().unwrap_or_else(|| DEFAULT_SSH_USER.to_string()),
-            identity_file: identity_file.clone(),
+            identity_file: ssh_key(options.ssh_key_file.as_deref(), identity_file.as_deref())?,
             control_path: ssh::control_path(&home.ssh_control_dir()?),
             verbose,
         }),
     })
+}
+
+/// The key to sign in with: `--ssh-key-file`, else the server's `identity_file`.
+///
+/// ssh only warns about a missing `-i` file and signs in with other keys, so
+/// a key given for this run must exist.
+fn ssh_key(override_key: Option<&Path>, identity_file: Option<&str>) -> Result<Option<String>> {
+    let Some(key) = override_key else {
+        return Ok(identity_file.map(String::from));
+    };
+    // `--ssh-key-file=~/key` reaches compost without the shell expanding `~`.
+    let key = match (key.strip_prefix("~"), dirs::home_dir()) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => key.to_path_buf(),
+    };
+    if !key.is_file() {
+        return Err(config_err(format!(
+            "SSH key file {} does not exist",
+            key.display()
+        )));
+    }
+    let key = key
+        .to_str()
+        .ok_or_else(|| config_err(format!("SSH key file {} is not UTF-8", key.display())))?;
+    Ok(Some(key.to_string()))
 }
 
 /// Quote a string so `sh` treats it as one literal word.
@@ -361,5 +409,23 @@ mod tests {
             .stream_out("echo partial; exit 4", &mut Vec::new())
             .unwrap_err();
         assert!(err.to_string().contains("exit status 4"), "{err}");
+    }
+
+    #[test]
+    fn ssh_key_file_replaces_identity_file() {
+        assert_eq!(
+            ssh_key(None, Some("~/.ssh/a")).unwrap().as_deref(),
+            Some("~/.ssh/a")
+        );
+        assert_eq!(ssh_key(None, None).unwrap(), None);
+        let dir = tempfile::TempDir::new().unwrap();
+        let key = dir.path().join("id_rsa");
+        std::fs::write(&key, "").unwrap();
+        assert_eq!(
+            ssh_key(Some(&key), Some("~/.ssh/a")).unwrap().as_deref(),
+            key.to_str()
+        );
+        let err = ssh_key(Some(&dir.path().join("missing")), None).unwrap_err();
+        assert!(err.to_string().contains("does not exist"), "{err}");
     }
 }

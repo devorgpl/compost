@@ -17,6 +17,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::backup::Format;
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
+use crate::connector::ConnectOptions;
 use crate::error::config_err;
 
 #[derive(Debug, Parser)]
@@ -33,6 +34,10 @@ pub struct Cli {
     /// Print every command run on the server
     #[arg(short, long, global = true)]
     pub verbose: bool,
+
+    /// SSH private key for this command, instead of the server's `identity_file`
+    #[arg(long, global = true, env = "COMPOST_SSH_KEY_FILE", value_name = "PATH")]
+    pub ssh_key_file: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -197,35 +202,37 @@ pub struct BackupOutputArgs {
 pub fn run(cli: Cli) -> Result<()> {
     let home = CompostHome::locate()?;
     let server = cli.server.as_deref();
+    let connect = ConnectOptions {
+        verbose: cli.verbose,
+        ssh_key_file: cli.ssh_key_file,
+    };
     match cli.command {
         Command::Init(args) => init::run(&home, args),
         Command::Server(ServerCommand::Generate(args)) => generate::server(args),
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
-        Command::Server(ServerCommand::State) => server::state(&home, server, cli.verbose),
+        Command::Server(ServerCommand::State) => server::state(&home, server, &connect),
         Command::Server(ServerCommand::Deploy(args)) => {
-            server::deploy(&home, server, args, cli.verbose)
+            server::deploy(&home, server, args, &connect)
         }
-        Command::Server(ServerCommand::Logs(args)) => {
-            server::logs(&home, server, args, cli.verbose)
-        }
-        Command::Secret(command) => secret::run(&home, server, command, cli.verbose),
+        Command::Server(ServerCommand::Logs(args)) => server::logs(&home, server, args, &connect),
+        Command::Secret(command) => secret::run(&home, server, command, &connect),
         Command::Config(command) => config::run(&home, command),
         Command::Agent(command) => agent::run(command),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
-        Command::App(command) => app::run(&home, server, command, cli.verbose),
+        Command::App(command) => app::run(&home, server, command, &connect),
         Command::Connector(ConnectorCommand::List) => {
-            server::connector_list(&home, server, cli.verbose)
+            server::connector_list(&home, server, &connect)
         }
         Command::Server(ServerCommand::Backup(args)) => {
-            server::backup(&home, server, args, cli.verbose)
+            server::backup(&home, server, args, &connect)
         }
         Command::Server(ServerCommand::Restore(args)) => {
-            server::restore(&home, server, args, cli.verbose)
+            server::restore(&home, server, args, &connect)
         }
         Command::Backup(BackupCommand::List { source }) => {
-            server::backup_list(&home, server, source, cli.verbose)
+            server::backup_list(&home, server, source, &connect)
         }
     }
 }

@@ -10,7 +10,7 @@ use super::{BackupOutputArgs, DeployArgs};
 use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry};
 use crate::config::server::BackupTarget;
 use crate::config::{check_name, server::ServerConfig};
-use crate::connector;
+use crate::connector::{self, ConnectOptions};
 use crate::error::{CompostError, config_err};
 use crate::server::backup::{self, BackupOptions, RestoreOptions};
 use crate::server::deploy::{self, Options};
@@ -176,11 +176,11 @@ pub fn logs(
     home: &CompostHome,
     server: Option<&str>,
     args: ServerLogsArgs,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     crate::server::logs::logs(
         connector.as_ref(),
         server.server_home(),
@@ -190,10 +190,10 @@ pub fn logs(
     )
 }
 
-pub fn state(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<()> {
+pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     let mut report = state::check(
         connector.as_ref(),
         server.server_home(),
@@ -257,7 +257,7 @@ pub fn deploy(
     home: &CompostHome,
     server: Option<&str>,
     args: ServerDeployArgs,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let ServerDeployArgs {
         deploy: args,
@@ -288,7 +288,7 @@ pub fn deploy(
         None => None,
     };
 
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     let (stored_path, stored) = match (&secret, &text) {
         (Some(file), Some(text)) => (
             Some(file.display().to_string()),
@@ -329,16 +329,20 @@ pub fn deploy(
 
     if apply && !args.dry_run {
         out!();
-        return state(home, Some(&server.name), verbose);
+        return state(home, Some(&server.name), connect);
     }
     Ok(())
 }
 
 /// `compost connector list` (spec §10.11).
-pub fn connector_list(home: &CompostHome, server: Option<&str>, verbose: bool) -> Result<()> {
+pub fn connector_list(
+    home: &CompostHome,
+    server: Option<&str>,
+    connect: &ConnectOptions,
+) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     links::list(
         connector.as_ref(),
         server.server_home(),
@@ -350,11 +354,11 @@ pub fn backup(
     home: &CompostHome,
     server: Option<&str>,
     args: ServerBackupArgs,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     let options = BackupOptions {
         shared: args.shared,
         format: args.output.format,
@@ -375,11 +379,11 @@ pub fn restore(
     home: &CompostHome,
     server: Option<&str>,
     args: ServerRestoreArgs,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     let options = RestoreOptions {
         archive: args.archive,
         source: args.source,
@@ -394,7 +398,7 @@ pub fn restore(
         &options,
     )?;
     out!();
-    state(home, Some(&server.name), verbose)
+    state(home, Some(&server.name), connect)
 }
 
 /// `compost backup list`
@@ -402,11 +406,11 @@ pub fn backup_list(
     home: &CompostHome,
     server: Option<&str>,
     source: Option<BackupTarget>,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let connector = connector::open(&server, home, verbose)?;
+    let connector = connector::open(&server, home, connect)?;
     backup::list(
         connector.as_ref(),
         server.server_home(),

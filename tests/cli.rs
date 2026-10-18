@@ -25,6 +25,7 @@ impl Env {
             .unwrap()
             .env("COMPOST_HOME", self.home.path())
             .env_remove("COMPOST_SERVER")
+            .env_remove("COMPOST_SSH_KEY_FILE")
             .current_dir(self.work.path())
             .args(args)
             .assert()
@@ -104,6 +105,37 @@ fn define_list_connect_disconnect() {
     env.compost(&["connect", "nope"])
         .code(2)
         .stderr(contains("unknown server `nope`"));
+}
+
+#[test]
+fn ssh_key_file_is_checked_before_connecting() {
+    let env = Env::initialized_with_server();
+    env.compost(&["server", "define", "dev", "--local"])
+        .success();
+    env.compost(&[
+        "-s",
+        "prod1",
+        "--ssh-key-file",
+        "/nonexistent/key",
+        "server",
+        "state",
+    ])
+    .code(2)
+    .stderr(contains("SSH key file /nonexistent/key does not exist"));
+    let key = env.work.path().join("id_rsa");
+    fs::write(&key, "").unwrap();
+    env.compost(&[
+        "-s",
+        "dev",
+        "server",
+        "state",
+        "--ssh-key-file",
+        key.to_str().unwrap(),
+    ])
+    .code(2)
+    .stderr(contains(
+        "--ssh-key-file only applies to SSH servers; dev is local",
+    ));
 }
 
 /// A `docker` stand-in, so tests do not need Docker. Every call is appended to

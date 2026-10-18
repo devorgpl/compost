@@ -198,7 +198,7 @@ servers:
       address: 203.0.113.10
       port: 22                         # optional
       user: compostuser                # default
-      identity_file: ~/.ssh/id_ed25519 # optional; default: ssh config, agent, ~/.ssh/id_*
+      identity_file: ~/.ssh/id_ed25519 # optional; default: ssh config, agent, ~/.ssh/id_*; --ssh-key-file wins
     server_home: ~/.compost-server     # default
     deploy:
       apply: false                     # optional, see below
@@ -227,3 +227,4 @@ compost config show
 |---|---|
 | `COMPOST_HOME` | compost's local folder, default `~/.compost` |
 | `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context) |
+| `COMPOST_SSH_KEY_FILE` | SSH private key, when `--ssh-key-file` isn't given (wins over the server's `identity_file`) |

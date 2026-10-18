@@ -19,6 +19,14 @@ Every command that talks to a server uses, in order: `-s/--server <name>`, the `
 
 compost runs POSIX `sh` scripts on the server through a single `ssh` call each, and streams files as tar. It shares one SSH connection per run and keeps it open 60 s for the next command (`ControlMaster`, sockets in `~/.compost/ssh/`). It uses your SSH config, agent and host key checking as they are.
 
+With a key (`--identity-file` of `server define`), compost signs in with that key only (`IdentitiesOnly=yes`), not with the other keys in your agent. To use another key for one command, add `--ssh-key-file <path>` to any command, or set `COMPOST_SSH_KEY_FILE`:
+
+```sh
+compost --ssh-key-file ~/.ssh/id_rsa_admin server state
+```
+
+The file must exist, and the option only works with SSH servers. A connection that is still open from a command in the last 60 s is reused as is, so the key only matters when compost opens a new connection.
+
 Add `-v` to any command to print every script it runs on the server.
 
 ## Server state

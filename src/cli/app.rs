@@ -15,7 +15,7 @@ use crate::config::app::{AppConfig, default_prefix};
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::server::BackupTarget;
 use crate::config::{check_name, merge};
-use crate::connector;
+use crate::connector::{self, ConnectOptions};
 use crate::error::config_err;
 
 const APP_FILE: &str = "compost.yaml";
@@ -226,7 +226,7 @@ pub fn run(
     home: &CompostHome,
     server: Option<&str>,
     command: AppCommand,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     // Works without `compost init` or a server.
     if let AppCommand::Generate(args) = command {
@@ -237,17 +237,17 @@ pub fn run(
     match command {
         AppCommand::Generate(_) => unreachable!("handled above"),
         AppCommand::List => {
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             list::list(
                 connector.as_ref(),
                 server.server_home(),
                 &manager.manager_key,
             )
         }
-        AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, verbose),
+        AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, connect),
         AppCommand::State(args) => {
             let selector = selector(&args)?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             state::state(
                 connector.as_ref(),
                 server.server_home(),
@@ -257,7 +257,7 @@ pub fn run(
         }
         AppCommand::Remove(args) => {
             let selector = selector(&args.instance)?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             let options = remove::Options {
                 volumes: args.volumes,
                 purge: args.purge,
@@ -287,7 +287,7 @@ pub fn run(
                 stop: args.stop,
                 force_unlock: args.force_unlock,
             };
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             backup::backup(
                 connector.as_ref(),
                 &server.name,
@@ -314,7 +314,7 @@ pub fn run(
                 yes: args.yes,
                 force_unlock: args.force_unlock,
             };
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             restore::restore(
                 connector.as_ref(),
                 server.server_home(),
@@ -324,7 +324,7 @@ pub fn run(
         }
         AppCommand::Logs(args) => {
             let selector = selector(&args.instance)?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             crate::app::logs::logs(
                 connector.as_ref(),
                 server.server_home(),
@@ -339,7 +339,7 @@ pub fn run(
             &server,
             args,
             exec::Mode::Exec,
-            verbose,
+            connect,
         ),
         AppCommand::Run(args) => {
             let mode = exec::Mode::Run {
@@ -351,12 +351,12 @@ pub fn run(
                 &server,
                 args.exec,
                 mode,
-                verbose,
+                connect,
             )
         }
         AppCommand::Releases(args) => {
             let selector = selector(&args)?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             rollback::releases(
                 connector.as_ref(),
                 server.server_home(),
@@ -372,7 +372,7 @@ pub fn run(
                 yes: args.yes,
                 force_unlock: args.force_unlock,
             };
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             rollback::rollback(
                 connector.as_ref(),
                 server.server_home(),
@@ -390,10 +390,10 @@ fn exec(
     server: &ServerEntry,
     args: AppExecArgs,
     mode: exec::Mode,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let selector = selector(&args.instance)?;
-    let connector = connector::open(server, home, verbose)?;
+    let connector = connector::open(server, home, connect)?;
     let options = exec::Options {
         service: args.service,
         command: args.command,
@@ -455,7 +455,7 @@ fn deploy(
     manager_key: &str,
     server: &ServerEntry,
     args: AppDeployArgs,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let AppDeployArgs {
         deploy: args,
@@ -480,7 +480,7 @@ fn deploy(
         }
         None => None,
     };
-    let connector = connector::open(server, home, verbose)?;
+    let connector = connector::open(server, home, connect)?;
     let (stored_path, stored) = match (&overlay, &secret) {
         (Some(overlay), Some(file)) => (
             Some(file.display().to_string()),

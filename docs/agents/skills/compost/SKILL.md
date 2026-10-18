@@ -34,6 +34,8 @@ compost connect prod
 compost server state                                  # UNINITIALIZED on a new server
 ```
 
+For one command with another key, add `--ssh-key-file <path>` (it wins over `--identity-file`).
+
 The user must have connected with `ssh` once to accept the host key; compost never skips host key checks.
 
 **Shared apps**, in an infrastructure folder ([Servers and shared apps](references/Servers-and-Shared-Apps.md)):

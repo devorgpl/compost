@@ -23,7 +23,7 @@ compost connect prod
 compost server state                             # prod (…): UNINITIALIZED
 ```
 
-`server define` takes `--user`, `--port`, `--identity-file` and `--server-home` (see [Servers and shared apps](Servers-and-Shared-Apps.md#defining-servers)). It only writes your local config, nothing on the server.
+`server define` takes `--user`, `--port`, `--identity-file` and `--server-home` (see [Servers and shared apps](Servers-and-Shared-Apps.md#defining-servers)). It only writes your local config, nothing on the server. For one command with a different key, add `--ssh-key-file <path>`.
 
 Every command that talks to a server picks it in this order: `-s <name>` → the `COMPOST_SERVER` variable → the context set by `connect`.
 

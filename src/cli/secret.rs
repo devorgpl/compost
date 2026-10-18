@@ -9,7 +9,7 @@ use clap::Subcommand;
 use crate::app::secrets;
 use crate::config::check_name;
 use crate::config::local::CompostHome;
-use crate::connector;
+use crate::connector::{self, ConnectOptions};
 use crate::server::secrets as server_secrets;
 
 #[derive(Debug, Subcommand)]
@@ -48,7 +48,7 @@ pub fn run(
     home: &CompostHome,
     server: Option<&str>,
     command: SecretCommand,
-    verbose: bool,
+    connect: &ConnectOptions,
 ) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
@@ -61,7 +61,7 @@ pub fn run(
             let text = fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let overlay = secrets::prepare(&text, prefix.as_deref())?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             secrets::deploy(
                 connector.as_ref(),
                 server.server_home(),
@@ -71,7 +71,7 @@ pub fn run(
             )
         }
         SecretCommand::List => {
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             secrets::list(
                 connector.as_ref(),
                 server.server_home(),
@@ -83,7 +83,7 @@ pub fn run(
             force_unlock,
             ..
         } => {
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             server_secrets::remove(
                 connector.as_ref(),
                 server.server_home(),
@@ -99,7 +99,7 @@ pub fn run(
         } => {
             check_name("app name", &app)?;
             check_name("prefix", &prefix)?;
-            let connector = connector::open(&server, home, verbose)?;
+            let connector = connector::open(&server, home, connect)?;
             secrets::remove(
                 connector.as_ref(),
                 server.server_home(),
