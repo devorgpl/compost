@@ -1,0 +1,7 @@
+    # An S3 service compost doesn't run (AWS, Backblaze B2, an existing MinIO…);
+    # links give the bucket and key to use.
+    - name: s3
+      type: s3
+      external:
+        endpoint: https://s3.eu-central-1.amazonaws.com
+        region: eu-central-1

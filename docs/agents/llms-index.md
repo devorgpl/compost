@@ -10,13 +10,13 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Installation](Installation.md): install script, release archives, macOS, first setup, updates
 - [Quick start](Quick-Start.md): run compost against this machine with the sample app
 - [Production setup](Production-Setup.md): from an empty Linux server to an app on HTTPS, step by step, with a checklist
-- [Examples](Examples.md): static site, API with a database, WordPress on MariaDB, staging and production, apps you don't own, AWS RDS, Keycloak logins, OpenObserve, review copies, nightly backups
+- [Examples](Examples.md): static site, API with a database, WordPress on MariaDB, uploads in S3 storage, staging and production, apps you don't own, AWS RDS, Keycloak logins, OpenObserve, review copies, nightly backups
 - [Migrating to compost](Migration.md): move a server with hand-made containers to compost in reversible phases
 
 ## Use
 
-- [Applications](Applications.md): `compost.yaml`, services, ingress, database, key-value, OIDC and monitoring links, deploying, inspecting, removing
-- [Servers and shared apps](Servers-and-Shared-Apps.md): defining servers, `compost-server.yaml`, the caddy, postgres, mariadb, mysql, valkey, redis, keycloak and openobserve types, external databases, locks
+- [Applications](Applications.md): `compost.yaml`, services, ingress, database, key-value, storage, OIDC and monitoring links, deploying, inspecting, removing
+- [Servers and shared apps](Servers-and-Shared-Apps.md): defining servers, `compost-server.yaml`, the caddy, postgres, mariadb, mysql, valkey, redis, garage, s3, keycloak and openobserve types, external databases, locks
 - [Secrets](Secrets.md): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](Backup-and-Restore.md): app and server backups, targets, formats, restoring, copies, moving to a new server
 - [Notifications](Notifications.md): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image

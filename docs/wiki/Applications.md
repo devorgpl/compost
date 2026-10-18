@@ -188,6 +188,45 @@ services:
 
 `--purge keyvalue` on `app remove` (or for a dropped link) deletes the link's keys; otherwise they stay. App backups don't save them: a cache comes back by itself, and a server backup holds everything.
 
+## Storage links
+
+A storage link gives services an S3 bucket and a key for it:
+
+```yaml
+services:
+  storage:
+    - name: files
+      targets: [backend]
+      environment:
+        S3_ENDPOINT: s3_endpoint
+        S3_REGION: s3_region
+        S3_BUCKET: s3_bucket
+        AWS_ACCESS_KEY_ID: s3_access_key_id
+        AWS_SECRET_ACCESS_KEY: s3_secret_access_key
+```
+
+| Link value | Example |
+|---|---|
+| `s3_endpoint` | `http://storage:3900`: on the storage network, for the services |
+| `s3_public_endpoint` | `https://files.example.com`: the storage app's `url`, for browsers and presigned URLs; else as `s3_endpoint` |
+| `s3_region` | `garage` |
+| `s3_bucket` | `myapp-staging-files` |
+| `s3_access_key_id`, `s3_secret_access_key` | made on the first deploy, then kept |
+
+With [Garage](Servers-and-Shared-Apps.md#garage-and-s3-storage), every link gets its own bucket, `<app>-<prefix>-<entry>` (3 to 63 characters), and a key that can use only that bucket (it can't create others). Use path-style addressing in the app's S3 client (e.g. `forcePathStyle: true`, `use_path_style_endpoint`, `AWS_S3_ADDRESSING_STYLE=path`).
+
+**External S3** (AWS, Backblaze B2, an existing MinIO): pin the storage app with `instance` and give the existing bucket and key, usually in the overlay. compost only passes them on:
+
+```yaml
+    - name: archive
+      instance: aws
+      bucket: shop-archive
+      access_key_id: AKIA…          # in the overlay
+      secret_access_key: …
+```
+
+`app backup` saves the bucket's objects (`links/storage/<entry>.tar`, fetched with rclone); `app restore` puts them back, and replaces a bucket that holds objects only with `--replace` (it then matches the backup). On `app remove`, a Garage link's key is deleted and its bucket kept; `--purge storage` deletes the bucket and its objects too. compost never deletes anything on external storage.
+
 ## OIDC links
 
 An OIDC link creates a realm, a client and optionally users in a Keycloak, and passes the client settings to services:

@@ -79,7 +79,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -286,6 +286,51 @@ shared:
 It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
 
 A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
+
+### garage and s3 (`storage`)
+
+S3-compatible object storage that apps link to (see [Storage links](Applications.md#storage-links)).
+
+**garage**: compost runs [Garage](https://garagehq.deuxfleurs.fr), a small S3 server (AGPL), as a single node. Each link gets its own bucket and key.
+
+```yaml
+shared:
+  storage:
+    - name: storage
+      type: garage
+      version: 2
+      configuration:
+        url: https://files.example.com   # optional: the S3 API on this domain, through the ingress
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `2` | Major version; compost pins the image (`dxflrs/garage:v2.3.0`) |
+| `image` | – | Another image |
+| `configuration.url` | – | Public URL of the S3 API, served by the ingress; apps get it as `s3_public_endpoint` |
+| `configuration.region` | `garage` | Region name clients sign requests with |
+| `configuration.capacity` | `100G` | The node's weight in Garage's layout; not a quota |
+
+It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
+
+A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `docker exec compost-storage-<name> /garage …` and use its `url` as `endpoint`.
+
+**s3**: an S3 service compost doesn't run. It needs only `external`; links pin it with `instance` and give their bucket and key.
+
+```yaml
+shared:
+  storage:
+    - name: aws
+      type: s3
+      external:
+        endpoint: https://s3.eu-central-1.amazonaws.com
+        region: eu-central-1
+        network: minio_default       # optional: a Docker network to reach it on
+```
+
+`server state` shows it as `not checked`: only the links have credentials.
+
+MinIO is not a built-in type: its community edition is distributed as source only since October 2025 and its repository was archived in April 2026. An existing MinIO works as `s3`. RustFS and SeaweedFS may become types later.
 
 ### keycloak (`oidc`)
 

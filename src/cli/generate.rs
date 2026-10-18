@@ -540,11 +540,11 @@ mod tests {
             assert_eq!(config.shared_apps().count(), selected.len());
         };
         // Every non-empty subset (in kind order) of the types that interact;
-        // communication and keyvalue types stand alone, so each is checked
+        // communication, keyvalue and storage types stand alone, so each is checked
         // alone, and all together.
         let (alone, others): (Vec<&Choice>, Vec<&Choice>) = all
             .iter()
-            .partition(|c| matches!(c.kind.name(), "communication" | "keyvalue"));
+            .partition(|c| matches!(c.kind.name(), "communication" | "keyvalue" | "storage"));
         for mask in 1..(1u32 << others.len()) {
             let selected: Vec<&Choice> = others
                 .iter()

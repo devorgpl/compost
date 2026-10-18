@@ -38,7 +38,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `valkey` and `redis` (kind `keyvalue`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `valkey` and `redis` (kind `keyvalue`), `garage` and external `s3` (kind `storage`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
@@ -519,6 +519,37 @@ services:
 ```
 
 `app backup blog-prod` then holds the database dump and `wp-content`; `app restore … --prefix staging -f staging-domains.yaml` makes a copy with its own database.
+
+## Uploads in S3 storage
+
+```yaml
+# compost-server.yaml
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  storage:
+    - {name: storage, type: garage, configuration: {url: https://files.example.com}}
+```
+
+```yaml
+# compost.yaml
+name: photos
+app_services:
+  - {name: backend, service: backend}
+services:
+  storage:
+    - name: uploads
+      targets: [backend]
+      environment:
+        S3_ENDPOINT: s3_endpoint                 # for the backend, inside the server
+        S3_PUBLIC_ENDPOINT: s3_public_endpoint   # for presigned URLs the browser opens
+        S3_REGION: s3_region
+        S3_BUCKET: s3_bucket
+        AWS_ACCESS_KEY_ID: s3_access_key_id
+        AWS_SECRET_ACCESS_KEY: s3_secret_access_key
+```
+
+Each instance gets its own bucket (`photos-prod-uploads`, `photos-staging-uploads`) and key. `app backup` includes the bucket's objects. Set the S3 client to path-style addressing.
 
 ## Staging and production from one repository
 
@@ -1325,6 +1356,45 @@ services:
 
 `--purge keyvalue` on `app remove` (or for a dropped link) deletes the link's keys; otherwise they stay. App backups don't save them: a cache comes back by itself, and a server backup holds everything.
 
+## Storage links
+
+A storage link gives services an S3 bucket and a key for it:
+
+```yaml
+services:
+  storage:
+    - name: files
+      targets: [backend]
+      environment:
+        S3_ENDPOINT: s3_endpoint
+        S3_REGION: s3_region
+        S3_BUCKET: s3_bucket
+        AWS_ACCESS_KEY_ID: s3_access_key_id
+        AWS_SECRET_ACCESS_KEY: s3_secret_access_key
+```
+
+| Link value | Example |
+|---|---|
+| `s3_endpoint` | `http://storage:3900`: on the storage network, for the services |
+| `s3_public_endpoint` | `https://files.example.com`: the storage app's `url`, for browsers and presigned URLs; else as `s3_endpoint` |
+| `s3_region` | `garage` |
+| `s3_bucket` | `myapp-staging-files` |
+| `s3_access_key_id`, `s3_secret_access_key` | made on the first deploy, then kept |
+
+With [Garage](Servers-and-Shared-Apps.md#garage-and-s3-storage), every link gets its own bucket, `<app>-<prefix>-<entry>` (3 to 63 characters), and a key that can use only that bucket (it can't create others). Use path-style addressing in the app's S3 client (e.g. `forcePathStyle: true`, `use_path_style_endpoint`, `AWS_S3_ADDRESSING_STYLE=path`).
+
+**External S3** (AWS, Backblaze B2, an existing MinIO): pin the storage app with `instance` and give the existing bucket and key, usually in the overlay. compost only passes them on:
+
+```yaml
+    - name: archive
+      instance: aws
+      bucket: shop-archive
+      access_key_id: AKIA…          # in the overlay
+      secret_access_key: …
+```
+
+`app backup` saves the bucket's objects (`links/storage/<entry>.tar`, fetched with rclone); `app restore` puts them back, and replaces a bucket that holds objects only with `--replace` (it then matches the backup). On `app remove`, a Garage link's key is deleted and its bucket kept; `--purge storage` deletes the bucket and its objects too. compost never deletes anything on external storage.
+
 ## OIDC links
 
 An OIDC link creates a realm, a client and optionally users in a Keycloak, and passes the client settings to services:
@@ -1614,7 +1684,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -1821,6 +1891,51 @@ shared:
 It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
 
 A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
+
+### garage and s3 (`storage`)
+
+S3-compatible object storage that apps link to (see [Storage links](Applications.md#storage-links)).
+
+**garage**: compost runs [Garage](https://garagehq.deuxfleurs.fr), a small S3 server (AGPL), as a single node. Each link gets its own bucket and key.
+
+```yaml
+shared:
+  storage:
+    - name: storage
+      type: garage
+      version: 2
+      configuration:
+        url: https://files.example.com   # optional: the S3 API on this domain, through the ingress
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `2` | Major version; compost pins the image (`dxflrs/garage:v2.3.0`) |
+| `image` | – | Another image |
+| `configuration.url` | – | Public URL of the S3 API, served by the ingress; apps get it as `s3_public_endpoint` |
+| `configuration.region` | `garage` | Region name clients sign requests with |
+| `configuration.capacity` | `100G` | The node's weight in Garage's layout; not a quota |
+
+It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
+
+A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `docker exec compost-storage-<name> /garage …` and use its `url` as `endpoint`.
+
+**s3**: an S3 service compost doesn't run. It needs only `external`; links pin it with `instance` and give their bucket and key.
+
+```yaml
+shared:
+  storage:
+    - name: aws
+      type: s3
+      external:
+        endpoint: https://s3.eu-central-1.amazonaws.com
+        region: eu-central-1
+        network: minio_default       # optional: a Docker network to reach it on
+```
+
+`server state` shows it as `not checked`: only the links have credentials.
+
+MinIO is not a built-in type: its community edition is distributed as source only since October 2025 and its repository was archived in April 2026. An existing MinIO works as `s3`. RustFS and SeaweedFS may become types later.
 
 ### keycloak (`oidc`)
 
@@ -2315,7 +2430,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 
 | Part | Saved |
 |---|---|
-| `links` | Database dumps (plain SQL); ingress, monitoring and key-value records and site files, for reference. Collected logs and metrics and key-value data are not part of an app backup |
+| `links` | Database dumps (plain SQL); the objects of storage buckets; ingress, monitoring and key-value records and site files, for reference. Collected logs and metrics and key-value data are not part of an app backup |
 | `sources` | The uploaded sources (only the compose file when the folder isn't uploaded) |
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |
@@ -2686,6 +2801,16 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `targets` | required | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `kv_host`, `kv_port`, `kv_user`, `kv_password`, `kv_db`, `kv_prefix`, `kv_url` |
 
+### `services.storage[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name; Garage's bucket is `<app>-<prefix>-<name>` |
+| `instance` | – | Pin a storage app by name; required for an external one |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `s3_endpoint`, `s3_public_endpoint`, `s3_region`, `s3_bucket`, `s3_access_key_id`, `s3_secret_access_key` |
+| `bucket`, `access_key_id`, `secret_access_key` | – | External storage only: the existing bucket and key. Overlay; the keys are secrets |
+
 ### `services.oidc[]`
 
 | Key | Default | Meaning |
@@ -2751,6 +2876,8 @@ shared:
     - {name: mariadb11, type: mariadb, version: 11}
   keyvalue:
     - {name: valkey, type: valkey, version: 9}
+  storage:
+    - {name: storage, type: garage, configuration: {url: https://files.example.com}}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
@@ -2921,6 +3048,11 @@ infra/
 │   │   ├── conf/server.conf, conf/users.acl   settings; users of the links (password hashes)
 │   │   ├── data/                     snapshot and append-only files
 │   │   └── secrets/password.env      password of the `default` user
+│   ├── storage/storage/
+│   │   ├── compose.yaml
+│   │   ├── garage.toml               Garage's settings, with its RPC secret and admin token
+│   │   ├── meta/, data/              metadata and objects
+│   │   └── secrets/garage.env        the RPC secret and admin token, kept across deploys
 │   ├── communication/ops-chat/       a communication app: no compose project
 │   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
 │   │   ├── image                     the image to run
@@ -2963,6 +3095,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | Key-value network | `compost-kv-<name>`; host name `<name>` |
+| Storage network | `compost-storage-<name>`; host name `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
 | A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |

@@ -159,6 +159,37 @@ services:
 
 `app backup blog-prod` then holds the database dump and `wp-content`; `app restore … --prefix staging -f staging-domains.yaml` makes a copy with its own database.
 
+## Uploads in S3 storage
+
+```yaml
+# compost-server.yaml
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  storage:
+    - {name: storage, type: garage, configuration: {url: https://files.example.com}}
+```
+
+```yaml
+# compost.yaml
+name: photos
+app_services:
+  - {name: backend, service: backend}
+services:
+  storage:
+    - name: uploads
+      targets: [backend]
+      environment:
+        S3_ENDPOINT: s3_endpoint                 # for the backend, inside the server
+        S3_PUBLIC_ENDPOINT: s3_public_endpoint   # for presigned URLs the browser opens
+        S3_REGION: s3_region
+        S3_BUCKET: s3_bucket
+        AWS_ACCESS_KEY_ID: s3_access_key_id
+        AWS_SECRET_ACCESS_KEY: s3_secret_access_key
+```
+
+Each instance gets its own bucket (`photos-prod-uploads`, `photos-staging-uploads`) and key. `app backup` includes the bucket's objects. Set the S3 client to path-style addressing.
+
 ## Staging and production from one repository
 
 Each overlay is an instance. They share `compost.yaml` and the server's shared apps, with separate domains, databases and containers.

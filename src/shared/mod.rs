@@ -10,6 +10,7 @@ pub mod ingress;
 pub mod keyvalue;
 pub mod monitoring;
 pub mod oidc;
+pub mod storage;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -503,6 +504,7 @@ static KINDS: &[&dyn Kind] = &[
     &keyvalue::KeyValueKind,
     &monitoring::MonitoringKind,
     &oidc::OidcKind,
+    &storage::StorageKind,
 ];
 
 pub fn find_kind(name: &str) -> Option<&'static dyn Kind> {

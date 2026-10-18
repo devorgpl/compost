@@ -80,6 +80,11 @@ infra/
 │   │   ├── conf/server.conf, conf/users.acl   settings; users of the links (password hashes)
 │   │   ├── data/                     snapshot and append-only files
 │   │   └── secrets/password.env      password of the `default` user
+│   ├── storage/storage/
+│   │   ├── compose.yaml
+│   │   ├── garage.toml               Garage's settings, with its RPC secret and admin token
+│   │   ├── meta/, data/              metadata and objects
+│   │   └── secrets/garage.env        the RPC secret and admin token, kept across deploys
 │   ├── communication/ops-chat/       a communication app: no compose project
 │   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
 │   │   ├── image                     the image to run
@@ -122,6 +127,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
 | Database network | `compost-db-<name>`; the database's host name is `<name>` |
 | Key-value network | `compost-kv-<name>`; host name `<name>` |
+| Storage network | `compost-storage-<name>`; host name `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
 | A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |

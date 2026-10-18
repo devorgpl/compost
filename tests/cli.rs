@@ -174,6 +174,10 @@ case "$*" in
     cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" exec "*" -N -B") cat >> "$FAKE_DOCKER_LOG"; echo "${FAKE_TABLES:-0}" ;;
   "compose "*" exec "*" ACL LOAD") echo OK ;;
+  "compose "*" exec "*"/garage layout show"*) echo "No nodes currently have a role in the cluster."; echo "Current cluster layout version: 0" ;;
+  "compose "*" exec "*"/garage node id -q"*) echo "abc123def456@127.0.0.1:3901" ;;
+  "compose "*" exec "*"/garage bucket info "*|"compose "*" exec "*"/garage key info "*) exit 1 ;;
+  "compose "*" exec "*"/garage json-api ImportKey -"*) echo "import: $(cat)" >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
@@ -3260,6 +3264,148 @@ fn keyvalue_links_get_their_own_valkey_database() {
     );
     let acl = fs::read_to_string(dir.join("conf/users.acl")).unwrap();
     assert!(!acl.contains("shop-prod-cache"), "{acl}");
+}
+
+#[test]
+fn storage_links_get_a_garage_bucket_or_an_external_one() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}  storage:
+    - {{name: storage, type: garage, configuration: {{url: 'https://files.example.com'}}}}
+    - {{name: aws, type: s3, external: {{endpoint: 'https://s3.eu-central-1.amazonaws.com', region: eu-central-1}}}}
+"
+        ),
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    let dir = server.server_home.join("shared/storage/storage");
+    let compose = fs::read_to_string(dir.join("compose.yaml")).unwrap();
+    assert!(compose.contains("image: dxflrs/garage:v2.3.0"), "{compose}");
+    assert!(
+        compose.contains("user: \""),
+        "runs as the server user: {compose}"
+    );
+    let toml = fs::read_to_string(dir.join("garage.toml")).unwrap();
+    assert!(
+        toml.contains("replication_factor = 1") && toml.contains("rpc_secret = \""),
+        "{toml}"
+    );
+    // The S3 API is on the ingress.
+    let site = fs::read_dir(
+        server
+            .server_home
+            .join("shared/ingress/caddy-main/conf/sites"),
+    )
+    .unwrap()
+    .map(|e| fs::read_to_string(e.unwrap().path()).unwrap())
+    .collect::<String>();
+    assert!(
+        site.contains("files.example.com") && site.contains("compost-shared-storage:3900"),
+        "{site}"
+    );
+    server.take_docker_log();
+
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nprefix: prod\napp_services: [{name: backend, service: backend}]\n\
+         services:\n  storage:\n\
+         \x20   - {name: files, targets: [backend], environment: {S3_ENDPOINT: s3_endpoint, S3_PUBLIC: s3_public_endpoint, S3_BUCKET: s3_bucket, S3_KEY: s3_access_key_id, S3_SECRET: s3_secret_access_key}}\n\
+         \x20   - {name: archive, instance: aws, targets: [backend], environment: {ARCHIVE_BUCKET: s3_bucket, ARCHIVE_ENDPOINT: s3_endpoint}}\n",
+    );
+    server.write_work_file("app/docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .code(3)
+        .stderr(contains(
+            "aws is external: give `bucket`, `access_key_id` and `secret_access_key`",
+        ));
+    server.write_work_file(
+        "app/.compost-prod.yaml",
+        "services:\n  storage:\n    - {name: archive, bucket: shop-archive, access_key_id: AKIA1, secret_access_key: SECRET1}\n",
+    );
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml,app/.compost-prod.yaml",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "storage    files            storage: bucket shop-prod-files, key GK",
+        ));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("/garage layout assign -z dc1 -c 100G abc123def456"),
+        "{log}"
+    );
+    assert!(log.contains("/garage layout apply --version 1"), "{log}");
+    assert!(
+        log.contains("/garage bucket create shop-prod-files"),
+        "{log}"
+    );
+    assert!(
+        log.contains("/garage bucket allow --read --write --owner shop-prod-files --key GK"),
+        "{log}"
+    );
+    let record = fs::read_to_string(
+        server
+            .server_home
+            .join("connectors/storage/storage/shop-prod-files.yaml"),
+    )
+    .unwrap();
+    let secret = record
+        .lines()
+        .find_map(|l| l.strip_prefix("secret_access_key: "))
+        .unwrap()
+        .trim_matches('\'')
+        .to_string();
+    assert!(
+        log.contains(&format!("\"secretAccessKey\":\"{secret}\"")),
+        "imported through stdin: {log}"
+    );
+    let command_lines: String = log.lines().filter(|l| l.starts_with("docker ")).collect();
+    assert!(
+        !command_lines.contains(&secret),
+        "never on a command line: {log}"
+    );
+
+    let override_file = fs::read_to_string(
+        server
+            .server_home
+            .join("apps/shop/prod/compose/compost.override.yaml"),
+    )
+    .unwrap();
+    for expected in [
+        "S3_ENDPOINT: http://storage:3900",
+        "S3_PUBLIC: https://files.example.com",
+        "S3_BUCKET: shop-prod-files",
+        "ARCHIVE_BUCKET: shop-archive",
+        "ARCHIVE_ENDPOINT: https://s3.eu-central-1.amazonaws.com",
+        "compost-storage-storage",
+    ] {
+        assert!(
+            override_file.contains(expected),
+            "{expected}: {override_file}"
+        );
+    }
+    let stored =
+        fs::read_to_string(server.server_home.join("apps/shop/prod/compost.yaml")).unwrap();
+    assert!(
+        !stored.contains("SECRET1"),
+        "link secrets stay out of the stored config: {stored}"
+    );
 }
 
 #[test]

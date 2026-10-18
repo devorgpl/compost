@@ -1,0 +1,4 @@
+    # Garage: S3-compatible object storage; each linked app gets its own bucket and key.
+    - name: storage
+      type: garage
+      version: 2

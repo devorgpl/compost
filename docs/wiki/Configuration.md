@@ -120,6 +120,16 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `targets` | required | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `kv_host`, `kv_port`, `kv_user`, `kv_password`, `kv_db`, `kv_prefix`, `kv_url` |
 
+### `services.storage[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name; Garage's bucket is `<app>-<prefix>-<name>` |
+| `instance` | – | Pin a storage app by name; required for an external one |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `s3_endpoint`, `s3_public_endpoint`, `s3_region`, `s3_bucket`, `s3_access_key_id`, `s3_secret_access_key` |
+| `bucket`, `access_key_id`, `secret_access_key` | – | External storage only: the existing bucket and key. Overlay; the keys are secrets |
+
 ### `services.oidc[]`
 
 | Key | Default | Meaning |
@@ -185,6 +195,8 @@ shared:
     - {name: mariadb11, type: mariadb, version: 11}
   keyvalue:
     - {name: valkey, type: valkey, version: 9}
+  storage:
+    - {name: storage, type: garage, configuration: {url: https://files.example.com}}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
