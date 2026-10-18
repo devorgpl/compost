@@ -45,6 +45,17 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     if let Some(release) = super::release::list(ctx, &app.name, &app.prefix)?.last() {
         out!("  release: {} ({})", release.number, release.created_at);
     }
+    for record in state_file
+        .backups
+        .iter()
+        .filter(|r| r.owner == app.instance())
+    {
+        out!(
+            "  scheduled backup {}: {}",
+            record.profile,
+            record.describe()
+        );
+    }
 
     let containers = compose::ps(ctx.connector, &app.instance())?;
     out!("  services:");

@@ -21,6 +21,9 @@ pub struct StateFile {
     pub apps: Vec<AppRecord>,
     #[serde(default)]
     pub compost_version: String,
+    /// Scheduled backups: when each last ran, and how it went.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backups: Vec<BackupRecord>,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -43,6 +46,58 @@ pub struct AppRecord {
     pub prefix: String,
     pub status: DeployStatus,
     pub updated_at: String,
+}
+
+/// A backup profile run on a schedule, for the shared apps or one instance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackupRecord {
+    /// `server` for the shared apps, else the instance, e.g. `myapp-prod`.
+    pub owner: String,
+    pub profile: String,
+    /// When it last ran, or since when it waits for its first run (RFC 3339, with the offset).
+    pub last_run: String,
+    pub status: BackupStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl BackupRecord {
+    /// e.g. `ok, 2026-10-18 03:00` or `failed, 2026-10-18 03:00: …`.
+    pub fn describe(&self) -> String {
+        // RFC 3339 → `2026-10-18 03:00`, in the server's time.
+        let time = self
+            .last_run
+            .get(..16)
+            .unwrap_or(&self.last_run)
+            .replace('T', " ");
+        match (self.status, &self.error) {
+            (BackupStatus::Waiting, _) => format!("waiting for its first run (since {time})"),
+            (status, Some(error)) => {
+                let first = error.lines().next().unwrap_or_default();
+                format!("{status}, {time}: {first}")
+            }
+            (status, None) => format!("{status}, {time}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackupStatus {
+    /// Scheduled, not run yet.
+    Waiting,
+    Ok,
+    Failed,
+}
+
+impl fmt::Display for BackupStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            BackupStatus::Waiting => "waiting",
+            BackupStatus::Ok => "ok",
+            BackupStatus::Failed => "failed",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +126,7 @@ impl Default for StateFile {
             shared: Vec::new(),
             apps: Vec::new(),
             compost_version: String::new(),
+            backups: Vec::new(),
             other: Mapping::new(),
         }
     }

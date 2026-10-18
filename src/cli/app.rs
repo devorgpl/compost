@@ -16,6 +16,7 @@ use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::{check_name, merge};
 use crate::connector::{self, ConnectOptions};
 use crate::error::config_err;
+use crate::server::schedule;
 
 const APP_FILE: &str = "compost.yaml";
 
@@ -277,6 +278,12 @@ pub fn run(
                 &manager.manager_key,
                 &selector,
                 &options,
+            )?;
+            schedule::refresh(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &server.name,
             )
         }
         AppCommand::Backup(args) => {
@@ -544,6 +551,7 @@ fn deploy(
             profile,
         }),
     };
+    let dry_run = options.dry_run;
     deploy::deploy(
         connector.as_ref(),
         server.server_home(),
@@ -551,5 +559,14 @@ fn deploy(
         &loaded,
         &files,
         &options,
+    )?;
+    if dry_run {
+        return Ok(());
+    }
+    schedule::refresh(
+        connector.as_ref(),
+        server.server_home(),
+        manager_key,
+        &server.name,
     )
 }

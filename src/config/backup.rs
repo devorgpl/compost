@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::app::{Step, StopServices};
 use super::check_name;
+use crate::backup::schedule::{OFF, Schedule};
 use crate::backup::{Component, Format};
 use crate::error::config_err;
 
@@ -30,6 +31,10 @@ pub struct Profile {
     /// target; older ones are deleted after each backup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<u32>,
+    /// When a backup with the profile runs by itself: a cron expression in the
+    /// server's local time. `off` in an app's profile turns it off there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
     /// Server profiles only: whether `backup run` also backs up the shared apps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<bool>,
@@ -79,6 +84,13 @@ impl Profile {
                 return Err(config_err(format!("{path}.target: must not be empty")));
             }
         }
+        if let Some(schedule) = &self.schedule {
+            if schedule != OFF {
+                schedule
+                    .parse::<Schedule>()
+                    .map_err(|e| config_err(format!("{path}.schedule: {e}")))?;
+            }
+        }
         Ok(())
     }
 
@@ -126,6 +138,7 @@ impl Profile {
             format: self.format.or(base.format),
             target: self.target.clone().or_else(|| base.target.clone()),
             keep: self.keep.or(base.keep),
+            schedule: self.schedule.clone().or_else(|| base.schedule.clone()),
             server: self.server.or(base.server),
             volumes: self.volumes.clone().or_else(|| base.volumes.clone()),
             stop: self.stop.clone().or_else(|| base.stop.clone()),
@@ -221,6 +234,16 @@ mod tests {
             )
         };
         assert!(err("{keep: 0}").contains("at least 1"));
+        assert!(
+            err("{schedule: '0 3 * *'}")
+                .contains("backup.profiles.daily.schedule: `0 3 * *`: expected 5 fields")
+        );
+        assert!(
+            profile("{schedule: '0 3 * * *'}")
+                .validate_server("daily", &[])
+                .is_ok()
+        );
+        assert!(profile("{schedule: off}").validate_app("daily").is_ok());
         assert!(err("{volumes: [x]}").contains("compost.yaml"));
         assert!(
             err("{target: s3}").contains("unknown backup target `s3` (known: local, server, nas)")

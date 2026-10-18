@@ -74,7 +74,7 @@ backup:
 | `before_backup`, `after_backup` | `[]` | Steps run before anything is saved and after it is saved |
 | `before_restore`, `after_restore` | `[]` | Steps run before data is loaded into a deployed instance and after it is loaded |
 | `target` | the server's `backup.target` | Target of this app's backups: `local`, `server` or a name from the server's `backup.targets`. A profile's target wins over it |
-| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
+| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, `schedule` or `schedule: off`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
@@ -182,11 +182,11 @@ backup:
     nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
     offsite: {type: s3, bucket: acme-backups, path: prod, endpoint: https://s3.example.com}   # credentials in the secrets file
   profiles:
-    daily: {include: [links], keep: 7, target: nas}
+    daily: {include: [links], keep: 7, target: nas, schedule: "0 3 * * *"}
     predeploy: {keep: 3, server: false}
 ```
 
-`targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
+`targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
@@ -243,3 +243,4 @@ compost config show
 | `COMPOST_HOME` | compost's local folder, default `~/.compost` |
 | `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context) |
 | `COMPOST_SSH_KEY_FILE` | SSH private key, when `--ssh-key-file` isn't given (wins over the server's `identity_file`) |
+| `COMPOST_SERVER_BINARY` | compost binary that deploys install on the server for [scheduled backups](Backup-and-Restore.md#scheduled-backups), instead of this one or a download |

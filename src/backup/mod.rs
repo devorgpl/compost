@@ -6,6 +6,7 @@ mod archive;
 pub mod profile;
 pub mod remote;
 pub mod retention;
+pub mod schedule;
 mod source;
 mod writer;
 

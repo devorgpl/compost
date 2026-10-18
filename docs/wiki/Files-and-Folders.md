@@ -40,14 +40,16 @@ infra/
 
 ## On the server
 
-`~/.compost-server` of the server user, or `server_home` from `servers.yaml`. compost writes only here and to Docker.
+`~/.compost-server` of the server user, or `server_home` from `servers.yaml`. compost writes only here and to Docker, and, for [scheduled backups](Backup-and-Restore.md#scheduled-backups), one line in the server user's crontab, between `# compost: scheduled backups of <folder>` and `# compost: end of <folder>`.
 
 ```
 ~/.compost-server/
 ├── manager_key                       key of the compost installation managing this server
 ├── compost-server.yaml               effective server config, without secrets
-├── state.yaml                        status of shared apps and instances
+├── state.yaml                        status of shared apps and instances, last runs of scheduled backups
 ├── lock/                             exists while a command changes the server
+├── bin/compost                       compost itself, for scheduled backups
+├── logs/backup.log                   output of scheduled backups
 ├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`

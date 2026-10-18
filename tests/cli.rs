@@ -232,6 +232,13 @@ impl LocalServer {
         fs::create_dir(&bin).unwrap();
         fs::write(bin.join("docker"), FAKE_DOCKER).unwrap();
         fs::set_permissions(bin.join("docker"), fs::Permissions::from_mode(0o755)).unwrap();
+        // Never the real crontab.
+        let crontab = format!(
+            "#!/bin/sh\nfile='{}'\nif [ \"$1\" = -l ]; then cat \"$file\" 2>/dev/null || exit 1; else cat > \"$file\"; fi\n",
+            env.work.path().join("crontab").display()
+        );
+        fs::write(bin.join("crontab"), crontab).unwrap();
+        fs::set_permissions(bin.join("crontab"), fs::Permissions::from_mode(0o755)).unwrap();
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
         let server_home = env.work.path().join("server-home");
@@ -2580,6 +2587,136 @@ fn backups_to_an_s3_target() {
         !left.contains(&"myapp-staging-weekly-20200101-000000.compost.tar.gz".to_string()),
         "{left:?}"
     );
+}
+
+#[test]
+fn scheduled_backups_run_from_a_crontab_line() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    let with_schedule = format!(
+        "{SERVER_CONFIG}backup:
+  target: server
+  profiles:
+    nightly: {{include: [links], schedule: '* * * * *', keep: 3}}
+"
+    );
+    server.write_work_file("compost-server.yaml", &with_schedule);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("installed compost"))
+        .stdout(contains("installed the crontab line of scheduled backups"));
+    let home = server.server_home.display().to_string();
+    let crontab = fs::read_to_string(server.env.work.path().join("crontab")).unwrap();
+    assert!(
+        crontab.contains(&format!("# compost: scheduled backups of {home}")),
+        "{crontab}"
+    );
+    assert!(crontab.contains("*/5 * * * * PATH="), "{crontab}");
+    assert!(crontab.contains("backup tick --server-home"), "{crontab}");
+    assert!(crontab.contains("--server-name 'dev'"), "{crontab}");
+    let binary = server.server_home.join("bin/compost");
+    assert!(binary.exists());
+
+    // An app that turns the schedule off for itself.
+    server.write_work_file(
+        "app/compost.yaml",
+        &format!("{APP_CONFIG}backup:\n  profiles:\n    nightly: {{schedule: off}}\n"),
+    );
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
+    let app_files = "app/compost.yaml,app/.compost-staging.yaml";
+    server
+        .run(&["app", "deploy", "--apply", "-f", app_files], &running)
+        .success();
+
+    let tick = [
+        "backup",
+        "tick",
+        "--server-home",
+        home.as_str(),
+        "--server-name",
+        "dev",
+    ];
+    // The first tick only notes the new job.
+    server.run(&tick, &running).success();
+    let state_path = server.server_home.join("state.yaml");
+    let state = fs::read_to_string(&state_path).unwrap();
+    assert!(state.contains("owner: server"), "{state}");
+    assert!(state.contains("status: waiting"), "{state}");
+    assert!(
+        !state.contains("owner: myapp-staging"),
+        "schedule is off for the app: {state}"
+    );
+    server
+        .state(&running)
+        .success()
+        .stdout(contains("scheduled backups:"))
+        .stdout(contains("waiting for its first run"));
+
+    // A run that is due.
+    let earlier: String = state
+        .lines()
+        .map(|line| match line.find("last_run:") {
+            Some(at) => format!("{}last_run: 2020-01-01T00:00:00+00:00\n", &line[..at]),
+            None => format!("{line}\n"),
+        })
+        .collect();
+    fs::write(&state_path, earlier).unwrap();
+    server
+        .run(&tick, &running)
+        .success()
+        .stdout(contains("backup with profile nightly of the shared apps"))
+        .stdout(contains("Backup written to"))
+        .stdout(contains("] ok"));
+    let archives: Vec<String> = fs::read_dir(server.server_home.join("backups"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(archives.len(), 1, "{archives:?}");
+    assert!(archives[0].starts_with("dev-nightly-"), "{archives:?}");
+    let state = fs::read_to_string(&state_path).unwrap();
+    assert!(state.contains("status: ok"), "{state}");
+    server
+        .state(&running)
+        .success()
+        .stdout(contains("server  nightly  ok, "));
+    // Not again for the same minute.
+    server
+        .run(&tick, &running)
+        .success()
+        .stdout(contains("backup with").not());
+
+    // The crontab line itself runs, as cron would run it.
+    let line = crontab
+        .lines()
+        .find(|l| l.contains("backup tick"))
+        .unwrap()
+        .splitn(6, ' ')
+        .last()
+        .unwrap()
+        .to_string();
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&line)
+        .env("FAKE_DOCKER_LOG", server.env.work.path().join("docker.log"))
+        .env("FAKE_DOCKER_RUNNING", "1")
+        .status()
+        .unwrap();
+    assert!(status.success(), "{line}");
+    assert!(server.server_home.join("logs/backup.log").exists());
+
+    // Without schedules the line goes.
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("removed the crontab line"));
+    let crontab = fs::read_to_string(server.env.work.path().join("crontab")).unwrap();
+    assert!(!crontab.contains("compost"), "{crontab}");
 }
 
 #[test]

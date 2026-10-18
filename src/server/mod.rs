@@ -7,6 +7,7 @@ pub mod links;
 pub mod lock;
 pub mod logs;
 pub mod plan;
+pub mod schedule;
 pub mod secrets;
 pub mod state;
 pub mod state_file;

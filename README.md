@@ -2,7 +2,7 @@
 
 Deploy docker-compose applications to your own servers, with shared Caddy (HTTPS), Postgres and Keycloak.
 
-compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers.
+compost is one CLI on your machine. It manages servers over SSH, or this machine directly, and installs nothing on them except plain files and Docker containers (and, for scheduled backups, a copy of itself and a crontab line).
 
 **Documentation:** the [wiki](https://github.com/devorgpl/compost/wiki) covers the latest release; [`docs/wiki`](docs/wiki/Home.md) in this repository is its source and already describes master. Design history is in [`docs/design`](docs/design/SPECIFICATION_MVP.md). For AI agents, [`docs/agents`](docs/agents) has `llms.txt`, `llms-full.txt` and a compost Agent Skill (`compost agent skill` installs it; see [AI agents](docs/wiki/AI-Agents.md)).
 

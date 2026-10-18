@@ -105,6 +105,16 @@ pub enum BackupCommand {
         #[arg(long)]
         force_unlock: bool,
     },
+    /// Run the scheduled backups that are due; cron runs it on the server
+    #[command(hide = true)]
+    Tick {
+        /// The server's compost folder
+        #[arg(long)]
+        server_home: String,
+        /// The server's name, for archive names
+        #[arg(long)]
+        server_name: String,
+    },
     /// Delete the archives of backup profiles beyond the number their `keep` sets
     Prune {
         /// Only this profile's archives (default: every profile)
@@ -285,6 +295,10 @@ pub fn run(cli: Cli) -> Result<()> {
             profile,
             force_unlock,
         }) => server::backup_run(&home, server, &profile, force_unlock, &connect),
+        Command::Backup(BackupCommand::Tick {
+            server_home,
+            server_name,
+        }) => server::backup_tick(&server_home, &server_name),
         Command::Backup(BackupCommand::Prune {
             profile,
             target,

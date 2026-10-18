@@ -26,6 +26,8 @@ pub struct AppRun {
     /// `None`: the server's `backup.target`.
     pub target: Option<String>,
     pub keep: Option<u32>,
+    /// Cron expression of scheduled runs, if any.
+    pub schedule: Option<String>,
     pub volumes: Vec<String>,
     pub stop: Option<StopServices>,
     pub before_backup: Vec<Step>,
@@ -38,6 +40,7 @@ pub struct ServerRun {
     pub format: Format,
     pub target: Option<String>,
     pub keep: Option<u32>,
+    pub schedule: Option<String>,
 }
 
 /// The profile `name` as the server defines it, if it does.
@@ -98,6 +101,7 @@ pub fn app_run(
             .or(profile.target)
             .or_else(|| backup.target.clone()),
         keep: profile.keep,
+        schedule: scheduled(profile.schedule),
         volumes: profile.volumes.unwrap_or_else(|| backup.volumes.clone()),
         stop: profile.stop.or_else(|| backup.stop.clone()),
         before_backup: profile
@@ -123,7 +127,13 @@ pub fn server_run(settings: Option<&BackupSettings>, flags: &Flags) -> Option<Se
         format: flags.format.or(profile.format).unwrap_or_default(),
         target: flags.target.clone().or(profile.target),
         keep: profile.keep,
+        schedule: scheduled(profile.schedule),
     })
+}
+
+/// `off` is no schedule.
+fn scheduled(schedule: Option<String>) -> Option<String> {
+    schedule.filter(|s| s != super::schedule::OFF)
 }
 
 /// Error for a profile that neither file defines.
@@ -154,7 +164,7 @@ mod tests {
     fn settings() -> BackupSettings {
         serde_yaml_ng::from_str(
             "{target: server, profiles: {
-               daily: {include: [links], keep: 7},
+               daily: {include: [links], keep: 7, schedule: '0 3 * * *'},
                weekly: {keep: 4, target: local, format: raw},
                apps: {server: false}}}",
         )
@@ -202,6 +212,10 @@ mod tests {
         assert_eq!(daily.target.as_deref(), Some("nas"));
         assert_eq!(app_run(Some(&settings), &app, &profile("weekly")), None);
         assert_eq!(app_run(Some(&settings), &app, &profile("nope")), None);
+        assert_eq!(daily.schedule.as_deref(), Some("0 3 * * *"));
+        let quiet = self::app("{name: q, backup: {profiles: {daily: {schedule: off}}}}");
+        let run = app_run(Some(&settings), &quiet, &profile("daily")).unwrap();
+        assert_eq!((run.schedule, run.keep), (None, Some(7)));
 
         let anon = app_run(Some(&settings), &app, &profile("anon")).unwrap();
         assert_eq!(anon.include, [Component::Volumes]);

@@ -50,5 +50,5 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | Side | Needs |
 |---|---|
 | Your machine | Linux or macOS, the `compost` binary, an OpenSSH client |
-| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin |
+| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin; for [scheduled backups](Backup-and-Restore.md#scheduled-backups) also `cron` |
 | Server user | Logs in with an SSH key, member of the `docker` group (no sudo) |

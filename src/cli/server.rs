@@ -243,6 +243,27 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
         );
     }
 
+    if let (Some(server_home), false) = (&report.home, report.status == Status::Uninitialized) {
+        let ctx = crate::shared::ServerCtx {
+            connector: connector.as_ref(),
+            home: server_home.clone(),
+        };
+        let records = crate::server::state_file::StateFile::load(&ctx)?.backups;
+        if !records.is_empty() {
+            out!("  scheduled backups:");
+            let owner = records.iter().map(|r| r.owner.len()).max().unwrap_or(0);
+            let profile = records.iter().map(|r| r.profile.len()).max().unwrap_or(0);
+            for record in &records {
+                out!(
+                    "    {:<owner$}  {:<profile$}  {}",
+                    record.owner,
+                    record.profile,
+                    record.describe()
+                );
+            }
+        }
+    }
+
     if report.status == Status::Degraded {
         return Err(CompostError::Unhealthy(format!(
             "{}: some shared applications are not running",
@@ -326,6 +347,14 @@ pub fn deploy(
         &config,
         &options,
     )?;
+    if !args.dry_run {
+        crate::server::schedule::refresh(
+            connector.as_ref(),
+            server.server_home(),
+            &manager.manager_key,
+            &server.name,
+        )?;
+    }
 
     if apply && !args.dry_run {
         out!();
@@ -396,6 +425,12 @@ pub fn restore(
         &manager.manager_key,
         &options,
     )?;
+    crate::server::schedule::refresh(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &server.name,
+    )?;
     out!();
     state(home, Some(&server.name), connect)
 }
@@ -438,6 +473,11 @@ pub fn backup_run(
         profile,
         force_unlock,
     )
+}
+
+/// `compost backup tick`, run by cron on the server.
+pub fn backup_tick(server_home: &str, server_name: &str) -> Result<()> {
+    crate::server::schedule::tick(server_home, server_name)
 }
 
 /// `compost backup prune`

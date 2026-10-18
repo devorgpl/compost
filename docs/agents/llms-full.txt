@@ -60,7 +60,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | Side | Needs |
 |---|---|
 | Your machine | Linux or macOS, the `compost` binary, an OpenSSH client |
-| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin |
+| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin; for [scheduled backups](Backup-and-Restore.md#scheduled-backups) also `cron` |
 | Server user | Logs in with an SSH key, member of the `docker` group (no sudo) |
 
 ---
@@ -341,14 +341,10 @@ Set where backups go in `compost-server.yaml` and deploy it:
 backup:
   target: server       # archives stay on the server, in ~/.compost-server/backups
   profiles:
-    daily: {keep: 7}   # the shared apps and every app; the 7 newest archives of each are kept
+    daily: {keep: 7, schedule: "0 3 * * *"}   # the shared apps and every app at 03:00; the 7 newest archives of each are kept
 ```
 
-Then, e.g. from cron on your machine:
-
-```sh
-compost backup run daily
-```
+The next `server deploy` sets the schedule up on the server (it needs `cron` there); `compost server state` shows the last runs, and `compost backup run daily` runs it now.
 
 See [Backup and restore](Backup-and-Restore.md), also for moving to a new server.
 
@@ -738,17 +734,15 @@ compost app remove myapp-review --purge database --volumes --yes
 backup:
   target: server
   profiles:
-    daily:  {include: [links], keep: 7}     # databases only
-    weekly: {keep: 4}                       # links, sources and volumes
+    daily:  {include: [links], keep: 7, schedule: "30 2 * * 1-6"}   # databases only
+    weekly: {keep: 4, schedule: "30 2 * * sun"}                     # links, sources and volumes
 ```
 
 ```sh
-# crontab on your machine
-30 2 * * 1-6  compost -s prod backup run daily
-30 2 * * 0    compost -s prod backup run weekly
+compost -s prod server deploy --apply
 ```
 
-Each run backs up the shared apps and every instance into their own archives on the server and deletes the oldest beyond `keep`. `compost -s prod backup list` shows what's there. See [Profiles](Backup-and-Restore.md#profiles).
+The server then runs each one by itself: the shared apps and every instance into their own archives, the oldest beyond `keep` deleted. `compost -s prod server state` shows the last runs, `compost -s prod backup list` the archives, and `compost -s prod backup run daily` runs one now. See [Scheduled backups](Backup-and-Restore.md#scheduled-backups).
 
 ## An app with its own database
 
@@ -1962,6 +1956,7 @@ compost app restore myapp-prod-….compost.tar.gz --prefix review -f review.yaml
 compost server backup                               # shared apps: data, config, secrets
 compost server restore prod-….compost.tar.gz          # onto a new server, then `app restore`
 compost backup run daily                            # a profile: shared apps and every instance, old archives deleted
+                                                    # (or by itself, on the server: `schedule` in the profile)
 compost backup list                                 # archives on the server
 ```
 
@@ -2032,8 +2027,8 @@ A profile names a kind of backup: what it saves, where it goes and how many arch
 backup:
   target: server
   profiles:
-    daily:     {include: [links], keep: 7}                      # databases only
-    weekly:    {include: [links, sources, volumes], keep: 4, target: nas}
+    daily:     {include: [links], keep: 7, schedule: "0 3 * * *"}   # databases only, every night
+    weekly:    {include: [links, sources, volumes], keep: 4, target: nas, schedule: "0 4 * * sun"}
     predeploy: {keep: 3, server: false}                         # apps only; see below
 ```
 
@@ -2052,6 +2047,7 @@ compost app backup myapp-prod --profile weekly --target local   # flags override
 | `format` | `compost` | As `--format` |
 | `target` | the app's, then the server's `backup.target` | Where the archives go |
 | `keep` | all | Archives kept per instance (and for the shared apps) at the target; older ones are deleted after each backup with the profile |
+| `schedule` | – | When the backup runs by itself, as a cron expression; see [Scheduled backups](#scheduled-backups) |
 | `server` | `true` | `compost-server.yaml` only: `false` leaves the shared apps out of `backup run` and refuses `server backup --profile` |
 
 An app changes a profile for itself, opts out of it or adds its own in `compost.yaml`. Its profiles also take the app's backup settings, `volumes`, `stop`, `before_backup` and `after_backup`, which replace the app's `backup` keys for that profile:
@@ -2061,7 +2057,7 @@ An app changes a profile for itself, opts out of it or adds its own in `compost.
 backup:
   volumes: [uploads]
   profiles:
-    weekly: {keep: 8}                     # the other keys come from the server's profile
+    weekly: {keep: 8, schedule: "0 2 * * sat"}   # the other keys come from the server's profile
     daily: false                          # left out of `backup run daily`
     anonymized:                           # this app's own profile
       include: [volumes]
@@ -2089,6 +2085,44 @@ compost backup prune --profile daily --keep 3 --target nas --yes
 ```
 
 It lists what it deletes and asks unless `--yes`. With `--target local` it looks in the current folder.
+
+## Scheduled backups
+
+A profile with a `schedule` runs by itself, on the server, for the shared apps and for every instance it applies to, each on its own:
+
+```yaml
+# compost-server.yaml
+backup:
+  profiles:
+    daily: {include: [links], keep: 7, schedule: "0 3 * * *"}
+```
+
+```sh
+compost server deploy --apply      # installs compost on the server and a crontab line
+compost server state               # shows each scheduled backup's last run
+```
+
+`schedule` is a cron expression in the server's local time: minute, hour, day of month, month and day of week, each `*`, a number, a range (`1-5`), a list (`1,15`) or a step (`*/6`). Days of the week are `0`–`7` (Sunday is `0` and `7`) or `mon`…`sun`, months `1`–`12` or `jan`…`dec`. `@hourly`, `@daily`, `@weekly` and `@monthly` work too. When both day of month and day of week are set, either one matches, as in cron.
+
+An app gives a profile its own time with `schedule` in its `compost.yaml`, keeps the profile without a schedule with `schedule: off`, or leaves it with `false`; its own profiles can have a schedule as well:
+
+```yaml
+# compost.yaml
+backup:
+  profiles:
+    daily: {schedule: "30 3 * * *"}    # half an hour later than the others
+    weekly: {schedule: off}            # only `backup run weekly` or `--profile weekly`
+```
+
+**How it runs.** When any profile has a schedule, `server deploy`, `app deploy` and `server restore` put the same version of compost at `~/.compost-server/bin/compost` and add a line to the server user's crontab that runs `compost backup tick` every five minutes. The tick runs every backup whose time has come since its last run, one after another, as `app backup --profile` and `server backup --profile` would: the same archive names, targets and `keep`. It needs nothing from your machine; S3 credentials must be stored on the server (`server deploy --secret`). Its output goes to `~/.compost-server/logs/backup.log`.
+
+- **New schedules** wait for their first time; they don't run at once.
+- **Missed times**, e.g. while the server was off, are caught up once at the next tick, if they are less than a month old.
+- **Deploys first**: while another command holds the server's lock, the tick waits for it.
+- **Results** are kept in `state.yaml`: `server state` lists every scheduled backup with its last run (`ok`, `failed` with the error, or `waiting` for its first run), `app state` those of the instance.
+- When no profile has a schedule any more, the next deploy removes the crontab line; `app remove` does too, if it removed the last scheduled instance.
+
+**Requirements.** The server needs `cron` (the `crontab` command). compost copies itself to the server when it is a static Linux build for the server's CPU (the release builds are) or when the server is this machine; otherwise the server downloads the same release from GitHub and checks it against `SHA256SUMS`, which needs `curl` or `wget`. A development build that can't run on the server can't do either: set `COMPOST_SERVER_BINARY` to a static Linux build to install that one. The line names the server as you defined it (`compost server define`), which goes into the archive names; deploy from machines that use the same name.
 
 ## Before a deploy
 
@@ -2332,7 +2366,7 @@ backup:
 | `before_backup`, `after_backup` | `[]` | Steps run before anything is saved and after it is saved |
 | `before_restore`, `after_restore` | `[]` | Steps run before data is loaded into a deployed instance and after it is loaded |
 | `target` | the server's `backup.target` | Target of this app's backups: `local`, `server` or a name from the server's `backup.targets`. A profile's target wins over it |
-| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
+| `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, `schedule` or `schedule: off`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
@@ -2440,11 +2474,11 @@ backup:
     nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
     offsite: {type: s3, bucket: acme-backups, path: prod, endpoint: https://s3.example.com}   # credentials in the secrets file
   profiles:
-    daily: {include: [links], keep: 7, target: nas}
+    daily: {include: [links], keep: 7, target: nas, schedule: "0 3 * * *"}
     predeploy: {keep: 3, server: false}
 ```
 
-`targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
+`targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
@@ -2501,6 +2535,7 @@ compost config show
 | `COMPOST_HOME` | compost's local folder, default `~/.compost` |
 | `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context) |
 | `COMPOST_SSH_KEY_FILE` | SSH private key, when `--ssh-key-file` isn't given (wins over the server's `identity_file`) |
+| `COMPOST_SERVER_BINARY` | compost binary that deploys install on the server for [scheduled backups](Backup-and-Restore.md#scheduled-backups), instead of this one or a download |
 
 ---
 
@@ -2548,14 +2583,16 @@ infra/
 
 ## On the server
 
-`~/.compost-server` of the server user, or `server_home` from `servers.yaml`. compost writes only here and to Docker.
+`~/.compost-server` of the server user, or `server_home` from `servers.yaml`. compost writes only here and to Docker, and, for [scheduled backups](Backup-and-Restore.md#scheduled-backups), one line in the server user's crontab, between `# compost: scheduled backups of <folder>` and `# compost: end of <folder>`.
 
 ```
 ~/.compost-server/
 ├── manager_key                       key of the compost installation managing this server
 ├── compost-server.yaml               effective server config, without secrets
-├── state.yaml                        status of shared apps and instances
+├── state.yaml                        status of shared apps and instances, last runs of scheduled backups
 ├── lock/                             exists while a command changes the server
+├── bin/compost                       compost itself, for scheduled backups
+├── logs/backup.log                   output of scheduled backups
 ├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
