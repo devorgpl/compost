@@ -304,6 +304,36 @@ services:
 
 That domain serves only `/realms/<realm>` and `/resources`; the admin console and other realms get a 404 there. The issuer and login pages use `public_url`. Links that share a realm must agree on it.
 
+## Workflow links
+
+A workflow link gives services a namespace of their own on a [Temporal](Servers-and-Shared-Apps.md#temporal-workflow) server, for workers and the code that starts workflows:
+
+```yaml
+services:
+  workflow:
+    - name: jobs
+      type: temporal
+      version: "*"             # requirement on the major version
+      instance: temporal       # optional: this shared app, when several match
+      namespace: billing       # default <app>-<prefix>; created if missing
+      retention_days: 7        # how long closed workflows are kept; default 3
+      targets: [worker, backend]
+      environment:
+        TEMPORAL_ADDRESS: wf_address
+        TEMPORAL_NAMESPACE: wf_namespace
+```
+
+| Link value | Example |
+|---|---|
+| `wf_host` | `temporal` |
+| `wf_port` | `7233` |
+| `wf_address` | `temporal:7233` |
+| `wf_namespace` | `myapp-staging` |
+
+The namespace is created, or its retention updated, before the app's containers start. Links of several apps can share a namespace when they name it; they must agree on `retention_days`. Namespaces separate workflows but not access: Temporal has no login, so every app on the server's network can reach every namespace.
+
+`--purge workflow` on `app remove` (or for a dropped link) deletes the namespace and its workflows, unless another link uses it; otherwise it stays. App backups save only the link record: workflows are in Temporal's databases, which a server backup holds.
+
 ## Monitoring links
 
 A monitoring link sends the output of services to a [monitoring app](Servers-and-Shared-Apps.md#openobserve-monitoring), has their Prometheus metrics scraped, and passes the collector's address to services that send OpenTelemetry data themselves:

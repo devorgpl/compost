@@ -60,7 +60,7 @@ compost server generate [--with caddy,postgres,keycloak,openobserve,caddysecureb
 compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret file] [--dry-run [--diff]]
 ```
 
-`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`. Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
+`server generate` writes starter files to the current folder (`compost-server.yaml`, `compost-server.prod.yaml`, `.compost-server.secrets.example.yaml`; see [Production setup](Production-Setup.md#3-shared-apps)). It adds types that a chosen type needs: `keycloak` brings `postgres` and `caddy`, `openobserve` brings `caddy`, `temporal` brings `postgres`, `caddy` and `keycloak` (for its UI's login). Any ingress type meets the need for `caddy`, so `--with caddysecurebuild,keycloak` doesn't add `caddy`; choosing two ingress types is an error. `--list` shows the available types.
 
 `server deploy` reads `compost-server.yaml` and `.compost-server.secrets.yaml` from the current folder, or the files given with `-f`, plus the secrets stored on the server with `--secret` ([Secrets](Secrets.md#stored-on-the-server)). It:
 
@@ -79,7 +79,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps, workflow servers (Temporal) and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -397,6 +397,47 @@ Log in with `root_email` and `root_password`; compost writes both to `connectors
 
 The log driver sends asynchronously: linked containers start and run while the collector is down, and `docker logs` keeps working.
 
+### temporal (`workflow`)
+
+A [Temporal](https://temporal.io) server for durable workflows, which apps link to (see [Workflow links](Applications.md#workflow-links)). It needs a `postgres` database with version 13 or newer on the same server: compost creates two databases on it, `compost_workflow_<name>_db` and `compost_workflow_<name>_visibility`. With `ui`, it also serves Temporal's web UI on a domain through the ingress, with a login through an OIDC provider.
+
+```yaml
+shared:
+  workflow:
+    - name: temporal
+      type: temporal
+      version: 1
+      configuration:
+        ui:
+          url: https://temporal.example.com
+          oidc: {realm: staff}       # users log in from this keycloak realm
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `1` | Major version; compost pins the images (`temporalio/server:vX.Y.Z`) |
+| `image` | – | Another server image |
+| `configuration.admin_tools_image` | `temporalio/admin-tools` with the tag of the server image | Sets up the database schema and runs the `temporal` CLI for compost. Needed when `image` has no tag |
+| `configuration.history_shards` | `4` | Temporal's shard count. Can't change after the first deploy |
+| `configuration.database.instance` | – | The database to use, when several match |
+| `configuration.dynamic_config` | – | Temporal's [dynamic config](https://docs.temporal.io/references/dynamic-configuration), e.g. `{limit.maxIDLength: [{value: 255}]}`. A change is applied without a restart |
+| `configuration.ui.url` | – | Public URL of the web UI, `https://<domain>` or `http://<domain>[:port]`, no path. Without `ui`, there is no UI |
+| `configuration.ui.oidc` | – | Log in to the UI through an OIDC provider: `type` (default `keycloak`), `instance` (when several match), `realm` (default `compost-workflow-<name>`) |
+| `configuration.ui.anonymous` | `false` | `true` serves the UI without a login, instead of `oidc`. Anyone who reaches it can start, signal and terminate every workflow |
+| `configuration.ui.image` | `temporalio/ui:X.Y.Z` | |
+
+The project runs four containers:
+- **schema** creates or updates Temporal's tables, then exits. It runs before the server on every start, and does nothing when the tables are current.
+- **server**, reached by apps on network `compost-wf-<name>` at `<name>:7233`. Its Prometheus metrics are on port 9090, not published.
+- **admin**, Temporal's admin tools, where compost runs the `temporal` CLI to create and delete namespaces. `docker exec compost-workflow-<name>-admin temporal …` gives you the same CLI.
+- **ui**, with `ui`.
+
+With `oidc`, the link creates a client in the realm; the realm's users can log in to the UI and see every namespace. compost creates no users: add them in Keycloak's admin console, or name the realm of your staff with `realm`. Temporal's own API has no login: an app on `compost-wf-<name>` can reach every namespace, not only its own.
+
+Upgrade Temporal one minor version at a time (e.g. `1.31` to `1.32`), as Temporal requires: set `image` (and `admin_tools_image`, if `image` has no tag) to each version in turn and deploy. The schema container brings the tables up to date before the new server starts.
+
+Workflows and namespaces live in the two databases and are saved with them; a server backup adds the shard count. `server restore` starts Temporal after its databases are loaded.
+
 ## Monitoring shared apps
 
 `monitoring` on a shared app sends its output, and the metrics it serves, to a monitoring app:
@@ -420,9 +461,9 @@ shared:
 |---|---|---|
 | `monitoring.instance` | – | The monitoring app to use, when there are several |
 | `monitoring.logs` | `true` | Collect the output of its containers |
-| `monitoring.metrics` | `true` | Scrape its metrics, if it serves any: Caddy does |
+| `monitoring.metrics` | `true` | Scrape its metrics, if it serves any: Caddy and Temporal do |
 
-Caddy, Postgres and Keycloak can be monitored. External shared apps and monitoring apps can't. It works in both directions: OpenObserve's domain is served by the Caddy that sends its logs to it. On the first deploy, Caddy starts before OpenObserve, and Docker keeps Caddy's output in a small buffer and sends it once the collector runs.
+Caddy, Postgres, Keycloak and Temporal can be monitored. External shared apps and monitoring apps can't. It works in both directions: OpenObserve's domain is served by the Caddy that sends its logs to it. On the first deploy, Caddy starts before OpenObserve, and Docker keeps Caddy's output in a small buffer and sends it once the collector runs.
 
 ## External databases
 
@@ -485,7 +526,7 @@ ingress
    └─ myapp-staging/site  staging.example.com  / → myapp-staging-web:8080  app: deployed
 ```
 
-Links of shared apps (Keycloak's database and domain) show as `shared <kind>/<name>/<entry>`. A link whose instance no longer exists shows as a leftover record.
+Links of shared apps (Keycloak's database and domain, Temporal's databases, domain and login) show as `shared <kind>/<name>/<entry>`. A link whose instance no longer exists shows as a leftover record.
 
 ## Disk space
 

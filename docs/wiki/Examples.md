@@ -340,6 +340,69 @@ curl -H 'Host: login.localhost' http://localhost:18080/realms/sampleapp/.well-kn
 
 To remove the login, delete both entries and deploy with `--purge oidc`; without it the realm, client and users stay in Keycloak.
 
+## Durable workflows with Temporal
+
+Add Temporal to `compost-server.yaml` (see [Servers and shared apps](Servers-and-Shared-Apps.md#temporal-workflow)). It keeps its data on the Postgres server, and its UI logs in through Keycloak; `compost server generate --with temporal` writes the same:
+
+```yaml
+# compost-server.yaml
+shared:
+  workflow:
+    - name: temporal
+      type: temporal
+      version: 1
+      configuration:
+        ui:
+          url: http://temporal.localhost:18080
+          oidc: {realm: temporal}
+```
+
+```sh
+compost server deploy --apply
+```
+
+The UI's users log in from realm `temporal`, which the deploy creates: add them in Keycloak's admin console (http://auth.localhost:18080/admin/, realm `temporal`, Users).
+
+An app with a worker gets its own namespace:
+
+```yaml
+# docker-compose.yaml
+services:
+  worker:
+    build: ./worker
+    restart: unless-stopped
+```
+
+```yaml
+# compost.yaml
+name: orders
+deployment:
+  compose_file: docker-compose.yaml
+  build: true
+services:
+  workflow:
+    - name: jobs
+      type: temporal
+      retention_days: 7
+      targets: [worker]
+      environment:
+        TEMPORAL_ADDRESS: wf_address
+        TEMPORAL_NAMESPACE: wf_namespace
+app_services:
+  - {name: worker, service: worker}
+```
+
+The worker connects with the two variables, e.g. in Python `await Client.connect(os.environ["TEMPORAL_ADDRESS"], namespace=os.environ["TEMPORAL_NAMESPACE"])`.
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml   # prefix: local
+compost app state orders-local
+#     workflow   jobs             temporal: namespace orders-local, retention 7 days
+docker exec compost-workflow-temporal-admin temporal workflow list -n orders-local
+```
+
+The workflows show in the UI at http://temporal.localhost:18080/ under namespace `orders-local`. `compost app remove orders-local --purge workflow` deletes the namespace with the app.
+
 ## Logs and metrics in OpenObserve
 
 Add a monitoring app to `compost-server.yaml`, and let Caddy and Postgres send their output to it. Caddy serves OpenObserve's UI and also sends its own access log there:

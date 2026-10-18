@@ -11,6 +11,7 @@ pub mod keyvalue;
 pub mod monitoring;
 pub mod oidc;
 pub mod storage;
+pub mod workflow;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -505,6 +506,7 @@ static KINDS: &[&dyn Kind] = &[
     &monitoring::MonitoringKind,
     &oidc::OidcKind,
     &storage::StorageKind,
+    &workflow::WorkflowKind,
 ];
 
 pub fn find_kind(name: &str) -> Option<&'static dyn Kind> {

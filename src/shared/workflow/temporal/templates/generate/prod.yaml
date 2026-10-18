@@ -1,0 +1,4 @@
+    - name: temporal
+      configuration:
+        ui:
+          url: https://temporal.example.com

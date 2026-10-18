@@ -89,6 +89,12 @@ infra/
 │   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
 │   │   ├── image                     the image to run
 │   │   └── secrets/communication.env the channel's settings and credentials
+│   ├── workflow/temporal/
+│   │   ├── compose.yaml              schema, server, admin and ui
+│   │   ├── compose.override.yaml     networks and settings from its links (databases, ingress, oidc)
+│   │   ├── schema.sh                 creates or updates Temporal's tables
+│   │   ├── cluster.env               the shard count, fixed by the first deploy
+│   │   └── dynamicconfig/docker.yaml `dynamic_config`
 │   └── monitoring/monitoring/
 │       ├── compose.yaml              openobserve and collector
 │       ├── compose.override.yaml     ingress network, if `url` is set
@@ -101,6 +107,7 @@ infra/
 │   ├── database/postgres18/root-connector.yaml, <instance>-<entry>.yaml
 │   │                                 (for an external database: how to reach it, and root credentials)
 │   ├── oidc/keycloak/root-connector.yaml, <instance>-<entry>.yaml
+│   ├── workflow/temporal/<instance>-<entry>.yaml   the link's namespace and retention
 │   └── monitoring/monitoring/root-connector.yaml, <instance>-<entry>.yaml
 │                                     (root-connector.yaml: URL and root login)
 └── apps/<app>/<prefix>/
@@ -119,8 +126,8 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 |---|---|
 | Instance compose project | `<app>-<prefix>`, e.g. `myapp-staging` |
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
-| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
-| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
+| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, Temporal's other services `compost-shared-<name>-schema`, `-admin` and `-ui`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
+| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, Temporal's admin tools `compost-workflow-<name>-admin`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
 | Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress; `compost-communication:<hash>` of communication apps |
 | Release image | `compost-release/<app>-<prefix>:<n>-<service>`: the image a service ran in release `<n>`, kept for `app rollback` |
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
@@ -129,6 +136,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Key-value network | `compost-kv-<name>`; host name `<name>` |
 | Storage network | `compost-storage-<name>`; host name `<name>` |
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
+| Workflow network | `compost-wf-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
 | A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |
 

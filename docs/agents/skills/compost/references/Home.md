@@ -28,11 +28,11 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `valkey` and `redis` (kind `keyvalue`), `garage` and external `s3` (kind `storage`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres`, `mariadb` and `mysql` (kind `database`), `valkey` and `redis` (kind `keyvalue`), `garage` and external `s3` (kind `storage`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`), `temporal` (kind `workflow`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
-| **Link** | A connection between an instance and a shared app: a domain on the ingress, a database, a login realm, log collection. |
+| **Link** | A connection between an instance and a shared app: a domain on the ingress, a database, a login realm, a workflow namespace, log collection. |
 | **Manager key** | A UUID that marks which compost installation manages a server. Copy it to manage the same servers from another machine. |
 
 ## Pages

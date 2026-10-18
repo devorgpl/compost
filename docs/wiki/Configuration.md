@@ -146,6 +146,17 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `users[]` | `[]` | `username`, `email`, `first_name`, `last_name`, `password`. Secret |
 | `targets`, `environment` | | Values: `oidc_issuer`, `oidc_internal_url`, `oidc_realm`, `oidc_client_id`, `oidc_client_secret` |
 
+### `services.workflow[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name`, `type` | required | `type: temporal` |
+| `version`, `instance` | `"*"`, – | As for databases |
+| `namespace` | `<app>-<prefix>` | Created if missing. `^[a-z0-9][a-z0-9._-]{0,99}$` |
+| `retention_days` | `3` | How long closed workflows are kept |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `wf_host`, `wf_port`, `wf_address`, `wf_namespace` |
+
 ### `services.monitoring[]`
 
 | Key | Default | Meaning |
@@ -201,6 +212,8 @@ shared:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
     - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
+  workflow:
+    - {name: temporal, type: temporal, version: 1, configuration: {ui: {url: https://temporal.example.com, oidc: {}}}}
   communication:
     - {name: ops-chat, type: matrix, configuration: {homeserver: https://matrix.example.org, room: "!abc:example.org"}}
 backup:

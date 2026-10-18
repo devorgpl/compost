@@ -1,0 +1,11 @@
+    # Durable workflows (Temporal). Needs postgres 13 or newer; its web UI is
+    # served by the ingress and logs in with keycloak.
+    - name: temporal
+      type: temporal
+      version: 1
+      configuration:
+        ui:
+          # Public URL of the UI; its host is routed through the ingress.
+          url: http://temporal.localhost:18080
+          # Users log in from this keycloak realm; create them there.
+          oidc: {realm: temporal}

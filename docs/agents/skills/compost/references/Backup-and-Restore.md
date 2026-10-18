@@ -206,7 +206,7 @@ compost app backup [<instance> | -f files | --app <name> --prefix <prefix> | --a
 
 | Part | Saved |
 |---|---|
-| `links` | Database dumps (plain SQL); the objects of storage buckets; ingress, monitoring and key-value records and site files, for reference. Collected logs and metrics and key-value data are not part of an app backup |
+| `links` | Database dumps (plain SQL); the objects of storage buckets; ingress, monitoring, key-value and workflow records and site files, for reference. Collected logs and metrics, key-value data and workflows are not part of an app backup |
 | `sources` | The uploaded sources (only the compose file when the folder isn't uploaded) |
 | `volumes` | The named volumes listed under `backup.volumes` in `compost.yaml` |
 | `images` | `docker save` of the services' images |
@@ -321,9 +321,9 @@ compost server backup [--shared <name>]… [--format …] [-o …] [--target …
 compost server restore <archive> [--shared <name>]… [--source …] [--yes]
 ```
 
-A server backup holds the stored `compost-server.yaml`, the secrets stored with `server deploy --secret` (restored only when the server has none), all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates, config and `sites` (for `caddysecurebuild` also its CrowdSec configuration, but not the agent's bans: a restored server starts without bans, with a new bouncer key); OpenObserve's data folder and root login. OpenObserve keeps recent data in memory, so it is stopped while its folder is copied (seconds to minutes, depending on its size); the collector keeps retrying what arrives meanwhile for up to five minutes. It holds secrets. External databases are left out; `app backup` saves the apps' data on them.
+A server backup holds the stored `compost-server.yaml`, the secrets stored with `server deploy --secret` (restored only when the server has none), all link records and each shared app's data: Postgres `pg_dumpall` and its password file; Caddy's certificates, config and `sites` (for `caddysecurebuild` also its CrowdSec configuration, but not the agent's bans: a restored server starts without bans, with a new bouncer key); OpenObserve's data folder and root login; Temporal's shard count (its workflows are in its Postgres databases). OpenObserve keeps recent data in memory, so it is stopped while its folder is copied (seconds to minutes, depending on its size); the collector keeps retrying what arrives meanwhile for up to five minutes. It holds secrets. External databases are left out; `app backup` saves the apps' data on them.
 
-`server restore` is for a server that doesn't have these shared apps yet (exit 3 if one is deployed). It puts back the records and files, deploys the shared apps, loads their data and then deploys Keycloak, which finds its data in the restored database, and OpenObserve, which needs Caddy for its domain. The `monitoring` of shared apps is set up in that last step too.
+`server restore` is for a server that doesn't have these shared apps yet (exit 3 if one is deployed). It puts back the records and files, deploys the shared apps, loads their data and then deploys Keycloak and Temporal, which find their data in the restored databases, and OpenObserve, which needs Caddy for its domain. The `monitoring` of shared apps is set up in that last step too.
 
 ## Moving to a new server
 

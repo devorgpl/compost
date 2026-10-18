@@ -692,11 +692,14 @@ fn dry_run(
         );
         out!("  {:<10} {:<16} {action}", plan.kind_name(), plan.app.name);
         if let Some(consumer) = &plan.consumer {
-            let uses: Vec<String> = consumer
-                .links
-                .iter()
-                .map(|link| format!("{} {}", link.kind.name(), link.shared.name))
-                .collect();
+            // Once each: Temporal has two links to one database.
+            let mut uses: Vec<String> = Vec::new();
+            for link in &consumer.links {
+                let used = format!("{} {}", link.kind.name(), link.shared.name);
+                if !uses.contains(&used) {
+                    uses.push(used);
+                }
+            }
             out!("      uses {}", uses.join(", "));
         }
         server_plan::print_files("      ", &changes, options.diff);
