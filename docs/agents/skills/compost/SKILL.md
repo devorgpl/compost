@@ -18,7 +18,7 @@ The `references/` folder holds the full user documentation of the compost versio
 ## Safety rules
 
 - **Dry-run first.** Before any `server deploy` or `app deploy`, run it with `--dry-run` (add `--diff` for the changed lines) and show the user what would change: files, and which services are recreated, built, pulled or reloaded. `--dry-run` never changes the server.
-- **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `app rollback`, `server restore`, `secret deploy`, `app deploy --secret`, `server deploy --secret` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data. `app exec` and `app run` run any command in the user's containers: ask before anything that is not read-only (migrations, shells, writes).
+- **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `app rollback`, `server restore`, `secret deploy`, `app deploy --secret` and `server deploy --secret` without `--dry-run` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data. `app exec` and `app run` run any command in the user's containers: ask before anything that is not read-only (migrations, shells, writes).
 - `compost config set deploy.apply true` makes every deploy apply. Check it with `compost config show`, and pass `--no-apply` when you only want to upload.
 - **Secrets.** Overlays (`.compost-*.yaml`, `.compost.*.yaml`, `.compost-server.secrets.yaml`) hold passwords: never commit them, print them or paste them into chat. Commit only `*.example.yaml`. Leave passwords out to have compost generate and keep them. Postgres, MariaDB and MySQL `root_password`, Keycloak `admin_password` and OpenObserve's `root_password` can't change after the first deploy. See [Secrets](references/Secrets.md).
 - Your compose file is never changed: compost adds networks and variables in an override file on the server. Don't edit files in `~/.compost-server` on a server by hand.
@@ -54,12 +54,12 @@ compost server deploy --apply   -f compost-server.yaml,compost-server.prod.yaml 
 ```sh
 compost app generate                                  # compost.yaml + .compost.secrets.example.yaml
 # uncomment the links you need in compost.yaml; per instance: cp .compost.secrets.example.yaml .compost-staging.yaml
-compost app deploy --dry-run -f compost.yaml,.compost-staging.yaml
-compost app deploy --apply   -f compost.yaml,.compost-staging.yaml
+compost app deploy --dry-run --secret .compost-staging.yaml
+compost app deploy --apply   --secret .compost-staging.yaml
 compost app state myapp-staging
 ```
 
-Or store the overlay on the server, so any machine or CI deploys with `compost.yaml` alone: `compost secret deploy .compost-staging.yaml`, then `compost app deploy --apply --prefix staging`; or both at once with `compost app deploy --apply --secret .compost-staging.yaml`, which replaces the stored overlay.
+Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stores the overlay on the server, so later deploys from any machine or CI need only `compost.yaml` and the prefix (`compost app deploy --apply --prefix staging`), and a new `--secret` replaces the stored copy as a whole. `-f compost.yaml,.compost-local.yaml` (nothing stored, every deploy needs the file) is for instances on this machine and throwaway copies.
 
 **Roll back a bad deploy:** `compost app releases <instance>` lists the releases; `compost app rollback <instance> --dry-run` shows what the release before the current one changes (images, links), then `compost app rollback <instance>` (or `--to <n>`) deploys it again with the images it ran. It restarts the instance's services and doesn't roll back databases or volumes, so ask first.
 

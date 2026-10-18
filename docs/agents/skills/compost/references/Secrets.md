@@ -1,6 +1,6 @@
 # Secrets
 
-Passwords and other per-instance values (domains, database credentials, OIDC users) live in **overlays**: YAML files merged over `compost.yaml`. You can keep an overlay on your machine and pass it with `-f`, or store it on the server with `compost secret deploy`.
+Passwords and other per-instance values (domains, database credentials, OIDC users) live in **overlays**: YAML files merged over `compost.yaml`. Store an overlay on the server with `app deploy --secret` (or `secret deploy`), so every machine and CI deploys the instance with `compost.yaml` alone. For an instance on your machine you can also keep it local and pass it with `-f`.
 
 ## Rules
 
@@ -10,20 +10,13 @@ Passwords and other per-instance values (domains, database credentials, OIDC use
 - Passwords you leave out are generated on the first deploy (32 hexadecimal characters; OpenObserve's root password starts with `Compost-` to meet its rules), stored on the server and reused by later deploys.
 - On the server, secret files have mode `0600`. Secrets never appear in output, stored configs or remote command lines. `--dry-run` names files with secrets but never shows them, also with `--diff`, and shows variable names, not values.
 
-## Local overlays
-
-```sh
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml
-```
-
-Simple, but every machine that deploys needs the file.
-
 ## Overlays stored on the server
 
 ```sh
-compost secret deploy .compost-staging.yaml [--prefix staging]
-compost app deploy --apply --prefix staging      # compost.yaml + the stored overlay
-compost app deploy --apply --secret .compost-staging.yaml   # store it and deploy, in one step
+compost app deploy --dry-run --secret .compost-staging.yaml   # what it would do; stores nothing
+compost app deploy --apply --secret .compost-staging.yaml     # store it and deploy, in one step
+compost app deploy --apply --prefix staging                   # later: compost.yaml + the stored overlay
+compost secret deploy .compost-staging.yaml [--prefix staging]   # store it without deploying
 compost secret list
 compost secret remove --app myapp --prefix staging
 ```
@@ -37,6 +30,14 @@ The stored overlay must name its app (`name: myapp`). The prefix is `--prefix`, 
 - `secret deploy` and `app deploy --secret` replace the stored overlay as a whole. If the new one leaves out a link that only the old one defined (say an ingress entry with its domains), the next `app deploy` drops that link. Run `app deploy --dry-run` first to see the effect.
 - `app remove` keeps the stored overlay, so deploying the instance again restores it as it was. `secret remove` deletes it.
 - `app backup` saves it in the archive and `app restore` puts it back; such an archive then holds secrets.
+
+## Local overlays
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml
+```
+
+Nothing is stored, so every machine that deploys needs the file. Fine for instances on your machine and throwaway copies.
 
 ## Shared apps
 

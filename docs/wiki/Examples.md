@@ -35,7 +35,7 @@ services:
 ```
 
 ```sh
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+compost app deploy --apply --secret .compost-prod.yaml
 ```
 
 ## API with a database and a migration
@@ -251,7 +251,7 @@ services:
 ```sh
 cd deploy/wiki
 git -C ../upstream/wiki checkout v2.5.0
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+compost app deploy --apply --secret .compost-prod.yaml
 ```
 
 ## An app on AWS RDS
@@ -497,7 +497,7 @@ backup:
 ```
 
 ```sh
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml    # stores the steps
+compost app deploy --apply --secret .compost-prod.yaml    # stores the steps
 compost app backup myapp-prod
 compost app restore myapp-prod-….compost.tar.gz --include volumes --replace --yes
 ```

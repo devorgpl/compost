@@ -304,8 +304,8 @@ pub fn app(args: AppGenerateArgs) -> Result<()> {
     out!("Next:");
     out!("  1. Uncomment the links the app uses in both files and fill in the ports.");
     out!("  2. cp {APP_SECRETS_EXAMPLE} .compost.secrets.yaml   # set domains and passwords");
-    out!("  3. compost secret deploy .compost.secrets.yaml --prefix staging");
-    out!("  4. compost app deploy --apply --prefix staging");
+    out!("  3. compost app deploy --apply --secret .compost.secrets.yaml   # stored on the server");
+    out!("  4. compost app deploy --apply --prefix staging                 # later deploys");
     Ok(())
 }
 
@@ -445,8 +445,8 @@ fn app_files(
         "# Values and secrets of one instance of {name}. Copy to .compost.secrets.yaml
 # (never commit the copy) and store it on the server:
 #
-#   compost secret deploy .compost.secrets.yaml --prefix staging
-#   compost app deploy --apply --prefix staging
+#   compost app deploy --apply --secret .compost.secrets.yaml
+#   compost app deploy --apply --prefix staging    # later deploys, without the file
 #
 # Files named .compost.*.yaml are never uploaded with the sources.
 name: {name}

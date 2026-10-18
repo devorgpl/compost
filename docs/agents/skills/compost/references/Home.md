@@ -6,7 +6,7 @@ compost is a single CLI on your machine. It reaches servers over SSH, or manages
 
 ```sh
 compost server deploy --apply                              # Caddy + Postgres on the server
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml   # your app, with a database and a domain
+compost app deploy --apply --secret .compost-staging.yaml   # your app, with a database and a domain
 ```
 
 ## What it does for you

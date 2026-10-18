@@ -61,21 +61,15 @@ In the app's repository, next to `docker-compose.yaml`:
 compost app generate                             # compost.yaml + .compost.secrets.example.yaml
 ```
 
-Edit `compost.yaml`: uncomment the ingress routes and database links you need (see [Applications](Applications.md)). Then give each instance its values. You can keep them in a local file:
+Edit `compost.yaml`: uncomment the ingress routes and database links you need (see [Applications](Applications.md)). Then give each instance its values in a file you don't commit, and deploy with it:
 
 ```sh
 cp .compost.secrets.example.yaml .compost-staging.yaml        # prefix, domains, passwords
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml
+compost app deploy --dry-run --secret .compost-staging.yaml   # what it would do
+compost app deploy --apply --secret .compost-staging.yaml
 ```
 
-or store them on the server, so any machine (and CI) deploys with `compost.yaml` alone:
-
-```sh
-compost secret deploy .compost-staging.yaml --prefix staging
-compost app deploy --apply --prefix staging
-```
-
-See [Secrets](Secrets.md). Files named `.compost-*.yaml` and `.compost.*.yaml` are never uploaded with the sources.
+`--secret` stores the file on the server, so any machine (and CI) deploys with `compost.yaml` alone; deploy with `--secret` again to replace it. You can also keep the file local and pass it every time with `-f compost.yaml,.compost-staging.yaml`. See [Secrets](Secrets.md). Files named `.compost-*.yaml` and `.compost.*.yaml` are never uploaded with the sources.
 
 ## 5. Day to day
 

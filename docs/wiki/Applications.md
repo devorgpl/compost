@@ -311,11 +311,11 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
+compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret <file>] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
                    [--backup <profile> | --no-backup]
 ```
 
-`-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
+`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`).
 
 A deploy:
 

@@ -16,7 +16,7 @@ compost is a single CLI on your machine. It reaches servers over SSH, or manages
 
 ```sh
 compost server deploy --apply                              # Caddy + Postgres on the server
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml   # your app, with a database and a domain
+compost app deploy --apply --secret .compost-staging.yaml   # your app, with a database and a domain
 ```
 
 ## What it does for you
@@ -298,21 +298,15 @@ In the app's repository, next to `docker-compose.yaml`:
 compost app generate                             # compost.yaml + .compost.secrets.example.yaml
 ```
 
-Edit `compost.yaml`: uncomment the ingress routes and database links you need (see [Applications](Applications.md)). Then give each instance its values. You can keep them in a local file:
+Edit `compost.yaml`: uncomment the ingress routes and database links you need (see [Applications](Applications.md)). Then give each instance its values in a file you don't commit, and deploy with it:
 
 ```sh
 cp .compost.secrets.example.yaml .compost-staging.yaml        # prefix, domains, passwords
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml
+compost app deploy --dry-run --secret .compost-staging.yaml   # what it would do
+compost app deploy --apply --secret .compost-staging.yaml
 ```
 
-or store them on the server, so any machine (and CI) deploys with `compost.yaml` alone:
-
-```sh
-compost secret deploy .compost-staging.yaml --prefix staging
-compost app deploy --apply --prefix staging
-```
-
-See [Secrets](Secrets.md). Files named `.compost-*.yaml` and `.compost.*.yaml` are never uploaded with the sources.
+`--secret` stores the file on the server, so any machine (and CI) deploys with `compost.yaml` alone; deploy with `--secret` again to replace it. You can also keep the file local and pass it every time with `-f compost.yaml,.compost-staging.yaml`. See [Secrets](Secrets.md). Files named `.compost-*.yaml` and `.compost.*.yaml` are never uploaded with the sources.
 
 ## 5. Day to day
 
@@ -396,7 +390,7 @@ services:
 ```
 
 ```sh
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+compost app deploy --apply --secret .compost-prod.yaml
 ```
 
 ## API with a database and a migration
@@ -612,7 +606,7 @@ services:
 ```sh
 cd deploy/wiki
 git -C ../upstream/wiki checkout v2.5.0
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml
+compost app deploy --apply --secret .compost-prod.yaml
 ```
 
 ## An app on AWS RDS
@@ -858,7 +852,7 @@ backup:
 ```
 
 ```sh
-compost app deploy --apply -f compost.yaml,.compost-prod.yaml    # stores the steps
+compost app deploy --apply --secret .compost-prod.yaml    # stores the steps
 compost app backup myapp-prod
 compost app restore myapp-prod-….compost.tar.gz --include volumes --replace --yes
 ```
@@ -1479,11 +1473,11 @@ compost collects the output with Docker's `fluentd` log driver, set in its overr
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
+compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret <file>] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
                    [--backup <profile> | --no-backup]
 ```
 
-`-f` defaults to `compost.yaml`. Add overlays with `-f compost.yaml,.compost-staging.yaml`. If the instance has an overlay stored on the server ([Secrets](Secrets.md)), it is merged right after the first file. `--prefix` overrides the prefix from the files (default `main`).
+`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`).
 
 A deploy:
 
@@ -2127,7 +2121,7 @@ Commands that change a server hold a lock (`~/.compost-server/lock/`), so two ca
 
 # Secrets
 
-Passwords and other per-instance values (domains, database credentials, OIDC users) live in **overlays**: YAML files merged over `compost.yaml`. You can keep an overlay on your machine and pass it with `-f`, or store it on the server with `compost secret deploy`.
+Passwords and other per-instance values (domains, database credentials, OIDC users) live in **overlays**: YAML files merged over `compost.yaml`. Store an overlay on the server with `app deploy --secret` (or `secret deploy`), so every machine and CI deploys the instance with `compost.yaml` alone. For an instance on your machine you can also keep it local and pass it with `-f`.
 
 ## Rules
 
@@ -2137,20 +2131,13 @@ Passwords and other per-instance values (domains, database credentials, OIDC use
 - Passwords you leave out are generated on the first deploy (32 hexadecimal characters; OpenObserve's root password starts with `Compost-` to meet its rules), stored on the server and reused by later deploys.
 - On the server, secret files have mode `0600`. Secrets never appear in output, stored configs or remote command lines. `--dry-run` names files with secrets but never shows them, also with `--diff`, and shows variable names, not values.
 
-## Local overlays
-
-```sh
-compost app deploy --apply -f compost.yaml,.compost-staging.yaml
-```
-
-Simple, but every machine that deploys needs the file.
-
 ## Overlays stored on the server
 
 ```sh
-compost secret deploy .compost-staging.yaml [--prefix staging]
-compost app deploy --apply --prefix staging      # compost.yaml + the stored overlay
-compost app deploy --apply --secret .compost-staging.yaml   # store it and deploy, in one step
+compost app deploy --dry-run --secret .compost-staging.yaml   # what it would do; stores nothing
+compost app deploy --apply --secret .compost-staging.yaml     # store it and deploy, in one step
+compost app deploy --apply --prefix staging                   # later: compost.yaml + the stored overlay
+compost secret deploy .compost-staging.yaml [--prefix staging]   # store it without deploying
 compost secret list
 compost secret remove --app myapp --prefix staging
 ```
@@ -2164,6 +2151,14 @@ The stored overlay must name its app (`name: myapp`). The prefix is `--prefix`, 
 - `secret deploy` and `app deploy --secret` replace the stored overlay as a whole. If the new one leaves out a link that only the old one defined (say an ingress entry with its domains), the next `app deploy` drops that link. Run `app deploy --dry-run` first to see the effect.
 - `app remove` keeps the stored overlay, so deploying the instance again restores it as it was. `secret remove` deletes it.
 - `app backup` saves it in the archive and `app restore` puts it back; such an archive then holds secrets.
+
+## Local overlays
+
+```sh
+compost app deploy --apply -f compost.yaml,.compost-local.yaml
+```
+
+Nothing is stored, so every machine that deploys needs the file. Fine for instances on your machine and throwaway copies.
 
 ## Shared apps
 
