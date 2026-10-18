@@ -188,6 +188,14 @@ backup:
     predeploy: {keep: 3, server: false}
 ```
 
+```yaml
+notifications:
+  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk
+  disk_free_below: 10                                           # percent
+```
+
+See [Notifications](Notifications.md#what-is-sent).
+
 `targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types) (communication types: [Notifications](Notifications.md#channels)), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).

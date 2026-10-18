@@ -22,6 +22,91 @@ pub struct ServerConfig {
     pub shared: BTreeMap<String, Vec<SharedAppConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<BackupSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<Notifications>,
+}
+
+/// What the server reports by itself, and to which communication apps.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Notifications {
+    #[serde(default)]
+    pub send_to: Vec<Recipient>,
+    /// Percent of free disk space below which `disk` is sent.
+    #[serde(default = "default_disk_free_below")]
+    pub disk_free_below: u8,
+}
+
+fn default_disk_free_below() -> u8 {
+    10
+}
+
+/// Events the server reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Event {
+    /// A scheduled backup failed, or works again.
+    Backup,
+    /// A shared app or instance is down, or up again.
+    Health,
+    /// Free disk space is low, or enough again.
+    Disk,
+}
+
+impl Event {
+    pub fn name(self) -> &'static str {
+        match self {
+            Event::Backup => "backup",
+            Event::Health => "health",
+            Event::Disk => "disk",
+        }
+    }
+}
+
+/// An entry of `send_to`: a communication app's name (every event), or
+/// `{to, events}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum Recipient {
+    All(String),
+    Some { to: String, events: Vec<Event> },
+}
+
+// By hand, so that mistakes are reported as such, not as "no variant matched".
+impl<'de> Deserialize<'de> for Recipient {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Filtered {
+            to: String,
+            events: Vec<Event>,
+        }
+        match Value::deserialize(deserializer)? {
+            Value::String(name) => Ok(Recipient::All(name)),
+            value => serde_yaml_ng::from_value::<Filtered>(value)
+                .map(|f| Recipient::Some {
+                    to: f.to,
+                    events: f.events,
+                })
+                .map_err(D::Error::custom),
+        }
+    }
+}
+
+impl Recipient {
+    pub fn name(&self) -> &str {
+        match self {
+            Recipient::All(name) | Recipient::Some { to: name, .. } => name,
+        }
+    }
+
+    pub fn wants(&self, event: Event) -> bool {
+        match self {
+            Recipient::All(_) => true,
+            Recipient::Some { events, .. } => events.contains(&event),
+        }
+    }
 }
 
 /// A shared app that links to other shared apps, deployed like an application.
@@ -455,6 +540,39 @@ impl ServerConfig {
         if let Some(backup) = &self.backup {
             backup.validate()?;
         }
+        if let Some(notifications) = &self.notifications {
+            let channels: Vec<&str> = self
+                .shared
+                .get(crate::shared::communication::KIND)
+                .map(|apps| apps.iter().map(|a| a.name.as_str()).collect())
+                .unwrap_or_default();
+            for recipient in &notifications.send_to {
+                if !channels.contains(&recipient.name()) {
+                    return Err(config_err(format!(
+                        "notifications.send_to: `{}` is not a communication app (known: {})",
+                        recipient.name(),
+                        if channels.is_empty() {
+                            "none; add one under shared.communication".to_string()
+                        } else {
+                            channels.join(", ")
+                        }
+                    )));
+                }
+                if let Recipient::Some { events, .. } = recipient {
+                    if events.is_empty() {
+                        return Err(config_err(format!(
+                            "notifications.send_to[{}]: events is empty; leave the entry out instead",
+                            recipient.name()
+                        )));
+                    }
+                }
+            }
+            if !(1..=99).contains(&notifications.disk_free_below) {
+                return Err(config_err(
+                    "notifications.disk_free_below: a percentage from 1 to 99",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -559,6 +677,39 @@ shared:
         assert!(!text.contains("root_password"), "{text}");
         assert!(!text.contains("configuration"), "{text}");
         assert!(text.contains("name: pg"), "{text}");
+    }
+
+    #[test]
+    fn notifications() {
+        let chat = "shared: {communication: [{name: chat, type: slack}]}\n";
+        let config = parse(&format!(
+            "{chat}notifications: {{send_to: [chat, {{to: chat, events: [disk]}}], disk_free_below: 15}}"
+        ))
+        .unwrap();
+        let notifications = config.notifications.unwrap();
+        assert_eq!(notifications.disk_free_below, 15);
+        assert!(notifications.send_to[0].wants(Event::Backup));
+        assert!(!notifications.send_to[1].wants(Event::Backup));
+        assert!(notifications.send_to[1].wants(Event::Disk));
+        assert!(
+            error("notifications: {send_to: [chat]}")
+                .contains("not a communication app (known: none")
+        );
+        assert!(
+            error(&format!(
+                "{chat}notifications: {{send_to: [{{to: chat, events: [mail]}}]}}"
+            ))
+            .contains("unknown variant `mail`")
+        );
+        assert!(
+            error(&format!(
+                "{chat}notifications: {{send_to: [{{to: chat, event: [disk]}}]}}"
+            ))
+            .contains("unknown field `event`")
+        );
+        assert!(
+            error(&format!("{chat}notifications: {{disk_free_below: 0}}")).contains("from 1 to 99")
+        );
     }
 
     #[test]

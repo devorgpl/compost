@@ -262,7 +262,20 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
             connector: connector.as_ref(),
             home: server_home.clone(),
         };
-        let records = crate::server::state_file::StateFile::load(&ctx)?.backups;
+        let state_file = crate::server::state_file::StateFile::load(&ctx)?;
+        let open: Vec<_> = state_file.alerts.iter().filter(|a| a.alerting).collect();
+        if !open.is_empty() {
+            out!("  alerts (notified):");
+            for alert in open {
+                let detail = alert
+                    .detail
+                    .as_deref()
+                    .and_then(|d| d.lines().next())
+                    .unwrap_or_default();
+                out!("    {}  since {}  {detail}", alert.key, alert.since);
+            }
+        }
+        let records = state_file.backups;
         if !records.is_empty() {
             out!("  scheduled backups:");
             let owner = records.iter().map(|r| r.owner.len()).max().unwrap_or(0);

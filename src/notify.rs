@@ -6,13 +6,13 @@ use std::fmt;
 use anyhow::{Context, Result, bail};
 
 use crate::app::state::initialized_server;
+use crate::config::server::{Event, Notifications};
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::shared::ServerCtx;
 use crate::shared::communication::{self, KIND};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // the other levels come with the alerts
 pub enum Severity {
     Info,
     Warning,
@@ -77,6 +77,22 @@ pub fn send_to(ctx: &ServerCtx, name: &str, notification: &Notification) -> Resu
         );
     }
     Ok(())
+}
+
+/// Send `notification` to every communication app of `send_to` that wants
+/// `event`. Failures are warnings: they must not stop what reported them.
+pub fn send_event(
+    ctx: &ServerCtx,
+    notifications: &Notifications,
+    event: Event,
+    notification: &Notification,
+) {
+    for recipient in notifications.send_to.iter().filter(|r| r.wants(event)) {
+        match send_to(ctx, recipient.name(), notification) {
+            Ok(()) => out!("  sent to {}: {}", recipient.name(), notification.title),
+            Err(err) => eprintln!("warning: could not notify {}: {err:#}", recipient.name()),
+        }
+    }
 }
 
 /// `compost notify test`: a message to every communication app, or to one.

@@ -169,6 +169,9 @@ case "$*" in
   "compose "*" run "*" failing-job"*) echo "job failed" >&2; exit 1 ;;
   "compose "*" run "*" exit-7"*) exit 7 ;;
   "compose "*" run "*) echo "job output" ;;
+  "compose "*" exec "*"pg_dumpall"*)
+    [ -z "$FAKE_BACKUP_FAIL" ] || { echo "pg_dumpall: connection refused" >&2; exit 1; }
+    cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
@@ -2620,7 +2623,9 @@ fn scheduled_backups_run_from_a_crontab_line() {
         .run(&["server", "deploy", "--apply"], &running)
         .success()
         .stdout(contains("installed compost"))
-        .stdout(contains("installed the crontab line of scheduled backups"));
+        .stdout(contains(
+            "installed the crontab line of scheduled backups and notifications",
+        ));
     let home = server.server_home.display().to_string();
     let crontab = fs::read_to_string(server.env.work.path().join("crontab")).unwrap();
     assert!(
@@ -2864,6 +2869,173 @@ fn communication_apps_are_built_on_the_server_and_send_tests() {
         .failure()
         .stdout(contains("ops-chat: failed: HTTP 403: forbidden"))
         .stderr(contains("1 of 1 channels failed"));
+}
+
+#[test]
+fn notifications_report_changes_from_the_tick() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}  communication:
+    - {{name: hook, type: webhook}}
+backup:
+  target: server
+  profiles:
+    nightly: {{include: [links], schedule: '* * * * *'}}
+notifications:
+  send_to: [hook]
+"
+        ),
+    );
+    server.write_work_file(
+        "secrets.yaml",
+        "shared: {communication: [{name: hook, configuration: {url: 'https://hooks.example.com/x'}}]}",
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains("installed the crontab line"));
+    let home = server.server_home.display().to_string();
+    let tick = [
+        "backup",
+        "tick",
+        "--server-home",
+        home.as_str(),
+        "--server-name",
+        "dev",
+    ];
+    let state_path = server.server_home.join("state.yaml");
+    let due_again = || {
+        let state = fs::read_to_string(&state_path).unwrap();
+        let earlier: String = state
+            .lines()
+            .map(|line| match line.find("last_run:") {
+                Some(at) => format!("{}last_run: 2020-01-01T00:00:00+00:00\n", &line[..at]),
+                None => format!("{line}\n"),
+            })
+            .collect();
+        fs::write(&state_path, earlier).unwrap();
+    };
+    let sent = |log: &str| -> Vec<String> {
+        log.lines()
+            .filter(|l| l.contains(" send --severity "))
+            .map(|l| l.split(" send ").nth(1).unwrap().to_string())
+            .collect()
+    };
+    server.run(&tick, &running).success();
+    assert!(
+        sent(&server.take_docker_log()).is_empty(),
+        "nothing to report yet"
+    );
+
+    // Low disk space: once, until it is fine again.
+    let df = server.env.work.path().join("bin/df");
+    let write_df = |free: u64| {
+        fs::write(
+            &df,
+            format!(
+                "#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\necho '/dev/x 100000 {} {free} 0% /srv'\n",
+                100_000 - free
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&df, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    write_df(5_000);
+    server
+        .run(&tick, &running)
+        .success()
+        .stdout(contains("sent to hook"));
+    let log = server.take_docker_log();
+    assert_eq!(
+        sent(&log),
+        ["--severity warning --title Disk space low: 5% free on /srv --server dev --event disk"]
+    );
+    assert!(
+        log.contains("send body: Disk /srv: 5.1 MB free of 102.4 MB (95% used)"),
+        "{log}"
+    );
+    server.run(&tick, &running).success();
+    assert!(sent(&server.take_docker_log()).is_empty(), "no repeat");
+    write_df(11_000); // above the threshold, inside the margin
+    server.run(&tick, &running).success();
+    assert!(
+        sent(&server.take_docker_log()).is_empty(),
+        "inside the margin"
+    );
+    write_df(20_000);
+    server.run(&tick, &running).success();
+    assert_eq!(
+        sent(&server.take_docker_log()),
+        [
+            "--severity ok --title Disk space is fine again: 20% free on /srv --server dev --event disk"
+        ]
+    );
+
+    // A scheduled backup fails, then works again.
+    due_again();
+    server
+        .run(
+            &tick,
+            &[("FAKE_DOCKER_RUNNING", "1"), ("FAKE_BACKUP_FAIL", "1")],
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert_eq!(
+        sent(&log),
+        [
+            "--severity error --title Scheduled backup failed: profile nightly of the shared apps --server dev --event backup"
+        ]
+    );
+    assert!(
+        log.contains("pg_dumpall: connection refused"),
+        "the error is in the message: {log}"
+    );
+    server
+        .state(&running)
+        .success()
+        .stdout(contains("nightly  failed"))
+        .stdout(contains("alerts (notified):"))
+        .stdout(contains("backup:server:nightly  since"));
+    due_again();
+    server.run(&tick, &running).success();
+    assert_eq!(
+        sent(&server.take_docker_log()),
+        [
+            "--severity ok --title Scheduled backup works again: profile nightly of the shared apps --server dev --event backup"
+        ]
+    );
+
+    // Shared apps down: reported after two checks in a row, and when they run again.
+    server.run(&tick, &[]).success();
+    assert!(
+        sent(&server.take_docker_log()).is_empty(),
+        "one bad check is not enough"
+    );
+    server.run(&tick, &[]).success();
+    let log = server.take_docker_log();
+    assert_eq!(
+        sent(&log),
+        ["--severity error --title Shared apps are down --server dev --event health"]
+    );
+    assert!(
+        log.contains(
+            "send body: database postgres16: not running\ningress caddy-main: not running"
+        ),
+        "{log}"
+    );
+    server.run(&tick, &running).success();
+    assert_eq!(
+        sent(&server.take_docker_log()),
+        ["--severity ok --title Shared apps run again --server dev --event health"]
+    );
 }
 
 #[test]

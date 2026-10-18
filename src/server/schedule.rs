@@ -1,8 +1,9 @@
-//! Scheduled backups. Profiles with a `schedule` run on the server by
-//! themselves: `server deploy` and `app deploy` install compost there
-//! (`bin/compost`) and one crontab line that runs `compost backup tick` every
-//! few minutes. The tick runs every job that is due and records how it went
-//! in `state.yaml`.
+//! Scheduled backups and notifications. Profiles with a `schedule` run on the
+//! server by themselves, and `notifications` are checked there:
+//! `server deploy` and `app deploy` install compost there (`bin/compost`) and
+//! one crontab line that runs `compost backup tick` every few minutes. The
+//! tick runs every job that is due, records how it went in `state.yaml`, then
+//! checks what `notifications` watches ([`super::alerts`]).
 
 use std::fs;
 use std::time::Duration;
@@ -125,18 +126,27 @@ pub fn jobs(ctx: &ServerCtx) -> Result<Vec<Job>> {
 /// After a deploy changed the stored configs: install compost and the crontab
 /// line when there are jobs, remove the line when there are none.
 pub fn ensure(ctx: &ServerCtx, server_name: &str) -> Result<()> {
-    let jobs = jobs(ctx)?;
-    if jobs.is_empty() {
+    if !needed(ctx)? {
         if update_crontab(ctx, None)? {
-            out!("  removed the crontab line of scheduled backups: no profile has a schedule");
+            out!(
+                "  removed the crontab line of scheduled backups: no profile has a schedule, and nothing is notified"
+            );
         }
         return Ok(());
     }
     install_binary(ctx)?;
     if update_crontab(ctx, Some(&cron_line(ctx, server_name)?))? {
-        out!("  installed the crontab line of scheduled backups");
+        out!("  installed the crontab line of scheduled backups and notifications");
     }
     Ok(())
+}
+
+/// Whether the tick has work: scheduled backups, or notifications to send.
+fn needed(ctx: &ServerCtx) -> Result<bool> {
+    let notifies = instance::server_config(ctx)?
+        .notifications
+        .is_some_and(|n| !n.send_to.is_empty());
+    Ok(notifies || !jobs(ctx)?.is_empty())
 }
 
 /// [`ensure`], after a command changed the stored configs.
@@ -379,7 +389,11 @@ pub fn tick(server_home: &str, server_name: &str) -> Result<()> {
         out!("[{}] {status}", Local::now().format("%Y-%m-%d %H:%M:%S"));
         updates.push(record_of(job, started, status, error));
     }
-    record(&ctx, &jobs, updates)
+    let recorded = record(&ctx, &jobs, updates);
+    if let Err(err) = super::alerts::evaluate(&ctx, server_name, manager_key.trim()) {
+        eprintln!("error: notifications: {err:#}");
+    }
+    recorded
 }
 
 fn record_of(

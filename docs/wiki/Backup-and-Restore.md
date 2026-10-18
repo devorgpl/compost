@@ -171,8 +171,8 @@ backup:
 - **New schedules** wait for their first time; they don't run at once.
 - **Missed times**, e.g. while the server was off, are caught up once at the next tick, if they are less than a month old.
 - **Deploys first**: while another command holds the server's lock, the tick waits for it.
-- **Results** are kept in `state.yaml`: `server state` lists every scheduled backup with its last run (`ok`, `failed` with the error, or `waiting` for its first run), `app state` those of the instance.
-- When no profile has a schedule any more, the next deploy removes the crontab line; `app remove` does too, if it removed the last scheduled instance.
+- **Results** are kept in `state.yaml`, and a failure (and the next run that works) is [notified](Notifications.md) when `notifications` is set: `server state` lists every scheduled backup with its last run (`ok`, `failed` with the error, or `waiting` for its first run), `app state` those of the instance.
+- When no profile has a schedule any more and nothing is notified, the next deploy removes the crontab line; `app remove` does too, if it removed the last scheduled instance.
 
 **Requirements.** The server needs `cron` (the `crontab` command). compost copies itself to the server when it is a static Linux build for the server's CPU (the release builds are) or when the server is this machine; otherwise the server downloads the same release from GitHub and checks it against `SHA256SUMS`, which needs `curl` or `wget`. A development build that can't run on the server can't do either: set `COMPOST_SERVER_BINARY` to a static Linux build to install that one. The line names the server as you defined it (`compost server define`), which goes into the archive names; deploy from machines that use the same name.
 

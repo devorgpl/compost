@@ -46,10 +46,10 @@ infra/
 ~/.compost-server/
 ├── manager_key                       key of the compost installation managing this server
 ├── compost-server.yaml               effective server config, without secrets
-├── state.yaml                        status of shared apps and instances, last runs of scheduled backups
+├── state.yaml                        status of shared apps and instances, last runs of scheduled backups, notified alerts
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
-├── logs/backup.log                   output of scheduled backups
+├── logs/backup.log                   output of scheduled backups and notifications
 ├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`

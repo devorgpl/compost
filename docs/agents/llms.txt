@@ -19,7 +19,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Servers and shared apps](https://github.com/devorgpl/compost/wiki/Servers-and-Shared-Apps): defining servers, `compost-server.yaml`, the caddy, postgres, keycloak and openobserve types, external databases, locks
 - [Secrets](https://github.com/devorgpl/compost/wiki/Secrets): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](https://github.com/devorgpl/compost/wiki/Backup-and-Restore): app and server backups, targets, formats, restoring, copies, moving to a new server
-- [Notifications](https://github.com/devorgpl/compost/wiki/Notifications): communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
+- [Notifications](https://github.com/devorgpl/compost/wiki/Notifications): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
 
 ## Reference
 

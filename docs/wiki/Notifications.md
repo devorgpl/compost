@@ -1,12 +1,34 @@
 # Notifications
 
-compost sends notifications through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
+The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
 
 ```sh
 compost server generate --with matrix    # or webhook, slack, mattermost, discord, email
+# add `notifications: {send_to: [ops-matrix]}` to compost-server.yaml
 compost server deploy --apply --secret .compost-server.secrets.yaml
 compost notify test                      # a test message to every channel
 ```
+
+## What is sent
+
+```yaml
+# compost-server.yaml
+notifications:
+  send_to:
+    - ops-chat                                  # every event
+    - {to: ops-mail, events: [backup, disk]}    # only these
+  disk_free_below: 10                           # percent, default 10
+```
+
+| Event | Sent when | Severity |
+|---|---|---|
+| `backup` | A [scheduled backup](Backup-and-Restore.md#scheduled-backups) failed (with its error), and when that profile's next run works | `error`, then `ok` |
+| `health` | A shared app isn't running, or an instance has a container that isn't healthy (as `server state` and `app state` judge it), at two checks in a row; and when it's fine again | `error`, then `ok` |
+| `disk` | Free space on the disk with `~/.compost-server` is below `disk_free_below` percent; and when it is 2 points above it again | `warning`, then `ok` |
+
+Each is sent once when it changes, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
+
+A channel that can't be reached is logged as a warning in `~/.compost-server/logs/backup.log`, and that message isn't sent again; check channels with `compost notify test`.
 
 ## Channels
 
@@ -81,5 +103,6 @@ docker run --rm <image> describe
 
 - `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
 - `describe` prints JSON with at least `"api": 1`; deploys fail without it.
+- `--event` is `backup`, `health` or `disk` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
 - The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
 - Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.

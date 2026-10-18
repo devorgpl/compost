@@ -173,20 +173,60 @@ fn print_usage(ctx: &ServerCtx) -> Result<()> {
     Ok(())
 }
 
-/// Free space on the disk with the server's compost folder.
-fn print_disk(ctx: &ServerCtx) -> Result<()> {
+/// The disk with the server's compost folder.
+pub struct Disk {
+    pub mount: String,
+    /// Bytes.
+    pub total: u64,
+    pub used: u64,
+    pub available: u64,
+}
+
+impl Disk {
+    /// Free space in percent, as `df` counts it: of what is used or available.
+    pub fn free_percent(&self) -> f64 {
+        let usable = self.used + self.available;
+        if usable == 0 {
+            return 100.0;
+        }
+        self.available as f64 * 100.0 / usable as f64
+    }
+
+    /// e.g. `Disk /: 41.2 GB free of 80.0 GB (49% used)`
+    pub fn describe(&self) -> String {
+        format!(
+            "Disk {}: {} free of {} ({:.0}% used)",
+            self.mount,
+            crate::backup::human_size(self.available),
+            crate::backup::human_size(self.total),
+            100.0 - self.free_percent()
+        )
+    }
+}
+
+/// `df` of the disk with the server's compost folder.
+pub fn disk(ctx: &ServerCtx) -> Result<Option<Disk>> {
     let df = ctx
         .connector
         .exec(&format!("df -Pk {} | tail -n 1", shell_quote(&ctx.home)))?;
     // Filesystem 1024-blocks Used Available Capacity Mounted-on
     let fields: Vec<&str> = df.split_whitespace().collect();
-    if let [_, total, _, available, capacity, mount, ..] = fields[..] {
-        let kb = |s: &str| s.parse::<u64>().unwrap_or(0) * 1024;
-        out!(
-            "Disk {mount}: {} free of {} ({capacity} used)",
-            crate::backup::human_size(kb(available)),
-            crate::backup::human_size(kb(total))
-        );
+    let [_, total, used, available, _, mount, ..] = fields[..] else {
+        return Ok(None);
+    };
+    let kb = |s: &str| s.parse::<u64>().unwrap_or(0) * 1024;
+    Ok(Some(Disk {
+        mount: mount.to_string(),
+        total: kb(total),
+        used: kb(used),
+        available: kb(available),
+    }))
+}
+
+/// Free space on the disk with the server's compost folder.
+fn print_disk(ctx: &ServerCtx) -> Result<()> {
+    if let Some(disk) = disk(ctx)? {
+        out!("{}", disk.describe());
     }
     Ok(())
 }

@@ -33,6 +33,39 @@ pub fn state(
     }
 }
 
+/// A container of an instance.
+pub struct ServiceHealth {
+    pub name: String,
+    pub healthy: bool,
+    /// e.g. `running healthy`, `exited 1`.
+    pub state: String,
+}
+
+/// The instance's containers, with whether each is as it should be.
+pub fn services(ctx: &ServerCtx, instance: &Instance) -> Result<Vec<ServiceHealth>> {
+    let containers = compose::ps(ctx.connector, &instance.app.instance())?;
+    let compose = stored_compose_file(ctx, instance)?;
+    Ok(containers
+        .iter()
+        .map(|container| {
+            let keeps_running = compose
+                .services
+                .get(&container.service)
+                .is_some_and(crate::config::app::ComposeService::keeps_running);
+            ServiceHealth {
+                name: container.service.clone(),
+                healthy: container.is_healthy(keeps_running),
+                state: container.describe(keeps_running),
+            }
+        })
+        .collect())
+}
+
+/// Some containers, all healthy.
+pub fn all_healthy(services: &[ServiceHealth]) -> bool {
+    !services.is_empty() && services.iter().all(|s| s.healthy)
+}
+
 /// Print status, services and links. Returns whether every service is ready.
 pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
     let app = &instance.app;
@@ -57,31 +90,20 @@ pub fn print(ctx: &ServerCtx, instance: &Instance) -> Result<bool> {
         );
     }
 
-    let containers = compose::ps(ctx.connector, &app.instance())?;
+    let services = services(ctx, instance)?;
     out!("  services:");
-    if containers.is_empty() {
+    if services.is_empty() {
         out!("    none running");
     }
-    let compose = stored_compose_file(ctx, instance)?;
-    let width = containers
-        .iter()
-        .map(|c| c.service.len())
-        .max()
-        .unwrap_or(0);
-    let mut healthy = !containers.is_empty();
-    for container in &containers {
-        let keeps_running = compose
-            .services
-            .get(&container.service)
-            .is_some_and(crate::config::app::ComposeService::keeps_running);
-        let ok = container.is_healthy(keeps_running);
-        healthy &= ok;
-        let mark = if ok { "" } else { "  ← not healthy" };
-        out!(
-            "    {:<width$}  {}{mark}",
-            container.service,
-            container.describe(keeps_running)
-        );
+    let width = services.iter().map(|s| s.name.len()).max().unwrap_or(0);
+    let healthy = all_healthy(&services);
+    for service in &services {
+        let mark = if service.healthy {
+            ""
+        } else {
+            "  ← not healthy"
+        };
+        out!("    {:<width$}  {}{mark}", service.name, service.state);
     }
 
     if !instance.links.is_empty() {

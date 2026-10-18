@@ -60,7 +60,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | Side | Needs |
 |---|---|
 | Your machine | Linux or macOS, the `compost` binary, an OpenSSH client |
-| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin; for [scheduled backups](Backup-and-Restore.md#scheduled-backups) also `cron` |
+| Server | Linux, POSIX `sh` and `tar` (BusyBox is enough), Docker Engine 24 or newer with the compose v2 plugin; for [scheduled backups](Backup-and-Restore.md#scheduled-backups) and [notifications](Notifications.md) also `cron` |
 | Server user | Logs in with an SSH key, member of the `docker` group (no sudo) |
 
 ---
@@ -2144,8 +2144,8 @@ backup:
 - **New schedules** wait for their first time; they don't run at once.
 - **Missed times**, e.g. while the server was off, are caught up once at the next tick, if they are less than a month old.
 - **Deploys first**: while another command holds the server's lock, the tick waits for it.
-- **Results** are kept in `state.yaml`: `server state` lists every scheduled backup with its last run (`ok`, `failed` with the error, or `waiting` for its first run), `app state` those of the instance.
-- When no profile has a schedule any more, the next deploy removes the crontab line; `app remove` does too, if it removed the last scheduled instance.
+- **Results** are kept in `state.yaml`, and a failure (and the next run that works) is [notified](Notifications.md) when `notifications` is set: `server state` lists every scheduled backup with its last run (`ok`, `failed` with the error, or `waiting` for its first run), `app state` those of the instance.
+- When no profile has a schedule any more and nothing is notified, the next deploy removes the crontab line; `app remove` does too, if it removed the last scheduled instance.
 
 **Requirements.** The server needs `cron` (the `crontab` command). compost copies itself to the server when it is a static Linux build for the server's CPU (the release builds are) or when the server is this machine; otherwise the server downloads the same release from GitHub and checks it against `SHA256SUMS`, which needs `curl` or `wget`. A development build that can't run on the server can't do either: set `COMPOST_SERVER_BINARY` to a static Linux build to install that one. The line names the server as you defined it (`compost server define`), which goes into the archive names; deploy from machines that use the same name.
 
@@ -2317,13 +2317,35 @@ The server dump already holds the apps' databases and their link records keep th
 
 # Notifications
 
-compost sends notifications through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
+The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
 
 ```sh
 compost server generate --with matrix    # or webhook, slack, mattermost, discord, email
+# add `notifications: {send_to: [ops-matrix]}` to compost-server.yaml
 compost server deploy --apply --secret .compost-server.secrets.yaml
 compost notify test                      # a test message to every channel
 ```
+
+## What is sent
+
+```yaml
+# compost-server.yaml
+notifications:
+  send_to:
+    - ops-chat                                  # every event
+    - {to: ops-mail, events: [backup, disk]}    # only these
+  disk_free_below: 10                           # percent, default 10
+```
+
+| Event | Sent when | Severity |
+|---|---|---|
+| `backup` | A [scheduled backup](Backup-and-Restore.md#scheduled-backups) failed (with its error), and when that profile's next run works | `error`, then `ok` |
+| `health` | A shared app isn't running, or an instance has a container that isn't healthy (as `server state` and `app state` judge it), at two checks in a row; and when it's fine again | `error`, then `ok` |
+| `disk` | Free space on the disk with `~/.compost-server` is below `disk_free_below` percent; and when it is 2 points above it again | `warning`, then `ok` |
+
+Each is sent once when it changes, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
+
+A channel that can't be reached is logged as a warning in `~/.compost-server/logs/backup.log`, and that message isn't sent again; check channels with `compost notify test`.
 
 ## Channels
 
@@ -2398,6 +2420,7 @@ docker run --rm <image> describe
 
 - `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
 - `describe` prints JSON with at least `"api": 1`; deploys fail without it.
+- `--event` is `backup`, `health` or `disk` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
 - The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
 - Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.
 
@@ -2595,6 +2618,14 @@ backup:
     predeploy: {keep: 3, server: false}
 ```
 
+```yaml
+notifications:
+  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk
+  disk_free_below: 10                                           # percent
+```
+
+See [Notifications](Notifications.md#what-is-sent).
+
 `targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types) (communication types: [Notifications](Notifications.md#channels)), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
@@ -2706,10 +2737,10 @@ infra/
 ~/.compost-server/
 ├── manager_key                       key of the compost installation managing this server
 ├── compost-server.yaml               effective server config, without secrets
-├── state.yaml                        status of shared apps and instances, last runs of scheduled backups
+├── state.yaml                        status of shared apps and instances, last runs of scheduled backups, notified alerts
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
-├── logs/backup.log                   output of scheduled backups
+├── logs/backup.log                   output of scheduled backups and notifications
 ├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`

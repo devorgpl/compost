@@ -24,6 +24,9 @@ pub struct StateFile {
     /// Scheduled backups: when each last ran, and how it went.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub backups: Vec<BackupRecord>,
+    /// What the server reported last, so that it reports changes only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alerts: Vec<AlertRecord>,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -46,6 +49,26 @@ pub struct AppRecord {
     pub prefix: String,
     pub status: DeployStatus,
     pub updated_at: String,
+}
+
+/// The last reported state of something the server watches, e.g.
+/// `health:myapp-prod` or `disk`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlertRecord {
+    pub key: String,
+    /// Whether an alert was sent and not cleared yet.
+    pub alerting: bool,
+    /// Checks in a row that found a problem.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bad: u32,
+    /// Since when it is in this state (RFC 3339).
+    pub since: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// A backup profile run on a schedule, for the shared apps or one instance.
@@ -127,6 +150,7 @@ impl Default for StateFile {
             apps: Vec::new(),
             compost_version: String::new(),
             backups: Vec::new(),
+            alerts: Vec::new(),
             other: Mapping::new(),
         }
     }
