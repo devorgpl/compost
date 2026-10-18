@@ -172,6 +172,7 @@ case "$*" in
   "compose "*" exec "*"pg_dumpall"*)
     [ -z "$FAKE_BACKUP_FAIL" ] || { echo "pg_dumpall: connection refused" >&2; exit 1; }
     cat >> "$FAKE_DOCKER_LOG" ;;
+  "compose "*" exec "*" -N -B'") cat >> "$FAKE_DOCKER_LOG"; echo "${FAKE_TABLES:-0}" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
@@ -3039,6 +3040,143 @@ notifications:
 }
 
 #[test]
+fn mariadb_links_get_a_database_and_user() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  database:\n    - {name: mariadb11, type: mariadb, version: 11, configuration: {root_password: rootpw}}\n",
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("mariadb11"));
+    let compose = fs::read_to_string(
+        server
+            .server_home
+            .join("shared/database/mariadb11/compose.yaml"),
+    )
+    .unwrap();
+    assert!(compose.contains("image: mariadb:11"), "{compose}");
+    server.take_docker_log();
+
+    server.write_work_file(
+        "app/compost.yaml",
+        "name: shop\nprefix: production\napp_services: [{name: backend, service: backend}]\n\
+         services:\n  database:\n    - {name: customer-orders, type: mariadb, targets: [backend], \
+         environment: {DATABASE_URL: db_url}}\n",
+    );
+    server.write_work_file("app/docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "database shop_production_customer_orders, user shop_production_customer_orders",
+        ));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(
+            "CREATE DATABASE IF NOT EXISTS `shop_production_customer_orders` CHARACTER SET utf8mb4;"
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains("CREATE USER IF NOT EXISTS 'shop_production_customer_orders'@'%'"),
+        "{log}"
+    );
+    let command_lines: Vec<&str> = log.lines().filter(|l| l.starts_with("docker ")).collect();
+    assert!(
+        command_lines
+            .iter()
+            .any(|l| l.contains("MYSQL_PWD=\"$MARIADB_ROOT_PASSWORD\" exec mariadb -uroot")),
+        "{log}"
+    );
+    assert!(!command_lines.iter().any(|l| l.contains("rootpw")), "{log}");
+    let override_file = fs::read_to_string(
+        server
+            .server_home
+            .join("apps/shop/production/compose/compost.override.yaml"),
+    )
+    .unwrap();
+    assert!(
+        override_file.contains("DATABASE_URL: mysql://shop_production_customer_orders:"),
+        "{override_file}"
+    );
+    assert!(
+        override_file.contains("@mariadb11:3306/shop_production_customer_orders"),
+        "{override_file}"
+    );
+
+    server
+        .run(
+            &[
+                "app",
+                "backup",
+                "shop-production",
+                "--include",
+                "links",
+                "-o",
+                "b.tar.gz",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("links/database/customer-orders.sql"));
+    let log = server.take_docker_log();
+    assert!(log.contains("exec mariadb-dump -uroot --single-transaction --routines --triggers --no-tablespaces shop_production_customer_orders"), "{log}");
+
+    server
+        .run(
+            &["app", "restore", "b.tar.gz", "--include", "links", "--yes"],
+            &[("FAKE_DOCKER_RUNNING", "1"), ("FAKE_TABLES", "3")],
+        )
+        .code(3)
+        .stderr(contains("is not empty; add --replace"));
+    server
+        .run(
+            &[
+                "app",
+                "restore",
+                "b.tar.gz",
+                "--include",
+                "links",
+                "--replace",
+                "--yes",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1"), ("FAKE_TABLES", "3")],
+        )
+        .success()
+        .stdout(contains("loading database shop_production_customer_orders"));
+    assert!(
+        server
+            .take_docker_log()
+            .contains("DROP DATABASE IF EXISTS `shop_production_customer_orders`;")
+    );
+
+    server
+        .run(
+            &[
+                "app",
+                "remove",
+                "shop-production",
+                "--purge",
+                "database",
+                "--yes",
+            ],
+            &running,
+        )
+        .success();
+    assert!(
+        server
+            .take_docker_log()
+            .contains("DROP USER IF EXISTS 'shop_production_customer_orders'@'%'")
+    );
+}
+
+#[test]
 fn app_backup_on_server_then_list_and_restore_data() {
     let server = server_with_app();
     server
@@ -3173,9 +3311,9 @@ fn server_generate_writes_deployable_files() {
         .code(2)
         .stderr(contains("pass --with"));
     server
-        .run(&["server", "generate", "--with", "mysql"], &[])
+        .run(&["server", "generate", "--with", "oracle"], &[])
         .code(2)
-        .stderr(contains("unknown shared app type `mysql`"));
+        .stderr(contains("unknown shared app type `oracle`"));
 
     server
         .run(&["server", "generate", "--with", "caddy,postgres"], &[])

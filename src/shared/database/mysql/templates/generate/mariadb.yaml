@@ -1,0 +1,4 @@
+    # MariaDB server; each linked app gets its own database and user.
+    - name: mariadb11
+      type: mariadb
+      version: 11

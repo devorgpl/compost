@@ -121,7 +121,7 @@ services:
 
 ## Database links
 
-A database link creates a database and a user in a matching Postgres and passes the connection values to services:
+A database link creates a database and a user in a matching database server (`postgres`, `mariadb` or `mysql`) and passes the connection values to services:
 
 ```yaml
 services:
@@ -143,9 +143,9 @@ services:
 | `db_name` | `myapp_staging_main_db` |
 | `db_user` | `myapp_staging_main_db` |
 | `db_password` | generated on the first deploy, then kept |
-| `db_url` | `postgres://user:password@postgres18:5432/dbname` |
+| `db_url` | `postgres://user:password@postgres18:5432/dbname`; `mysql://…:3306/…` for MariaDB and MySQL |
 
-In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them.
+In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them. MariaDB and MySQL user names are at most 32 characters: a longer default is cut and ends in a short hash.
 
 **Existing databases.** To link to a database compost doesn't run, register it as an [external database](Servers-and-Shared-Apps.md#external-databases) and pin it with `instance`. Unless compost has root credentials for it, give the existing `db_name`, `db_user` and `db_password`. compost then only passes them to the services:
 

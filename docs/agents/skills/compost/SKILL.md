@@ -1,11 +1,11 @@
 ---
 name: compost
-description: Deploy docker-compose apps to Linux servers with the compost CLI. Use when working with compost commands or files (compost.yaml, compost-server.yaml, .compost-*.yaml overlays), when deploying, inspecting, backing up or restoring apps and their shared Caddy, Postgres, Keycloak or OpenObserve, when managing compost secrets, or when moving existing Docker servers to compost.
+description: Deploy docker-compose apps to Linux servers with the compost CLI. Use when working with compost commands or files (compost.yaml, compost-server.yaml, .compost-*.yaml overlays), when deploying, inspecting, backing up or restoring apps and their shared Caddy, Postgres, MariaDB, MySQL, Keycloak or OpenObserve, when managing compost secrets, or when moving existing Docker servers to compost.
 ---
 
 # compost
 
-compost is a CLI on the user's machine that deploys docker-compose apps to servers over SSH (or to this machine). Servers run **shared apps** (Caddy for domains and HTTPS, Postgres, Keycloak, OpenObserve); each **app** is a compose file plus `compost.yaml`, which links its services to them. One deployment of an app is an **instance**, `<app>-<prefix>` (e.g. `myapp-staging`), whose domains and passwords come from an **overlay** merged over `compost.yaml`. Concepts: [Home](references/Home.md#concepts).
+compost is a CLI on the user's machine that deploys docker-compose apps to servers over SSH (or to this machine). Servers run **shared apps** (Caddy for domains and HTTPS, Postgres, MariaDB or MySQL, Keycloak, OpenObserve); each **app** is a compose file plus `compost.yaml`, which links its services to them. One deployment of an app is an **instance**, `<app>-<prefix>` (e.g. `myapp-staging`), whose domains and passwords come from an **overlay** merged over `compost.yaml`. Concepts: [Home](references/Home.md#concepts).
 
 The `references/` folder holds the full user documentation of the compost version this skill came with. Read the page for the task before writing config: see [Where to look](#where-to-look).
 
@@ -20,7 +20,7 @@ The `references/` folder holds the full user documentation of the compost versio
 - **Dry-run first.** Before any `server deploy` or `app deploy`, run it with `--dry-run` (add `--diff` for the changed lines) and show the user what would change: files, and which services are recreated, built, pulled or reloaded. `--dry-run` never changes the server.
 - **Ask before changing a server.** Get the user's OK before `--apply`, `app remove`, `app restore`, `app rollback`, `server restore`, `secret deploy`, `app deploy --secret`, `server deploy --secret` and `secret remove`, and before anything with `--purge`, `--volumes`, `--replace` or `--force-unlock`. Never add `--yes` on your own: those commands ask because they delete or overwrite data. `app exec` and `app run` run any command in the user's containers: ask before anything that is not read-only (migrations, shells, writes).
 - `compost config set deploy.apply true` makes every deploy apply. Check it with `compost config show`, and pass `--no-apply` when you only want to upload.
-- **Secrets.** Overlays (`.compost-*.yaml`, `.compost.*.yaml`, `.compost-server.secrets.yaml`) hold passwords: never commit them, print them or paste them into chat. Commit only `*.example.yaml`. Leave passwords out to have compost generate and keep them. Postgres `root_password`, Keycloak `admin_password` and OpenObserve's `root_password` can't change after the first deploy. See [Secrets](references/Secrets.md).
+- **Secrets.** Overlays (`.compost-*.yaml`, `.compost.*.yaml`, `.compost-server.secrets.yaml`) hold passwords: never commit them, print them or paste them into chat. Commit only `*.example.yaml`. Leave passwords out to have compost generate and keep them. Postgres, MariaDB and MySQL `root_password`, Keycloak `admin_password` and OpenObserve's `root_password` can't change after the first deploy. See [Secrets](references/Secrets.md).
 - Your compose file is never changed: compost adds networks and variables in an override file on the server. Don't edit files in `~/.compost-server` on a server by hand.
 
 ## Workflows

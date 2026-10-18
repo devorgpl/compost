@@ -1,0 +1,4 @@
+    # MySQL server; each linked app gets its own database and user.
+    - name: mysql8
+      type: mysql
+      version: 8

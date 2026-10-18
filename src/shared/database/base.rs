@@ -75,6 +75,11 @@ pub struct DatabaseRecord {
 pub struct Endpoint {
     pub url_scheme: &'static str,
     pub port: u16,
+    /// `db_url` carries an external server's `sslmode` (`?sslmode=…`), as
+    /// Postgres URLs do. MySQL drivers each have their own parameter.
+    pub sslmode_in_url: bool,
+    /// Longest user name the server takes; longer default names are shortened.
+    pub user_max: usize,
 }
 
 /// `external` of a database compost does not run: an existing container or
@@ -216,13 +221,24 @@ pub fn validate_link(link: &DatabaseLink, app: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-/// Database name and user: from the link, or `<app>_<prefix>_<entry>`.
-pub fn names(app: &AppConfig, link: &DatabaseLink) -> (String, String) {
+/// Database name and user: from the link, or `<app>_<prefix>_<entry>`. A
+/// default user name longer than `user_max` is cut and ends in a short hash
+/// of the whole name, so it stays unique.
+pub fn names(app: &AppConfig, link: &DatabaseLink, user_max: usize) -> (String, String) {
     let default = format!("{}_{}_{}", app.name, app.prefix, link.name).replace('-', "_");
-    (
-        link.db_name.clone().unwrap_or_else(|| default.clone()),
-        link.db_user.clone().unwrap_or(default),
-    )
+    let user = match &link.db_user {
+        Some(user) => user.clone(),
+        None if default.len() > user_max => {
+            use sha2::{Digest, Sha256};
+            let hash: String = Sha256::digest(default.as_bytes())[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            format!("{}_{hash}", &default[..user_max - hash.len() - 1])
+        }
+        None => default.clone(),
+    };
+    (link.db_name.clone().unwrap_or(default), user)
 }
 
 /// A database of the requested type whose major version matches. External
@@ -250,7 +266,12 @@ pub fn resolve<'s>(
 /// with a generated password. Reusing the record keeps passwords stable.
 /// Without `provisioned` (compost cannot create databases on the server), the
 /// database and user must exist: the link names them and gives the password.
-pub fn credentials(ctx: &AppCtx, link: &DatabaseLink, provisioned: bool) -> Result<Credentials> {
+pub fn credentials(
+    ctx: &AppCtx,
+    link: &DatabaseLink,
+    provisioned: bool,
+    endpoint: &Endpoint,
+) -> Result<Credentials> {
     if !provisioned {
         ensure!(
             link.db_name.is_some() && link.db_user.is_some(),
@@ -258,7 +279,7 @@ pub fn credentials(ctx: &AppCtx, link: &DatabaseLink, provisioned: bool) -> Resu
             ctx.shared.name
         );
     }
-    let (name, user) = names(ctx.app, link);
+    let (name, user) = names(ctx.app, link, endpoint.user_max);
     let password = match &link.db_password {
         Some(password) => password.clone(),
         None => match read_record(ctx, &link.name)? {
@@ -317,11 +338,12 @@ pub fn prepare_application(
     provisioned: bool,
     out: &mut Contribution,
 ) -> Result<()> {
-    let credentials = credentials(ctx, link, provisioned)?;
+    let credentials = credentials(ctx, link, provisioned, endpoint)?;
     let target = target(ctx.shared, endpoint)?;
     let query = target
         .sslmode
         .as_ref()
+        .filter(|_| endpoint.sslmode_in_url)
         .map(|mode| format!("?sslmode={mode}"))
         .unwrap_or_default();
     let url = format!(
@@ -400,9 +422,16 @@ mod tests {
 
     #[test]
     fn default_names_include_app_and_prefix() {
-        let (name, user) = names(&app(), &link("{name: system-data, type: postgres}"));
+        let (name, user) = names(&app(), &link("{name: system-data, type: postgres}"), 63);
         assert_eq!(name, "my_app_staging_system_data");
         assert_eq!(user, name);
+        // Too long for the server: cut, with a hash of the whole name.
+        let long = link("{name: uploaded-attachments, type: mysql}");
+        let (name, user) = names(&app(), &long, 32);
+        assert_eq!(name, "my_app_staging_uploaded_attachments");
+        assert_eq!(user.len(), 32);
+        assert!(user.starts_with("my_app_staging_uploaded_"), "{user}");
+        assert_eq!(names(&app(), &long, 32).1, user, "stable");
     }
 
     #[test]
@@ -503,6 +532,8 @@ mod tests {
         let endpoint = Endpoint {
             url_scheme: "postgres",
             port: 5432,
+            sslmode_in_url: true,
+            user_max: 63,
         };
         let config: Vec<SharedAppConfig> = shared(
             "[{name: pg16, type: postgres, version: 16}, {name: rds, type: postgres, version: 16, external: {host: a.example.com, port: 6432, sslmode: require}}]",

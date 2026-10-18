@@ -101,7 +101,7 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | Key | Default | Meaning |
 |---|---|---|
 | `name` | required | Entry name |
-| `type` | required | `postgres` |
+| `type` | required | `postgres`, `mariadb` or `mysql` |
 | `version` | `"*"` | Requirement on the major version, e.g. `">=16"` |
 | `instance` | – | Pin a shared app by name; required for an external database |
 | `targets` | `[]` | `app_services` that get the variables and the network |
@@ -171,6 +171,7 @@ shared:
   database:
     - {name: postgres18, type: postgres, version: 18, image: postgres:18-alpine}
     - {name: shop-db, type: postgres, version: 16, external: {host: db, network: shop_default}}
+    - {name: mariadb11, type: mariadb, version: 11}
   oidc:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:

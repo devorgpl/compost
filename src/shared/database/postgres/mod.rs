@@ -79,13 +79,15 @@ impl DatabaseType for Postgres {
         Endpoint {
             url_scheme: "postgres",
             port: 5432,
+            sslmode_in_url: true,
+            user_max: 63,
         }
     }
 
     /// Extends the generic link validation: names must be plain Postgres identifiers.
     fn validate_link(&self, link: &DatabaseLink, app: &AppConfig) -> Result<()> {
         base::validate_link(link, app)?;
-        let (name, user) = base::names(app, link);
+        let (name, user) = base::names(app, link, self.endpoint().user_max);
         for (key, value) in [("db_name", &name), ("db_user", &user)] {
             ensure!(
                 is_identifier(value),
@@ -106,7 +108,7 @@ impl DatabaseType for Postgres {
         let Some(root) = Client::root(ctx.server, ctx.shared)? else {
             return Ok(());
         };
-        let credentials = base::credentials(ctx, link, true)?;
+        let credentials = base::credentials(ctx, link, true, &self.endpoint())?;
         let sql = provisioning_sql(&credentials.name, &credentials.user, &credentials.password);
         run_sql(&root, &sql)
             .map_err(|e| e.context(format!("creating database `{}` failed", credentials.name)))

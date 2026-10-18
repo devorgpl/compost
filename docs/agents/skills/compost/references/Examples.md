@@ -105,6 +105,60 @@ app_services:
       APP_MODE: staging
 ```
 
+## WordPress on MariaDB
+
+```yaml
+# compost-server.yaml
+shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  database:
+    - {name: mariadb11, type: mariadb, version: 11}
+```
+
+```yaml
+# docker-compose.yaml
+services:
+  wordpress:
+    image: wordpress:6
+    volumes: [wp-content:/var/www/html/wp-content]
+volumes: {wp-content: {}}
+```
+
+```yaml
+# compost.yaml
+name: blog
+app_services:
+  - {name: web, service: wordpress}
+services:
+  database:
+    - name: db
+      type: mariadb
+      targets: [web]
+      environment:
+        WORDPRESS_DB_HOST: db_host
+        WORDPRESS_DB_NAME: db_name
+        WORDPRESS_DB_USER: db_user
+        WORDPRESS_DB_PASSWORD: db_password
+  ingress:
+    - name: site
+      routes:
+        - {name: main, target: web, port: 80}
+backup:
+  volumes: [wp-content]     # uploads, themes and plugins; the database is dumped through the link
+```
+
+```yaml
+# .compost-prod.yaml
+prefix: prod
+services:
+  ingress:
+    - name: site
+      domains: [blog.example.com]
+```
+
+`app backup blog-prod` then holds the database dump and `wp-content`; `app restore … --prefix staging -f staging-domains.yaml` makes a copy with its own database.
+
 ## Staging and production from one repository
 
 Each overlay is an instance. They share `compost.yaml` and the server's shared apps, with separate domains, databases and containers.

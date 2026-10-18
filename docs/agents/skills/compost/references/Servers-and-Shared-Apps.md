@@ -79,7 +79,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases, OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -235,6 +235,30 @@ shared:
 
 Postgres is not published on a host port. Only containers on its network `compost-db-<name>` reach it, at host name `<name>`, port 5432.
 
+### mariadb and mysql (`database`)
+
+A MariaDB or MySQL server. They work alike: each app link gets its own database (`utf8mb4`) and a user with all rights on it, and nothing else.
+
+```yaml
+shared:
+  database:
+    - name: mariadb11
+      type: mariadb             # or mysql
+      version: 11               # mysql: 8
+      configuration:
+        root_password: …        # in .compost-server.secrets.yaml
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `11` (mariadb), `8` (mysql) | Major version, matched against apps' `version` requirements |
+| `image` | `mariadb:<version>`, `mysql:<version>` | An official image or a compatible one |
+| `configuration.root_password` | generated | Password of `root`. Secret, without quotes or `\`. Can't change after the first deploy |
+
+Like Postgres, it is reached only on `compost-db-<name>`, at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
+
+Backups use `mariadb-dump` / `mysqldump` with `--single-transaction`, so InnoDB tables are copied consistently without stopping the app. App dumps leave out `DEFINER` clauses, so they load into a copy with another user. A server backup holds every database, user and grant, and restores onto the same major version.
+
 ### keycloak (`oidc`)
 
 An OpenID Connect provider for app logins. It needs a `postgres` database with version 18 or newer and the ingress, both on the same server: compost creates its database `compost_oidc_<name>_db` and routes the domain of `url` to it.
@@ -329,7 +353,7 @@ Caddy, Postgres and Keycloak can be monitored. External shared apps and monitori
 
 ## External databases
 
-A database compost doesn't run (an existing Postgres container, or a hosted one such as AWS RDS) can be added with `external`. Apps then link to it like to any database, and `app backup` dumps it.
+A database compost doesn't run (an existing Postgres, MariaDB or MySQL container, or a hosted one such as AWS RDS) can be added with `external`. Apps then link to it like to any database, and `app backup` dumps it.
 
 ```yaml
 shared:
@@ -354,18 +378,18 @@ shared:
 | Key | Default | Meaning |
 |---|---|---|
 | `external.host` | required | Host name or address, as the app's containers see it |
-| `external.port` | `5432` | |
+| `external.port` | `5432`, `3306` | |
 | `external.network` | – | Existing Docker network the database is on; linked services join it. Without it, containers reach the host like any other address |
-| `external.sslmode` | – | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; added to `db_url` and used by compost's own clients |
+| `external.sslmode` | – | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; used by compost's own clients, and added to `db_url` for Postgres (MySQL drivers each name it differently: set it in the app) |
 | `external.allow_purge` | `false` | Let `--purge database` drop databases there (needs root credentials) |
-| `configuration.root_user` | `postgres` | Superuser, if compost may create databases there |
+| `configuration.root_user` | `postgres`, `root` | Superuser, if compost may create databases there |
 | `configuration.root_password` | – | Its password; secret. A new value replaces the stored one; a deploy without it keeps the stored credentials |
 
 What compost does with it:
 - **Runs nothing.** `server deploy` only checks that `network` exists and stores how to reach it. `server state` checks that it answers (`external, accepting connections`); if it doesn't, the state is `DEGRADED`.
 - **Links pin it.** A link uses an external database only with `instance: <name>`, so adding one never changes which database other apps get.
 - **Without root credentials**, links name an existing database, user and password (`db_name`, `db_user`, `db_password`), and compost creates nothing. **With them**, compost creates databases and users as on its own Postgres.
-- **Backups** run `pg_dump` and `psql` in a temporary `postgres:<version>-alpine` container on the server. The credentials go into an env file readable only by the server user, deleted after the run, never onto a command line. `server backup` leaves external databases out: `app backup` saves the apps' databases.
+- **Backups** run `pg_dump` and `psql` (or the MariaDB/MySQL tools) in a temporary container of the type's image on the server. The credentials go into a file readable only by the server user, deleted after the run, never onto a command line. `server backup` leaves external databases out: `app backup` saves the apps' databases.
 - **Never destroys data by accident.** `--purge database` keeps databases there, with a warning, unless root credentials are set and `allow_purge: true`.
 - Removed from `compost-server.yaml` while no app links to it, it is forgotten by the next `server deploy`.
 

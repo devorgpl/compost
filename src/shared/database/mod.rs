@@ -1,6 +1,7 @@
 //! Database kind: database servers that apps link to.
 
 mod base;
+mod mysql;
 mod postgres;
 
 use anyhow::{Context, Result, bail};
@@ -141,7 +142,7 @@ pub trait DatabaseType: Sync {
     ) -> Result<()>;
 }
 
-static TYPES: &[&dyn DatabaseType] = &[&postgres::Postgres];
+static TYPES: &[&dyn DatabaseType] = &[&postgres::Postgres, &mysql::MARIADB, &mysql::MYSQL];
 
 pub struct DatabaseKind;
 

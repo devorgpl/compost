@@ -611,7 +611,7 @@ mod tests {
             find_choice(&all, "database/postgres").unwrap().type_name,
             "postgres"
         );
-        let err = find_choice(&all, "mysql").err().unwrap();
+        let err = find_choice(&all, "oracle").err().unwrap();
         assert!(format!("{err:#}").contains("known: "), "{err:#}");
     }
 
