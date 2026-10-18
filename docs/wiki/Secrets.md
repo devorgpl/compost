@@ -58,6 +58,8 @@ shared:
         root_password: Change-me-to-a-long-random-string-1
 ```
 
+The credentials of [S3 backup targets](Backup-and-Restore.md#s3-targets) go here too, under `backup.targets.<name>`; backups need them stored on the server (below).
+
 Lists merge by `name`, so only the secret keys are repeated. The passwords are optional. None can change after the first deploy, except an external database's `root_password`, which a new value replaces. Once on the server, they are kept by later deploys without the file. Generated ones are on the server:
 
 ```sh

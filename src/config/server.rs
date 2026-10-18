@@ -151,6 +151,30 @@ pub enum TargetConfig {
         /// Absolute, or relative to `COMPOST_SERVER_HOME`.
         path: String,
     },
+    /// An S3 bucket, reached with rclone in a container on the server.
+    S3 {
+        bucket: String,
+        /// Folder (key prefix) in the bucket.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        /// Default: AWS.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        region: Option<String>,
+        /// rclone's S3 provider, e.g. `AWS`, `Minio`, `Cloudflare`. Default `Other`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        /// Secret.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        access_key_id: Option<String>,
+        /// Secret.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_access_key: Option<String>,
+        /// The rclone image.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<String>,
+    },
 }
 
 impl BackupSettings {
@@ -172,7 +196,14 @@ impl BackupSettings {
                 TargetConfig::Server { path: dir } if dir.trim().is_empty() => {
                     return Err(config_err(format!("{path}.path must not be empty")));
                 }
-                TargetConfig::Server { .. } => {}
+                TargetConfig::S3 { bucket, .. }
+                    if bucket.trim().is_empty() || bucket.contains('/') =>
+                {
+                    return Err(config_err(format!(
+                        "{path}.bucket: a bucket name, without `/` (put folders in `path`)"
+                    )));
+                }
+                TargetConfig::Server { .. } | TargetConfig::S3 { .. } => {}
             }
         }
         let names = self.target_names();
@@ -242,6 +273,19 @@ impl ServerConfig {
     /// A copy without secret values, safe to store on the server.
     pub fn without_secrets(&self) -> Result<ServerConfig> {
         let mut copy = self.clone();
+        if let Some(backup) = &mut copy.backup {
+            for target in backup.targets.values_mut() {
+                if let TargetConfig::S3 {
+                    access_key_id,
+                    secret_access_key,
+                    ..
+                } = target
+                {
+                    *access_key_id = None;
+                    *secret_access_key = None;
+                }
+            }
+        }
         for (kind_name, apps) in &mut copy.shared {
             let kind = shared::find_kind(kind_name)
                 .with_context(|| format!("unknown kind `{kind_name}`"))?;

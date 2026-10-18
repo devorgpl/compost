@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use super::Remote;
 use crate::connector::{Connector, shell_quote};
 
 /// A folder with archives.
@@ -18,6 +19,10 @@ pub enum Store<'c> {
         connector: &'c dyn Connector,
         dir: String,
     },
+    Remote {
+        connector: &'c dyn Connector,
+        remote: Remote,
+    },
 }
 
 impl fmt::Display for Store<'_> {
@@ -25,6 +30,7 @@ impl fmt::Display for Store<'_> {
         match self {
             Store::Local(dir) => write!(f, "{}", dir.display()),
             Store::Server { dir, .. } => write!(f, "{dir} (on the server)"),
+            Store::Remote { remote, .. } => write!(f, "{remote}"),
         }
     }
 }
@@ -62,6 +68,7 @@ impl Store<'_> {
                     })
                     .collect()
             }
+            Store::Remote { connector, remote } => remote.list(*connector)?,
         };
         rows.sort();
         Ok(rows)
@@ -80,6 +87,7 @@ impl Store<'_> {
                 ))?;
                 Ok(())
             }
+            Store::Remote { connector, remote } => remote.delete(*connector, name),
         }
     }
 }

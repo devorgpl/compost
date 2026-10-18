@@ -21,7 +21,7 @@ Where archives go: `--target` for backups, `--source` for restores and `backup l
 |---|---|
 | `local` | Streamed through the SSH connection to this machine and packed here. Nothing stays on the server. `-o` is a file or folder here. |
 | `server` | Packed on the server in its backup folder (`backup.server_path`, default `~/.compost-server/backups`). No data crosses the network. `-o` and restore archives are file names in that folder, or absolute paths. |
-| a name from `backup.targets` | A target you define. `type: server` is another folder on the server, e.g. a mounted disk; it works like `server`. |
+| a name from `backup.targets` | A target you define. `type: server` is another folder on the server, e.g. a mounted disk; it works like `server`. `type: s3` is an S3 bucket; see below. |
 
 ```yaml
 # compost-server.yaml
@@ -30,7 +30,42 @@ backup:
   server_path: backups      # absolute, or relative to compost's folder on the server
   targets:
     nas: {type: server, path: /mnt/nas/compost}
+    offsite:
+      type: s3
+      bucket: acme-backups
+      path: prod                                # folder in the bucket (optional)
+      endpoint: https://s3.eu-central-1.amazonaws.com
+      region: eu-central-1
 ```
+
+### S3 targets
+
+An archive for an `s3` target is packed on the server as for `server`, copied to the bucket, then deleted from the server. Restores (`--source offsite`) copy it back into the server's `tmp/` first. `backup list --source offsite` lists the bucket's folder, and `keep` and `backup prune` delete there. The copying is done by [rclone](https://rclone.org) in a container on the server (`rclone/rclone`), so the server needs to reach the bucket; nothing is installed.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `bucket` | required | Bucket name |
+| `path` | – | Folder (key prefix) in the bucket |
+| `endpoint` | AWS | URL of an S3-compatible service, e.g. Backblaze B2, Cloudflare R2, Hetzner, MinIO, Garage |
+| `region` | – | Region, where the service needs one |
+| `provider` | `Other` | rclone's S3 provider, e.g. `AWS`, `Minio`, `Cloudflare`, for provider-specific behavior |
+| `access_key_id`, `secret_access_key` | required | Credentials; secrets, see below |
+| `image` | `rclone/rclone` of a fixed version | Another rclone image, e.g. from a mirror |
+
+The credentials go in the secrets file, and must be stored on the server, since backups and restores read them there:
+
+```yaml
+# .compost-server.secrets.yaml
+backup:
+  targets:
+    offsite: {access_key_id: AKIA…, secret_access_key: …}
+```
+
+```sh
+compost server deploy --apply --secret .compost-server.secrets.yaml
+```
+
+They are left out of the stored `compost-server.yaml` and reach rclone in a file readable only by the server user, never on a command line. The key needs to list, read, write and delete objects in that folder; compost doesn't create the bucket.
 
 `app backup --all` without a profile writes one archive, to `--target` or the server's `backup.target`; an app's own `backup.target` applies to backups of that app alone and to profiles.
 

@@ -22,6 +22,8 @@ pub struct Archive<'c> {
     connector: &'c dyn Connector,
     pub manifest: Manifest,
     unpacked: Unpacked,
+    /// A folder on the server removed with the archive, e.g. where it was downloaded to.
+    remove: Option<String>,
 }
 
 impl<'c> Archive<'c> {
@@ -77,10 +79,17 @@ impl<'c> Archive<'c> {
             connector,
             manifest: Manifest::new(super::Scope::App, ""),
             unpacked,
+            remove: None,
         };
         archive.manifest = serde_yaml_ng::from_str(manifest).context("invalid manifest.yaml")?;
         archive.manifest.check_format()?;
         Ok(archive)
+    }
+
+    /// Also remove the server folder `dir` when done with the archive.
+    pub fn removing(mut self, dir: String) -> Self {
+        self.remove = Some(dir);
+        self
     }
 
     fn cleanup_server(connector: &dyn Connector, dir: &str) -> Result<String> {
@@ -171,7 +180,11 @@ impl<'c> Archive<'c> {
 
 impl Drop for Archive<'_> {
     fn drop(&mut self) {
-        if let Unpacked::Server(dir) = &self.unpacked {
+        let unpacked = match &self.unpacked {
+            Unpacked::Server(dir) => Some(dir),
+            _ => None,
+        };
+        for dir in unpacked.into_iter().chain(&self.remove) {
             if let Err(err) = Self::cleanup_server(self.connector, dir) {
                 eprintln!("warning: could not remove {dir}: {err:#}");
             }

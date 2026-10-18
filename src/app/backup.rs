@@ -10,8 +10,7 @@ use super::state::{initialized_server, not_deployed, stored_compose_file};
 use super::{secrets, steps, volumes};
 use crate::backup::profile::{self, AppRun, Flags};
 use crate::backup::{
-    self, Backup, Destination, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope,
-    retention,
+    self, Backup, Format, InstanceRef, ItemWriter, Manifest, Output, Role, Scope, Sink, retention,
 };
 use crate::config::app::StopServices;
 use crate::config::server::ServerConfig;
@@ -128,7 +127,7 @@ pub fn backup(
     match (scope, &flags.profile) {
         // `--all` without a profile: one archive, at the flag's or the server's target.
         (Scope::Apps, None) => {
-            let output = output(
+            let (output, sink) = output(
                 &ctx,
                 &server_config,
                 flags.target.as_deref(),
@@ -149,6 +148,7 @@ pub fn backup(
                 )?;
             }
             let location = backup.finish(&format!("apps-{}", backup::timestamp()))?;
+            let (location, _) = sink.deliver(location)?;
             out!("Backup written to {location}");
             Ok(())
         }
@@ -196,7 +196,7 @@ pub fn write_one(
     path: Option<&PathBuf>,
     stop: bool,
 ) -> Result<()> {
-    let output = output(ctx, server_config, run.target.as_deref(), path)?;
+    let (output, sink) = output(ctx, server_config, run.target.as_deref(), path)?;
     let mut manifest = Manifest::new(Scope::App, server_name);
     manifest.profile = profile.map(String::from);
     let mut backup = Backup::new(ctx.connector, run.format, manifest, output)?;
@@ -211,30 +211,24 @@ pub fn write_one(
         None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
+    let (location, store) = sink.deliver(location)?;
     out!("Backup written to {location}");
     if let (Some(profile), Some(keep)) = (profile, run.keep) {
-        retention::apply(&location.store(ctx.connector), &owner, profile, keep)?;
+        retention::apply(&store, &owner, profile, keep)?;
     }
     Ok(())
 }
 
 /// Where the backup goes: the `target` (a flag's or a profile's), else the
 /// server's `backup.target`; `path` is the `-o` flag.
-pub fn output(
-    ctx: &ServerCtx,
+pub fn output<'c>(
+    ctx: &ServerCtx<'c>,
     server_config: &ServerConfig,
     target: Option<&str>,
     path: Option<&PathBuf>,
-) -> Result<Output> {
-    Ok(
-        match backup::resolve_target(ctx, server_config.backup.as_ref(), target)? {
-            Destination::Server { dir } => Output::Server {
-                dir,
-                name: path.map(|p| p.display().to_string()),
-            },
-            Destination::Local => Output::Local(path.cloned()),
-        },
-    )
+) -> Result<(Output, Sink<'c>)> {
+    let destination = backup::resolve_target(ctx, server_config.backup.as_ref(), target)?;
+    Ok(Sink::new(ctx, destination, path))
 }
 
 /// Every `--link` must name a link of at least one selected instance.

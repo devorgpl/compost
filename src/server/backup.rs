@@ -80,7 +80,7 @@ pub fn backup(
     let flags = &options.flags;
     let run = profile::server_run(config.backup.as_ref(), flags)
         .ok_or_else(|| profile::not_for_server(flags.profile.as_deref().unwrap_or_default()))?;
-    let output = output(
+    let (output, sink) = output(
         &ctx,
         &config,
         run.target.as_deref(),
@@ -153,11 +153,12 @@ pub fn backup(
         None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
+    let (location, store) = sink.deliver(location)?;
     out!("Backup written to {location}");
     out!("It holds secrets (passwords of the shared apps and their links): keep it safe.");
     if let (Some(profile), Some(keep), true) = (&flags.profile, run.keep, options.shared.is_empty())
     {
-        retention::apply(&location.store(connector), &owner, profile, keep)?;
+        retention::apply(&store, &owner, profile, keep)?;
     }
     Ok(())
 }
@@ -390,13 +391,13 @@ pub fn list(
 ) -> Result<()> {
     let ctx = app::state::initialized_server(connector, server_home, manager_key)?;
     let config = instance::server_config(&ctx)?;
-    let Destination::Server { dir } = backup::resolve_target(&ctx, config.backup.as_ref(), source)?
-    else {
+    let destination = backup::resolve_target(&ctx, config.backup.as_ref(), source)?;
+    if destination == Destination::Local {
         return Err(config_err(
-            "backups go to this machine (target local); pass --source server (or a named target) to list a backup folder on the server",
+            "backups go to this machine (target local); pass --source server or a name from backup.targets",
         ));
-    };
-    let store = Store::Server { connector, dir };
+    }
+    let store = destination.store(connector);
     let rows = store.list()?;
     if rows.is_empty() {
         out!("No backups in {store}");
@@ -562,10 +563,7 @@ pub fn prune(
     let mut stores: Vec<(Store, Vec<(String, u64)>)> = Vec::new();
     let mut doomed: Vec<(usize, String, u64)> = Vec::new();
     for (target, owner, name, keep) in &groups {
-        let store = match backup::resolve_target(&ctx, settings, target.as_deref())? {
-            Destination::Server { dir } => Store::Server { connector, dir },
-            Destination::Local => Store::Local(PathBuf::from(".")),
-        };
+        let store = backup::resolve_target(&ctx, settings, target.as_deref())?.store(connector);
         let index = match stores
             .iter()
             .position(|(s, _)| s.to_string() == store.to_string())

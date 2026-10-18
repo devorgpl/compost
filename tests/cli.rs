@@ -177,6 +177,30 @@ case "$*" in
   "image inspect compost-release/"*) [ -z "$FAKE_DOCKER_MISSING_TAGS" ] ;;
   "image ls "*) for tag in $FAKE_DOCKER_TAGS; do echo "$tag"; done ;;
   "image rm "*) ;;
+  "run "*" rclone/rclone"*)
+    # rclone with the bucket in $FAKE_S3; checks that credentials come in the env file.
+    mount=; envf=
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -v) mount="${2%:/data}"; shift 2 ;;
+        --env-file) envf="$2"; shift 2 ;;
+        rclone/rclone*) shift; break ;;
+        *) shift ;;
+      esac
+    done
+    grep -q '^RCLONE_CONFIG_REMOTE_SECRET_ACCESS_KEY=.' "$envf" || { echo "no credentials" >&2; exit 1; }
+    at() { case "$1" in /data/*) echo "$mount/${1#/data/}" ;; remote:*) echo "$FAKE_S3/${1#remote:}" ;; esac; }
+    eval last=\${$#}
+    case "$1" in
+      copyto) [ -f "$(at "$2")" ] || { echo "object not found" >&2; exit 3; }
+              mkdir -p "$(dirname "$(at "$3")")" && cp "$(at "$2")" "$(at "$3")" ;;
+      lsf) for f in "$(at "$last")"*; do
+             [ -f "$f" ] && printf '%s\t%s\n' "$(wc -c < "$f" | tr -d ' ')" "${f##*/}"
+           done; true ;;
+      deletefile) rm -f "$(at "$2")" ;;
+      *) echo "fake rclone: unexpected $1" >&2; exit 1 ;;
+    esac ;;
   "run "*" pg_dump "*) echo "-- dump" ;;
   "run "*" pg_isready"*) echo "accepting connections" ;;
   "run "*) cat >> "$FAKE_DOCKER_LOG" ;;
@@ -2395,6 +2419,167 @@ fn backup_profiles_targets_and_retention() {
         .run(&["backup", "prune", "--yes"], &running)
         .success()
         .stdout(contains("Nothing to delete"));
+}
+
+#[test]
+fn backups_to_an_s3_target() {
+    let server = LocalServer::new();
+    let bucket = server.env.work.path().join("s3");
+    let bucket_env = bucket.display().to_string();
+    let running = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_S3", bucket_env.as_str()),
+    ];
+    let config = format!(
+        "{SERVER_CONFIG}backup:
+  targets:
+    offsite: {{type: s3, bucket: b, path: prod, endpoint: 'https://s3.example.com'}}
+  profiles:
+    weekly: {{target: offsite, keep: 1, server: false}}
+"
+    );
+    server.write_work_file("compost-server.yaml", &config);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.write_work_file("app/compost.yaml", APP_CONFIG);
+    server.write_work_file(
+        "app/docker-compose.yaml",
+        "services: {front-webapp: {build: .}, backend-webapp: {build: .}}",
+    );
+    server.write_work_file("app/.compost-staging.yaml", APP_OVERLAY);
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml,app/.compost-staging.yaml",
+            ],
+            &running,
+        )
+        .success();
+
+    // Without stored credentials.
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "--target", "offsite"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("run `compost server deploy --secret <file>`"));
+
+    server.write_work_file(
+        "secrets.yaml",
+        "backup: {targets: {offsite: {access_key_id: AKID, secret_access_key: TOPSECRET}}}",
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &running,
+        )
+        .success();
+    let stored = fs::read_to_string(server.server_home.join("compost-server.yaml")).unwrap();
+    assert!(
+        stored.contains("bucket: b") && !stored.contains("TOPSECRET"),
+        "{stored}"
+    );
+    server.take_docker_log();
+
+    server
+        .run(
+            &["app", "backup", "myapp-staging", "--target", "offsite"],
+            &running,
+        )
+        .success()
+        .stdout(contains("uploading myapp-staging-"))
+        .stdout(contains("at offsite (s3://b/prod)"));
+    let objects = |dir: &std::path::Path| -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|e| {
+                e.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let uploaded = objects(&bucket.join("b/prod"));
+    assert_eq!(uploaded.len(), 1, "{uploaded:?}");
+    let archive = uploaded[0].clone();
+    assert!(
+        objects(&server.server_home.join("tmp")).is_empty(),
+        "staging removed"
+    );
+    let log = server.take_docker_log();
+    assert!(log.contains("copyto /data/myapp-staging-"), "{log}");
+    assert!(!log.contains("TOPSECRET"), "{log}");
+
+    server
+        .run(&["backup", "list", "--source", "offsite"], &running)
+        .success()
+        .stdout(contains(archive.as_str()));
+
+    server
+        .run(
+            &[
+                "app",
+                "restore",
+                &archive,
+                "--source",
+                "offsite",
+                "--include",
+                "links",
+                "--replace",
+                "--yes",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("Downloading"))
+        .stdout(contains("Restored myapp-staging."));
+    assert!(
+        objects(&server.server_home.join("tmp")).is_empty(),
+        "download removed"
+    );
+    server
+        .run(
+            &[
+                "app",
+                "restore",
+                "nope.tar.gz",
+                "--source",
+                "offsite",
+                "--yes",
+            ],
+            &running,
+        )
+        .failure()
+        .stderr(contains(
+            "cannot get nope.tar.gz from backup target offsite",
+        ));
+
+    // Retention at the remote target.
+    fs::write(
+        bucket.join("b/prod/myapp-staging-weekly-20200101-000000.compost.tar.gz"),
+        "old",
+    )
+    .unwrap();
+    server
+        .run(&["backup", "run", "weekly"], &running)
+        .success()
+        .stdout(contains(
+            "deleted myapp-staging-weekly-20200101-000000.compost.tar.gz",
+        ));
+    let left = objects(&bucket.join("b/prod"));
+    // The archive from before, and the new one of the profile.
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(left.contains(&archive), "{left:?}");
+    assert!(
+        !left.contains(&"myapp-staging-weekly-20200101-000000.compost.tar.gz".to_string()),
+        "{left:?}"
+    );
 }
 
 #[test]

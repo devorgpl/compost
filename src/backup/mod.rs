@@ -4,21 +4,26 @@
 
 mod archive;
 pub mod profile;
+pub mod remote;
 pub mod retention;
 mod source;
 mod writer;
 
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub use archive::{InstanceRef, Manifest, Scope, SharedRef};
+pub use remote::Remote;
+pub use retention::Store;
 pub use source::Archive;
-pub use writer::{Backup, Output, human_size};
+pub use writer::{Backup, Location, Output, human_size};
 
 use crate::config::backup::unknown_target;
 use crate::config::server::{BackupSettings, TargetConfig};
+use crate::connector::{Connector, shell_quote};
 use crate::shared::ServerCtx;
 
 /// Default archive folder of the `server` target, relative to `COMPOST_SERVER_HOME`.
@@ -129,6 +134,102 @@ pub enum Destination {
     Local,
     /// A folder on the server (absolute path).
     Server { dir: String },
+    /// Outside the server; archives are packed on the server, then copied.
+    Remote(Remote),
+}
+
+impl Destination {
+    /// The folder of archives, for listing and retention. `local` is the current folder.
+    pub fn store<'c>(&self, connector: &'c dyn Connector) -> Store<'c> {
+        match self {
+            Destination::Local => Store::Local(std::path::PathBuf::from(".")),
+            Destination::Server { dir } => Store::Server {
+                connector,
+                dir: dir.clone(),
+            },
+            Destination::Remote(remote) => Store::Remote {
+                connector,
+                remote: remote.clone(),
+            },
+        }
+    }
+}
+
+/// How a backup gets to its target after [`Backup::finish`].
+pub struct Sink<'c> {
+    /// The remote and the server folder the archive is packed in first.
+    upload: Option<(Remote, String)>,
+    connector: &'c dyn Connector,
+}
+
+impl<'c> Sink<'c> {
+    /// Where [`Backup`] writes, and the sink. `path` is the `-o` flag: a file
+    /// or folder here for `local`, else a file name.
+    pub fn new(
+        ctx: &ServerCtx<'c>,
+        destination: Destination,
+        path: Option<&PathBuf>,
+    ) -> (Output, Self) {
+        let name = path.map(|p| p.display().to_string());
+        let (output, upload) = match destination {
+            Destination::Local => (Output::Local(path.cloned()), None),
+            Destination::Server { dir } => (Output::Server { dir, name }, None),
+            Destination::Remote(remote) => {
+                let dir = ctx.path(&format!("tmp/upload-{}", uuid::Uuid::new_v4().simple()));
+                (
+                    Output::Server {
+                        dir: dir.clone(),
+                        name,
+                    },
+                    Some((remote, dir)),
+                )
+            }
+        };
+        let sink = Self {
+            upload,
+            connector: ctx.connector,
+        };
+        (output, sink)
+    }
+
+    /// After [`Backup::finish`]: copy the archive to a remote target. Returns
+    /// where the archive is now, and its folder for retention.
+    pub fn deliver(&self, location: Location) -> Result<(String, Store<'c>)> {
+        let connector = self.connector;
+        match (&self.upload, location) {
+            (Some((remote, _)), Location::Server(path)) => {
+                let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+                out!("  uploading {name} to {remote} ...");
+                remote.upload(connector, &path)?;
+                Ok((
+                    format!("{name} at {remote}"),
+                    Store::Remote {
+                        connector,
+                        remote: remote.clone(),
+                    },
+                ))
+            }
+            (_, location) => {
+                let store = location.store(connector);
+                Ok((location.to_string(), store))
+            }
+        }
+    }
+}
+
+impl Drop for Sink<'_> {
+    fn drop(&mut self) {
+        // The archive was packed here for the upload: done with it either way.
+        if let Some((_, dir)) = &self.upload {
+            let _cleanup = crate::interrupt::cleanup();
+            if let Err(err) = self
+                .connector
+                .exec(&format!("rm -rf -- {}", shell_quote(dir)))
+            {
+                eprintln!("warning: could not remove {dir}: {err:#}");
+            }
+        }
+    }
 }
 
 /// The target `name` (a `--target`/`--source` flag or a profile's), else the
@@ -165,6 +266,9 @@ pub fn resolve_target(
                 Some(TargetConfig::Server { path }) => Ok(Destination::Server {
                     dir: absolute(path),
                 }),
+                Some(target @ TargetConfig::S3 { .. }) => {
+                    Ok(Destination::Remote(Remote::new(ctx, name, target)?))
+                }
                 None => Err(unknown_target("", name, &targets)),
             }
         }

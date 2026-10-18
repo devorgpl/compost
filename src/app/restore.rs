@@ -98,6 +98,20 @@ pub fn open_archive<'c>(
             out!("Reading {path} ...");
             Archive::open_local(ctx.connector, Path::new(path))
         }
+        Destination::Remote(remote) => {
+            out!("Downloading {path} from {remote} ...");
+            let (dir, file) = remote.download(ctx.connector, path)?;
+            let archive = Archive::open_server(ctx.connector, &file);
+            match archive {
+                Ok(archive) => Ok(archive.removing(dir)),
+                Err(err) => {
+                    let _ = ctx
+                        .connector
+                        .exec(&format!("rm -rf -- {}", shell_quote(&dir)));
+                    Err(err)
+                }
+            }
+        }
     }
 }
 

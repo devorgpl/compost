@@ -180,12 +180,13 @@ backup:
   server_path: backups                 # folder of the server target
   targets:
     nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
+    offsite: {type: s3, bucket: acme-backups, path: prod, endpoint: https://s3.example.com}   # credentials in the secrets file
   profiles:
     daily: {include: [links], keep: 7, target: nas}
     predeploy: {keep: 3, server: false}
 ```
 
-`profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
+`targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep` and `server` (whether `backup run` also backs up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
