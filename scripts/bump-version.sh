@@ -21,8 +21,9 @@ fi
 awk -v v="$version" '!done && /^version = "/ { $0 = "version = \"" v "\""; done = 1 } 1' \
     Cargo.toml >Cargo.toml.new
 mv Cargo.toml.new Cargo.toml
-# Updates the compost entry in Cargo.lock without touching dependencies.
-cargo metadata --format-version 1 --offline >/dev/null
+# Updates the compost entry in Cargo.lock without touching dependencies
+# (unlike `cargo metadata`, without needing the sources of every platform's).
+cargo update --package compost --offline --quiet
 
 git commit -q -m "Version $version" -- Cargo.toml Cargo.lock
 echo "Version $version committed"
