@@ -148,6 +148,13 @@ const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
 case "$*" in
+  "system df "*) printf 'Images\t1.2GB\t800MB (66%%)\nBuild Cache\t300MB\t300MB\n' ;;
+  "image ls --no-trunc "*)
+    printf 'sha256:aa\told/app:1\t200MB\nsha256:1111111111111111\tnginx:1\t50MB\n'
+    printf 'sha256:bb\tcompost-release/myapp-staging:1-web\t200MB\nsha256:cc\t<none>:<none>\t10MB\n' ;;
+  "inspect --format "*) echo sha256:1111111111111111 ;;
+  "image prune -f") echo "Total reclaimed space: 10MB" ;;
+  "builder prune -f") echo "Total reclaimed space: 300MB" ;;
   "version "*) echo 29.0.0 ;;
   "compose version"*) echo 2.40.0 ;;
   "compose "*" ps --services "*)
@@ -2717,6 +2724,37 @@ fn scheduled_backups_run_from_a_crontab_line() {
         .stdout(contains("removed the crontab line"));
     let crontab = fs::read_to_string(server.env.work.path().join("crontab")).unwrap();
     assert!(!crontab.contains("compost"), "{crontab}");
+}
+
+#[test]
+fn server_prune_keeps_used_and_release_images() {
+    let server = server_with_shared_apps();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "prune", "--dry-run"], &running)
+        .success()
+        .stdout(contains("free of"))
+        .stdout(contains("Build Cache"))
+        .stdout(contains("compost: backups folder"))
+        .stdout(contains("old/app:1"))
+        .stdout(contains("nginx:1").not())
+        .stdout(contains("Kept: 1 release images"))
+        .stdout(contains("Dry run: nothing is removed."));
+    assert!(!server.take_docker_log().contains("image rm"));
+    server
+        .run(&["server", "prune"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+    server
+        .run(&["server", "prune", "--yes"], &running)
+        .success()
+        .stdout(contains("build cache: 300MB reclaimed"))
+        .stdout(contains("Removed 1 unused images."));
+    let log = server.take_docker_log();
+    assert!(log.contains("docker image rm old/app:1"), "{log}");
+    assert!(!log.contains("image rm nginx"), "{log}");
+    assert!(!log.contains("image rm compost-release"), "{log}");
+    assert!(log.contains("docker builder prune -f"), "{log}");
 }
 
 #[test]

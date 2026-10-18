@@ -390,6 +390,31 @@ ingress
 
 Links of shared apps (Keycloak's database and domain) show as `shared <kind>/<name>/<entry>`. A link whose instance no longer exists shows as a leftover record.
 
+## Disk space
+
+Pulls and builds leave old images and build cache behind. `server prune` shows how the server's disk is used, then removes what no container needs:
+
+```sh
+compost server prune --dry-run     # disk usage and what would be removed
+compost server prune [--yes]
+```
+
+```
+Disk /: 41.2 GB free of 80.0 GB (49% used)
+Docker:
+  Images            16.0GB  reclaimable 12.5GB (78%)
+  Build Cache       10.2GB  reclaimable 5.4GB
+compost: backups folder 3.2 GB, releases 410.0 MB (sources; their images are in Docker's)
+
+Unused images to remove:
+  myorg/web:1.4                         210MB
+  compost-caddysecurebuild-caddy-main:9f2c…  95MB
+Also removed: dangling images (<none>) and the build cache.
+Kept: 12 release images for `app rollback` (`deployment.releases` sets how many).
+```
+
+It removes every tagged image that no container uses, running or stopped, including images of other software on the server; the dangling images; and all of the build cache, so the next `build: true` deploy builds from scratch. The images kept for [rollback](Applications.md#releases-and-rollback) (`compost-release/…`) stay: an image that is also a release image only loses its other name. Volumes and containers are never touched, and neither are backups: [`backup prune`](Backup-and-Restore.md#deleting-old-archives) deletes old archives. It asks before removing anything unless `--yes`, and holds the server's lock, so it never removes an image that a running deploy has pulled but not started yet.
+
 ## Locks
 
 Commands that change a server hold a lock (`~/.compost-server/lock/`), so two can't run at once. If a command was killed and left it behind, the next one prints who held it; add `--force-unlock` to remove it.

@@ -310,7 +310,7 @@ compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
 - **Links follow the release.** A link that the release doesn't have is removed like any [dropped link](#deploying) (its data is kept); a link it has but the current deploy doesn't is created again. Passwords and the stored overlay ([Secrets](Secrets.md)) are the current ones.
 - **Missing images.** If a pinned image was removed by hand, the rollback warns and pulls or builds as a deploy would.
 
-`deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags.
+`deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags. [`server prune`](Servers-and-Shared-Apps.md#disk-space) keeps release images when it removes unused ones.
 
 ## Inspecting
 

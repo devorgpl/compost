@@ -66,6 +66,7 @@ Commands:
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
   logs      Show the output of a shared application's containers
+  prune     Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -226,6 +227,23 @@ Options:
       --since <SINCE>        Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --timestamps           Show the time of every line
+  -h, --help                 Print help
+```
+
+## `compost server prune`
+
+```text
+Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
+
+Usage: compost server prune [OPTIONS]
+
+Options:
+      --dry-run              Show the disk usage and what would be removed, without removing anything
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

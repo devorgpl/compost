@@ -70,6 +70,19 @@ pub struct ServerBackupArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ServerPruneArgs {
+    /// Show the disk usage and what would be removed, without removing anything
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Do not ask for confirmation
+    #[arg(long)]
+    pub yes: bool,
+    /// Remove a lock left behind by an interrupted compost command
+    #[arg(long)]
+    pub force_unlock: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct ServerRestoreArgs {
     /// Archive written by `compost server backup` (with `--source server`: a file in the server's backup folder)
     pub archive: String,
@@ -450,6 +463,29 @@ pub fn backup_list(
         server.server_home(),
         &manager.manager_key,
         source,
+    )
+}
+
+/// `compost server prune`
+pub fn prune(
+    home: &CompostHome,
+    server: Option<&str>,
+    args: ServerPruneArgs,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    let options = crate::server::prune::Options {
+        dry_run: args.dry_run,
+        yes: args.yes,
+        force_unlock: args.force_unlock,
+    };
+    crate::server::prune::prune(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &options,
     )
 }
 

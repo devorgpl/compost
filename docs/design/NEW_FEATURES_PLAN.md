@@ -24,7 +24,8 @@ Candidate features, taken from what similar tools offer (Kamal, Uncloud, Coolify
 
 9. **More shared app types:** Redis/Valkey, MySQL/MariaDB, S3-compatible storage (Garage, MinIO), an SMTP relay. Coolify's many one-click services are its main draw, and the link model (a database or user per instance) works the same way for these.
 10. **`server bootstrap`:** install Docker and create `compostuser` over SSH, as Kamal and Uncloud do. Today Docker is a requirement users install themselves.
-11. **`server prune`:** remove old images and build cache, and show disk usage.
+11. **Done:** `server prune [--dry-run] [--yes]` shows disk usage (disk, `docker system df`, backups and releases) and removes unused tagged images, dangling images and the build cache, keeping release images.
+    **`server prune`:** remove old images and build cache, and show disk usage.
 12. **One app on several servers (`-s a,b`):** a small step toward Uncloud's multi-machine model without becoming a cluster.
 
 ## Also done (not in the original list)
@@ -33,4 +34,4 @@ Candidate features, taken from what similar tools offer (Kamal, Uncloud, Coolify
 
 ## Suggested order
 
-1, 2 and 4 shipped in 1.3.0, 3 after it. Next: 11 (`server prune`), small and more useful now that releases keep tagged images; then 8 (notifications), which can read the scheduled backups' results in `state.yaml`; then 5 (zero-downtime).
+1, 2 and 4 shipped in 1.3.0, 3 after it. 11 is done too. Next: 8 (notifications), which can read the scheduled backups' results in `state.yaml`; then 5 (zero-downtime).

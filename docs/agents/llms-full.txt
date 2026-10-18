@@ -1393,7 +1393,7 @@ compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
 - **Links follow the release.** A link that the release doesn't have is removed like any [dropped link](#deploying) (its data is kept); a link it has but the current deploy doesn't is created again. Passwords and the stored overlay ([Secrets](Secrets.md)) are the current ones.
 - **Missing images.** If a pinned image was removed by hand, the rollback warns and pulls or builds as a deploy would.
 
-`deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags.
+`deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags. [`server prune`](Servers-and-Shared-Apps.md#disk-space) keeps release images when it removes unused ones.
 
 ## Inspecting
 
@@ -1840,6 +1840,31 @@ ingress
 ```
 
 Links of shared apps (Keycloak's database and domain) show as `shared <kind>/<name>/<entry>`. A link whose instance no longer exists shows as a leftover record.
+
+## Disk space
+
+Pulls and builds leave old images and build cache behind. `server prune` shows how the server's disk is used, then removes what no container needs:
+
+```sh
+compost server prune --dry-run     # disk usage and what would be removed
+compost server prune [--yes]
+```
+
+```
+Disk /: 41.2 GB free of 80.0 GB (49% used)
+Docker:
+  Images            16.0GB  reclaimable 12.5GB (78%)
+  Build Cache       10.2GB  reclaimable 5.4GB
+compost: backups folder 3.2 GB, releases 410.0 MB (sources; their images are in Docker's)
+
+Unused images to remove:
+  myorg/web:1.4                         210MB
+  compost-caddysecurebuild-caddy-main:9f2c…  95MB
+Also removed: dangling images (<none>) and the build cache.
+Kept: 12 release images for `app rollback` (`deployment.releases` sets how many).
+```
+
+It removes every tagged image that no container uses, running or stopped, including images of other software on the server; the dangling images; and all of the build cache, so the next `build: true` deploy builds from scratch. The images kept for [rollback](Applications.md#releases-and-rollback) (`compost-release/…`) stay: an image that is also a release image only loses its other name. Volumes and containers are never touched, and neither are backups: [`backup prune`](Backup-and-Restore.md#deleting-old-archives) deletes old archives. It asks before removing anything unless `--yes`, and holds the server's lock, so it never removes an image that a running deploy has pulled but not started yet.
 
 ## Locks
 
@@ -2741,6 +2766,7 @@ Commands:
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
   logs      Show the output of a shared application's containers
+  prune     Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -2901,6 +2927,23 @@ Options:
       --since <SINCE>        Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --timestamps           Show the time of every line
+  -h, --help                 Print help
+```
+
+## `compost server prune`
+
+```text
+Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
+
+Usage: compost server prune [OPTIONS]
+
+Options:
+      --dry-run              Show the disk usage and what would be removed, without removing anything
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

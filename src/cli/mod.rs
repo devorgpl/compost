@@ -92,6 +92,9 @@ pub enum ServerCommand {
     Restore(server::ServerRestoreArgs),
     /// Show the output of a shared application's containers
     Logs(server::ServerLogsArgs),
+    /// Show disk usage, then remove images no container uses (except those kept for
+    /// `app rollback`), dangling images and the build cache
+    Prune(server::ServerPruneArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -276,6 +279,7 @@ pub fn run(cli: Cli) -> Result<()> {
             server::deploy(&home, server, args, &connect)
         }
         Command::Server(ServerCommand::Logs(args)) => server::logs(&home, server, args, &connect),
+        Command::Server(ServerCommand::Prune(args)) => server::prune(&home, server, args, &connect),
         Command::Secret(command) => secret::run(&home, server, command, &connect),
         Command::Config(command) => config::run(&home, command),
         Command::Agent(command) => agent::run(command),

@@ -21,7 +21,7 @@ use crate::shared::ServerCtx;
 const DIR: &str = "releases";
 const RELEASE_FILE: &str = "release.yaml";
 /// Repository of the pinned images; the instance follows the `/`.
-const IMAGE_REPOSITORY: &str = "compost-release";
+pub const IMAGE_REPOSITORY: &str = "compost-release";
 /// Exit status of the retag script when a pinned image is missing.
 const MISSING_STATUS: i32 = 3;
 
