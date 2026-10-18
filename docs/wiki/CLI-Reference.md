@@ -21,6 +21,7 @@ Commands:
   app         Deploy and inspect user applications
   connector   Inspect links between applications and shared apps
   backup      Run backup profiles, list and prune backups
+  notify      Send notifications through the server's communication apps
   secret      Store application secrets on the server for `app deploy`
   config      Set and show preferences, e.g. `deploy.apply`
   agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
@@ -759,6 +760,40 @@ Usage: compost backup list [OPTIONS]
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --source <TARGET>      Where backups are: `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost notify`
+
+```text
+Send notifications through the server's communication apps
+
+Usage: compost notify [OPTIONS] <COMMAND>
+
+Commands:
+  test  Send a test message to every communication app, or to one
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost notify test`
+
+```text
+Send a test message to every communication app, or to one
+
+Usage: compost notify test [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --to <NAME>            Only this communication app
+      --message <MESSAGE>    Text of the message
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help

@@ -28,7 +28,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
@@ -43,7 +43,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
 | [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
-| [Migrating to compost](Migration.md) | | [AI agents](AI-Agents.md) |
+| [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
 
 ## Requirements
 

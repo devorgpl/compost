@@ -548,17 +548,21 @@ fn for_each_dropped_link(
 /// Start a shared app, with the hooks of its links around it.
 fn apply(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()> {
     run_link_hooks(ctx, plan, Hook::BeforeApply)?;
+    let on_demand = !plan.kind.runs_service(plan.app);
     if plan.app.is_external() {
         out!(
             "  {} {}: external, not started by compost",
             plan.kind_name(),
             plan.app.name
         );
+    } else if on_demand {
+        out_part!("  preparing {} {} ... ", plan.kind_name(), plan.app.name);
     } else {
         out_part!("  starting {} {} ... ", plan.kind_name(), plan.app.name);
     }
     match start(ctx, plan, pull, recreate) {
         Ok(()) if plan.app.is_external() => {}
+        Ok(()) if on_demand => out!("ready (runs on demand)"),
         Ok(()) => out!("running"),
         Err(err) => {
             out!("failed");
@@ -598,6 +602,9 @@ fn run_link_hooks(ctx: &ServerCtx, plan: &Plan, hook: Hook) -> Result<()> {
 fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()> {
     if plan.app.is_external() {
         return Ok(());
+    }
+    if !plan.kind.runs_service(plan.app) {
+        return prepare_image(ctx, plan, pull);
     }
     let dir = shell_quote(&ctx.path(&shared::shared_dir(plan.kind_name(), &plan.app.name)));
     let project = shared::project_name(plan.kind_name(), &plan.app.name);
@@ -780,6 +787,57 @@ fn plan_changes(
     Ok((changes, compose_changed))
 }
 
+/// A shared app that runs on demand: build its image (or pull the one its
+/// config names) and check that it speaks the contract.
+fn prepare_image(ctx: &ServerCtx, plan: &Plan, pull: bool) -> Result<()> {
+    use crate::shared::communication;
+    let name = &plan.app.name;
+    let image = ctx
+        .read(&communication::image_path(name))?
+        .context("the image file was not written")?;
+    let image = shell_quote(image.trim());
+    match &plan.app.image {
+        Some(_) => {
+            let missing = !ctx
+                .connector
+                .run(
+                    &format!("docker image inspect {image} >/dev/null 2>&1"),
+                    None,
+                )?
+                .success();
+            if missing || pull {
+                ctx.connector.exec(&format!("docker pull -q {image}"))?;
+            }
+        }
+        None => {
+            // The tag changes with the image's files: an existing one is current.
+            let build = shell_quote(&ctx.path(&communication::build_dir(name)));
+            let script = if pull {
+                format!("docker build -q --pull -t {image} {build}")
+            } else {
+                format!(
+                    "docker image inspect {image} >/dev/null 2>&1 || docker build -q -t {image} {build}"
+                )
+            };
+            ctx.connector.exec(&script)?;
+        }
+    }
+    let described = ctx
+        .connector
+        .exec(&format!("docker run --rm {image} describe"))?;
+    let api = serde_json::from_str::<serde_json::Value>(described.trim())
+        .ok()
+        .and_then(|v| v.get("api").and_then(serde_json::Value::as_u64));
+    if api != Some(u64::from(communication::API)) {
+        anyhow::bail!(
+            "{image} does not implement the communication contract (API {}): `describe` printed {}",
+            communication::API,
+            described.trim()
+        );
+    }
+    Ok(())
+}
+
 /// What `--apply` would do with a shared app, by the rules of [`deploy`].
 fn shared_action(
     state_file: &StateFile,
@@ -792,6 +850,12 @@ fn shared_action(
     let deployed = record.is_some_and(|r| r.status == DeployStatus::Deployed);
     let action = if plan.app.is_external() {
         "external: compost does not start it"
+    } else if !plan.kind.runs_service(plan.app) {
+        if changed || record.is_none() {
+            "prepared: image built if needed (runs on demand)"
+        } else {
+            "unchanged (runs on demand)"
+        }
     } else if record.is_none() {
         "created"
     } else if options.recreate {

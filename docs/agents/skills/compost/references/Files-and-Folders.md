@@ -75,6 +75,10 @@ infra/
 │   │   ├── compose.yaml
 │   │   ├── compose.override.yaml     networks and database settings from its links
 │   │   └── secrets/keycloak.env      admin user and password
+│   ├── communication/ops-chat/       a communication app: no compose project
+│   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
+│   │   ├── image                     the image to run
+│   │   └── secrets/communication.env the channel's settings and credentials
 │   └── monitoring/monitoring/
 │       ├── compose.yaml              openobserve and collector
 │       ├── compose.override.yaml     ingress network, if `url` is set
@@ -107,7 +111,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
 | Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
 | Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
-| Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress |
+| Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress; `compost-communication:<hash>` of communication apps |
 | Release image | `compost-release/<app>-<prefix>:<n>-<service>`: the image a service ran in release `<n>`, kept for `app rollback` |
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |

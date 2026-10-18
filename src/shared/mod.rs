@@ -4,6 +4,7 @@
 //! `postgres`, `keycloak`, `openobserve`).
 //! Core only talks to the [`Kind`] trait; each kind looks up its types and calls them.
 
+pub mod communication;
 pub mod database;
 pub mod ingress;
 pub mod monitoring;
@@ -315,6 +316,13 @@ pub trait Kind: Sync {
     /// Validate one shared app of this kind.
     fn validate_shared(&self, config: &SharedAppConfig) -> Result<()>;
 
+    /// Whether the shared app runs containers (a compose project). One that
+    /// doesn't only gets its files and image at deploy, e.g. a communication
+    /// app run on demand.
+    fn runs_service(&self, _config: &SharedAppConfig) -> bool {
+        true
+    }
+
     /// Shared apps of this kind can be `external` servers compost does not run.
     fn supports_external(&self) -> bool {
         false
@@ -488,6 +496,7 @@ pub fn parse_link<T: DeserializeOwned>(link: &Value) -> Result<T> {
 }
 
 static KINDS: &[&dyn Kind] = &[
+    &communication::CommunicationKind,
     &database::DatabaseKind,
     &ingress::IngressKind,
     &monitoring::MonitoringKind,

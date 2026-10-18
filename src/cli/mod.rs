@@ -63,6 +63,9 @@ pub enum Command {
     /// Run backup profiles, list and prune backups
     #[command(subcommand)]
     Backup(BackupCommand),
+    /// Send notifications through the server's communication apps
+    #[command(subcommand)]
+    Notify(NotifyCommand),
     /// Store application secrets on the server for `app deploy`
     #[command(subcommand)]
     Secret(secret::SecretCommand),
@@ -139,6 +142,19 @@ pub enum BackupCommand {
         /// Where backups are: `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml)
         #[arg(long, value_name = "TARGET")]
         source: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotifyCommand {
+    /// Send a test message to every communication app, or to one
+    Test {
+        /// Only this communication app
+        #[arg(long, value_name = "NAME")]
+        to: Option<String>,
+        /// Text of the message
+        #[arg(long)]
+        message: Option<String>,
     },
 }
 
@@ -316,6 +332,9 @@ pub fn run(cli: Cli) -> Result<()> {
                 yes,
             };
             server::backup_prune(&home, server, &options, &connect)
+        }
+        Command::Notify(NotifyCommand::Test { to, message }) => {
+            server::notify_test(&home, server, to.as_deref(), message.as_deref(), &connect)
         }
         Command::Backup(BackupCommand::List { source }) => {
             server::backup_list(&home, server, source.as_deref(), &connect)

@@ -245,6 +245,7 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
         let running = match checked {
             Some((_, _, Ok(answer))) => format!("external, {answer}"),
             Some((_, _, Err(err))) => format!("external, not reachable: {err:#}"),
+            None if app.on_demand => "on demand".to_string(),
             None if app.running => "running".to_string(),
             None => "not running".to_string(),
         };
@@ -486,6 +487,27 @@ pub fn prune(
         server.server_home(),
         &manager.manager_key,
         &options,
+    )
+}
+
+/// `compost notify test`
+pub fn notify_test(
+    home: &CompostHome,
+    server: Option<&str>,
+    to: Option<&str>,
+    message: Option<&str>,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    crate::notify::test(
+        connector.as_ref(),
+        &server.name,
+        server.server_home(),
+        &manager.manager_key,
+        to,
+        message,
     )
 }
 

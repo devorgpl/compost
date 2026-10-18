@@ -38,7 +38,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 |---|---|
 | **Server** | A host compost manages, reached over `ssh` or `local` (this machine). It has a name in your local config. |
 | **Context** | The default server for commands, set with `compost connect <server>`. |
-| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`). Defined in `compost-server.yaml`. |
+| **Shared app** | A server-wide service built from a built-in type: `caddy` (kind `ingress`), `postgres` (kind `database`), `keycloak` (kind `oidc`), `openobserve` (kind `monitoring`); channels for notifications (kind `communication`). Defined in `compost-server.yaml`. |
 | **App** | Your application: a compose file plus `compost.yaml`. |
 | **Instance** | One deployment of an app on a server, `<app>-<prefix>`, e.g. `myapp-staging`. |
 | **Overlay** | A YAML file with the values of one instance (prefix, domains, passwords), merged over `compost.yaml`. |
@@ -53,7 +53,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
 | [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
-| [Migrating to compost](Migration.md) | | [AI agents](AI-Agents.md) |
+| [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
 
 ## Requirements
 
@@ -1530,7 +1530,7 @@ Shared apps removed from the config are reported as `orphaned` and keep running;
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases, OIDC providers and monitoring apps. Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases, OIDC providers, monitoring apps and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -1934,7 +1934,7 @@ shared:
         root_password: Change-me-to-a-long-random-string-1
 ```
 
-The credentials of [S3 backup targets](Backup-and-Restore.md#s3-targets) go here too, under `backup.targets.<name>`; backups need them stored on the server (below).
+Tokens, webhook URLs and SMTP passwords of [communication apps](Notifications.md#channels) go here too, under `shared.communication`. The credentials of [S3 backup targets](Backup-and-Restore.md#s3-targets) go here too, under `backup.targets.<name>`; backups need them stored on the server (below).
 
 Lists merge by `name`, so only the secret keys are repeated. The passwords are optional. None can change after the first deploy, except an external database's `root_password`, which a new value replaces. Once on the server, they are kept by later deploys without the file. Generated ones are on the server:
 
@@ -2313,6 +2313,96 @@ The server dump already holds the apps' databases and their link records keep th
 
 ---
 
+<!-- Notifications.md -->
+
+# Notifications
+
+compost sends notifications through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
+
+```sh
+compost server generate --with matrix    # or webhook, slack, mattermost, discord, email
+compost server deploy --apply --secret .compost-server.secrets.yaml
+compost notify test                      # a test message to every channel
+```
+
+## Channels
+
+```yaml
+# compost-server.yaml
+shared:
+  communication:
+    - name: ops-chat
+      type: matrix
+      configuration:
+        homeserver: https://matrix.example.org
+        room: "!abc123:example.org"
+    - name: ops-mail
+      type: email
+      configuration:
+        smtp_url: smtps://smtp.example.com:465
+        username: alerts@example.com
+        from: alerts@example.com
+        to: [ops@example.com, oncall@example.com]
+```
+
+```yaml
+# .compost-server.secrets.yaml
+shared:
+  communication:
+    - name: ops-chat
+      configuration: {access_token: syt_…}
+    - name: ops-mail
+      configuration: {password: …}
+```
+
+| Type | Keys | Secret keys |
+|---|---|---|
+| `webhook` | `url`; `headers` (a map, e.g. `{Authorization: Bearer …}`). Receives JSON: `title`, `severity`, `message`, `server`, `event`, `time` | `url`, `headers` |
+| `slack`, `mattermost` | `webhook_url` of an incoming webhook | `webhook_url` |
+| `discord` | `webhook_url` of a channel webhook | `webhook_url` |
+| `matrix` | `homeserver`; `room`, the room ID (`!…:server`, under Room settings → Advanced); `access_token` of an account that has joined the room | `access_token` |
+| `email` | `smtp_url` (`smtps://host:465`, or `smtp://host:587` with STARTTLS); `username`, `password` (optional); `from`; `to` (a list); `require_tls` (default `true`: never send in clear text) | `password` |
+
+Secret keys go in the secrets file. They are left out of the stored `compost-server.yaml` and kept in the app's env file on the server, so later deploys don't need them again; a new value replaces the old one. All values must fit on one line.
+
+`server deploy` builds compost's image for communication apps on the server (`compost-communication:<hash>`, from [`images/communication`](https://github.com/devorgpl/compost/tree/master/images/communication): Alpine with `curl` and `jq`), checks that it answers, and shows the app as `on demand` in `server state`. It has no containers, so `server logs` has nothing to show and server backups don't save anything of it.
+
+## Test message
+
+```sh
+compost notify test                                  # every communication app
+compost notify test --to ops-mail --message "Hello from prod"
+```
+
+Each channel says `sent` or why it failed, e.g. `HTTP 403: …` from the service; the command fails if any channel failed.
+
+## Your own image
+
+`image` replaces compost's image with any image that implements the contract, e.g. for a channel compost doesn't have:
+
+```yaml
+shared:
+  communication:
+    - name: ops-pager
+      type: webhook                # the type decides the variables compost writes
+      image: registry.example.com/pager-notify:2
+      configuration: {url: https://pager.example.com/api}
+```
+
+compost pulls it on `server deploy` (again with `--pull`) and runs it like its own:
+
+```sh
+docker run --rm -i --env-file <file> <image> send --severity <info|warning|error|ok> --title <text> [--server <name>] [--event <id>]  < message
+docker run --rm <image> describe
+```
+
+- `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
+- `describe` prints JSON with at least `"api": 1`; deploys fail without it.
+- The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
+- Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.
+
+---
+
 <!-- Configuration.md -->
 
 # Configuration
@@ -2492,6 +2582,8 @@ shared:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
     - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
+  communication:
+    - {name: ops-chat, type: matrix, configuration: {homeserver: https://matrix.example.org, room: "!abc:example.org"}}
 backup:
   target: local                        # local | server | a name from targets
   server_path: backups                 # folder of the server target
@@ -2505,7 +2597,7 @@ backup:
 
 `targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
-Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
+Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types) (communication types: [Notifications](Notifications.md#channels)), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
 
 Keys every shared app has:
 
@@ -2643,6 +2735,10 @@ infra/
 │   │   ├── compose.yaml
 │   │   ├── compose.override.yaml     networks and database settings from its links
 │   │   └── secrets/keycloak.env      admin user and password
+│   ├── communication/ops-chat/       a communication app: no compose project
+│   │   ├── build/                    Dockerfile and script of compost's image, unless `image` is set
+│   │   ├── image                     the image to run
+│   │   └── secrets/communication.env the channel's settings and credentials
 │   └── monitoring/monitoring/
 │       ├── compose.yaml              openobserve and collector
 │       ├── compose.override.yaml     ingress network, if `url` is set
@@ -2675,7 +2771,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
 | Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
 | Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
-| Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress |
+| Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress; `compost-communication:<hash>` of communication apps |
 | Release image | `compost-release/<app>-<prefix>:<n>-<service>`: the image a service ran in release `<n>`, kept for `app rollback` |
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
 | Ingress network | `compost-ingress`; a `caddysecurebuild` ingress also has `compost-ingress-<name>_crowdsec`, which only Caddy and its CrowdSec agent join |
@@ -2721,6 +2817,7 @@ Commands:
   app         Deploy and inspect user applications
   connector   Inspect links between applications and shared apps
   backup      Run backup profiles, list and prune backups
+  notify      Send notifications through the server's communication apps
   secret      Store application secrets on the server for `app deploy`
   config      Set and show preferences, e.g. `deploy.apply`
   agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
@@ -3459,6 +3556,40 @@ Usage: compost backup list [OPTIONS]
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --source <TARGET>      Where backups are: `server` or a name from `backup.targets` (default: `backup.target` of compost-server.yaml)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost notify`
+
+```text
+Send notifications through the server's communication apps
+
+Usage: compost notify [OPTIONS] <COMMAND>
+
+Commands:
+  test  Send a test message to every communication app, or to one
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost notify test`
+
+```text
+Send a test message to every communication app, or to one
+
+Usage: compost notify test [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --to <NAME>            Only this communication app
+      --message <MESSAGE>    Text of the message
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help

@@ -24,6 +24,7 @@ mod config;
 mod connector;
 mod error;
 mod interrupt;
+mod notify;
 mod server;
 mod shared;
 

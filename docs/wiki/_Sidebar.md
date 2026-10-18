@@ -12,6 +12,7 @@ Use
 - [Servers and shared apps](Servers-and-Shared-Apps.md)
 - [Secrets](Secrets.md)
 - [Backup and restore](Backup-and-Restore.md)
+- [Notifications](Notifications.md)
 
 Reference
 - [Configuration](Configuration.md)

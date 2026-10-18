@@ -54,6 +54,8 @@ pub struct SharedAppState {
     /// takes a container (see [`check_external`]).
     pub running: bool,
     pub external: bool,
+    /// Runs no containers, only when needed (a communication app).
+    pub on_demand: bool,
 }
 
 impl Report {
@@ -122,7 +124,9 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
             .with_context(|| format!("invalid {config_path} on the server"))?;
         for (kind, app) in config.shared_apps() {
             let project = project_name(kind, &app.name);
-            let running = app.is_external() || is_project_running(connector, &project)?;
+            let on_demand = crate::shared::find_kind(kind).is_some_and(|k| !k.runs_service(app));
+            let running =
+                app.is_external() || on_demand || is_project_running(connector, &project)?;
             if !running {
                 report.status = Status::Degraded;
             }
@@ -133,6 +137,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
                 version: app.version,
                 running,
                 external: app.is_external(),
+                on_demand,
             });
         }
     }

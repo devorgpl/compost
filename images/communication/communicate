@@ -1,0 +1,188 @@
+#!/bin/sh
+# compost communication contract, API 1 (docs/wiki/Notifications.md):
+#
+#   communicate send --severity info|warning|error|ok --title <text> [--server <name>] [--event <id>] < body
+#   communicate describe
+#
+# The channel and its settings come from the environment (COMMUNICATION_*).
+# Secrets reach curl in a config file, never on a command line, which the
+# host's `ps` would show.
+set -eu
+
+API=1
+TYPES="webhook slack mattermost discord matrix email"
+
+die() {
+    echo "communicate: $*" >&2
+    exit 1
+}
+
+# The value of the variable named $1; fails when it is empty. Only in plain
+# assignments (`x=$(need …)`), where `set -e` sees the failure.
+need() {
+    eval "value=\${$1:-}"
+    [ -n "$value" ] || die "$1 is not set"
+    printf '%s' "$value"
+}
+
+# Add `name = "<the variable named $2>"` to curl's config file; fails when it is empty.
+conf_need() {
+    eval "value=\${$2:-}"
+    [ -n "$value" ] || die "$2 is not set"
+    conf "$1" "$value"
+}
+
+# Add `name = "value"` to curl's config file.
+conf() {
+    escaped=$(printf '%s' "$2" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '%s = "%s"\n' "$1" "$escaped" >>"$tmp/curl"
+}
+
+# Send $tmp/payload with method $1; any status but 2xx fails.
+deliver() {
+    code=$(curl -sS --max-time 30 -K "$tmp/curl" -X "$1" \
+        -H 'Content-Type: application/json' --data-binary @"$tmp/payload" \
+        -o "$tmp/response" -w '%{http_code}') || die "request failed"
+    case "$code" in
+    2??) ;;
+    *) die "HTTP $code: $(head -c 500 "$tmp/response")" ;;
+    esac
+}
+
+# The message as chat text: an icon, the title, the server, then the body.
+text() {
+    case "$severity" in
+    info) icon="ℹ️" ;;
+    warning) icon="⚠️" ;;
+    error) icon="❌" ;;
+    ok) icon="✅" ;;
+    esac
+    printf '%s %s' "$icon" "$title"
+    [ -z "$server" ] || printf ' (%s)' "$server"
+    if [ -s "$tmp/body" ]; then
+        printf '\n'
+        cat "$tmp/body"
+    fi
+}
+
+webhook() {
+    conf_need url COMMUNICATION_URL
+    i=1
+    while :; do
+        eval "header=\${COMMUNICATION_HEADER_$i:-}"
+        [ -n "$header" ] || break
+        conf header "$header"
+        i=$((i + 1))
+    done
+    jq -n --arg title "$title" --arg severity "$severity" --arg server "$server" \
+        --arg event "$event" --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --rawfile message "$tmp/body" \
+        '{title: $title, severity: $severity, message: $message, server: $server, event: $event, time: $time}' \
+        >"$tmp/payload"
+    deliver POST
+}
+
+slack() {
+    conf_need url COMMUNICATION_WEBHOOK_URL
+    text >"$tmp/text"
+    jq -n --rawfile text "$tmp/text" '{text: $text}' >"$tmp/payload"
+    deliver POST
+}
+
+discord() {
+    conf_need url COMMUNICATION_WEBHOOK_URL
+    text >"$tmp/text"
+    jq -n --rawfile text "$tmp/text" '{content: $text[0:2000]}' >"$tmp/payload"
+    deliver POST
+}
+
+matrix() {
+    homeserver=$(need COMMUNICATION_HOMESERVER)
+    room=$(need COMMUNICATION_ROOM)
+    room=$(jq -rn --arg room "$room" '$room | @uri')
+    txn="compost-$(date +%s)-$$"
+    conf url "${homeserver%/}/_matrix/client/v3/rooms/$room/send/m.room.message/$txn"
+    token=$(need COMMUNICATION_ACCESS_TOKEN)
+    conf header "Authorization: Bearer $token"
+    text >"$tmp/text"
+    jq -n --rawfile text "$tmp/text" --arg title "$title" --rawfile message "$tmp/body" \
+        '{msgtype: "m.text", body: $text, format: "org.matrix.custom.html",
+          formatted_body: ("<b>" + ($title | @html) + "</b>"
+            + (if $message == "" then "" else "<br>" + ($message | @html | gsub("\n"; "<br>")) end))}' \
+        >"$tmp/payload"
+    deliver PUT
+}
+
+email() {
+    from=$(need COMMUNICATION_FROM)
+    to=$(need COMMUNICATION_TO)
+    conf_need url COMMUNICATION_SMTP_URL
+    conf mail-from "$from"
+    for rcpt in $(printf '%s' "$to" | tr ',' ' '); do
+        conf mail-rcpt "$rcpt"
+    done
+    if [ -n "${COMMUNICATION_USERNAME:-}" ]; then
+        conf user "$COMMUNICATION_USERNAME:${COMMUNICATION_PASSWORD:-}"
+    fi
+    if [ "${COMMUNICATION_REQUIRE_TLS:-true}" = true ]; then
+        echo ssl-reqd >>"$tmp/curl"
+    fi
+    subject="[$severity] $title"
+    [ -z "$server" ] || subject="$subject ($server)"
+    {
+        printf 'From: %s\n' "$from"
+        printf 'To: %s\n' "$(printf '%s' "$to" | sed 's/,/, /g')"
+        printf 'Subject: =?UTF-8?B?%s?=\n' "$(printf '%s' "$subject" | base64 | tr -d '\n')"
+        printf 'Date: %s\n' "$(date -R)"
+        printf 'MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\n'
+        cat "$tmp/body"
+    } >"$tmp/message"
+    curl -sS --max-time 60 --crlf -K "$tmp/curl" -T "$tmp/message" || die "sending the email failed"
+}
+
+send() {
+    severity=info title='' server='' event=''
+    while [ $# -gt 0 ]; do
+        [ $# -ge 2 ] || die "$1 needs a value"
+        case "$1" in
+        --severity) severity=$2 ;;
+        --title) title=$2 ;;
+        --server) server=$2 ;;
+        --event) event=$2 ;;
+        *) die "unknown option $1" ;;
+        esac
+        shift 2
+    done
+    case "$severity" in
+    info | warning | error | ok) ;;
+    *) die "--severity must be info, warning, error or ok" ;;
+    esac
+    [ -n "$title" ] || die "--title is required"
+    [ "${COMMUNICATION_API:-}" = "$API" ] || die "COMMUNICATION_API must be $API"
+
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    cat >"$tmp/body"
+    (umask 077 && : >"$tmp/curl")
+    case "${COMMUNICATION_TYPE:-}" in
+    webhook) webhook ;;
+    slack | mattermost) slack ;;
+    discord) discord ;;
+    matrix) matrix ;;
+    email) email ;;
+    *) die "unknown COMMUNICATION_TYPE '${COMMUNICATION_TYPE:-}' (known: $TYPES)" ;;
+    esac
+}
+
+case "${1:-}" in
+send)
+    shift
+    send "$@"
+    ;;
+describe)
+    jq -cn --arg types "$TYPES" '{api: 1, commands: ["send", "describe"], types: ($types | split(" "))}'
+    ;;
+*)
+    die "usage: communicate send --severity <level> --title <text> [--server <name>] [--event <id>] < body | communicate describe"
+    ;;
+esac

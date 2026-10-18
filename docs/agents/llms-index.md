@@ -19,6 +19,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Servers and shared apps](Servers-and-Shared-Apps.md): defining servers, `compost-server.yaml`, the caddy, postgres, keycloak and openobserve types, external databases, locks
 - [Secrets](Secrets.md): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](Backup-and-Restore.md): app and server backups, targets, formats, restoring, copies, moving to a new server
+- [Notifications](Notifications.md): communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
 
 ## Reference
 

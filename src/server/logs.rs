@@ -61,6 +61,11 @@ pub fn logs(
             "{kind} {name} is external: compost runs no containers for it"
         )));
     }
+    if shared::find_kind(kind).is_some_and(|k| !k.runs_service(app)) {
+        return Err(config_err(format!(
+            "{kind} {name} runs only when it sends; it has no output to show"
+        )));
+    }
     let compose = format!(
         "cd {} && docker compose -p {}",
         shell_quote(&ctx.path(&shared::shared_dir(kind, name))),

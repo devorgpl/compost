@@ -525,17 +525,7 @@ mod tests {
     fn generated_server_files_are_valid() {
         let all = choices();
         assert!(all.len() >= 2, "caddy and postgres");
-        // Every non-empty subset (in kind order).
-        for mask in 1..(1u32 << all.len()) {
-            let selected: Vec<&Choice> = all
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| mask & (1 << i) != 0)
-                .map(|(_, c)| c)
-                .collect();
-            if check_one_ingress(&selected).is_err() {
-                continue;
-            }
+        let check = |selected: Vec<&Choice>, label: &str| {
             let selected = with_requirements(&all, selected, false).unwrap();
             let files = server_files(&selected).unwrap();
             let dir = tempfile::tempdir().unwrap();
@@ -544,11 +534,30 @@ mod tests {
             let secrets = write(dir.path(), "secrets.yaml", &copy_of_example(&files.secrets));
 
             ServerConfig::load(&[&base])
-                .unwrap_or_else(|e| panic!("{mask}: {e:#}\n{}", files.base));
+                .unwrap_or_else(|e| panic!("{label}: {e:#}\n{}", files.base));
             let config = ServerConfig::load(&[&base, &prod, &secrets])
-                .unwrap_or_else(|e| panic!("{mask}: {e:#}\n{}\n{}", files.prod, files.secrets));
+                .unwrap_or_else(|e| panic!("{label}: {e:#}\n{}\n{}", files.prod, files.secrets));
             assert_eq!(config.shared_apps().count(), selected.len());
+        };
+        // Every non-empty subset (in kind order) of the types that interact;
+        // communication types stand alone, so each is checked alone, and all together.
+        let (communication, others): (Vec<&Choice>, Vec<&Choice>) =
+            all.iter().partition(|c| c.kind.name() == "communication");
+        for mask in 1..(1u32 << others.len()) {
+            let selected: Vec<&Choice> = others
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask & (1 << i) != 0)
+                .map(|(_, c)| *c)
+                .collect();
+            if check_one_ingress(&selected).is_ok() {
+                check(selected, &mask.to_string());
+            }
         }
+        for choice in &communication {
+            check(vec![*choice], &choice.label());
+        }
+        check(communication.clone(), "all communication types");
     }
 
     #[test]

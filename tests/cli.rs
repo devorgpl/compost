@@ -182,6 +182,14 @@ case "$*" in
   "inspect -f "*) echo "app nginx:1 ${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}" ;;
   "tag "*) ;;
   "image inspect compost-release/"*) [ -z "$FAKE_DOCKER_MISSING_TAGS" ] ;;
+  "image inspect compost-communication:"*) [ -f "$FAKE_DOCKER_LOG.built" ] ;;
+  "build "*) touch "$FAKE_DOCKER_LOG.built" ;;
+  "run --rm "*" describe") echo '{"api":1,"commands":["send","describe"],"types":["matrix"]}' ;;
+  "run --rm -i --env-file "*" send "*)
+    envf="${*#run --rm -i --env-file }"; envf="${envf%% *}"
+    grep -q '^COMMUNICATION_API=1$' "$envf" || { echo "bad env file" >&2; exit 1; }
+    [ -z "$FAKE_SEND_FAIL" ] || { echo "HTTP 403: forbidden" >&2; exit 1; }
+    echo "send body: $(cat)" >> "$FAKE_DOCKER_LOG" ;;
   "image ls "*) for tag in $FAKE_DOCKER_TAGS; do echo "$tag"; done ;;
   "image rm "*) ;;
   "run "*" rclone/rclone"*)
@@ -2755,6 +2763,107 @@ fn server_prune_keeps_used_and_release_images() {
     assert!(!log.contains("image rm nginx"), "{log}");
     assert!(!log.contains("image rm compost-release"), "{log}");
     assert!(log.contains("docker builder prune -f"), "{log}");
+}
+
+#[test]
+fn communication_apps_are_built_on_the_server_and_send_tests() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}  communication:
+    - name: ops-chat
+      type: matrix
+      configuration: {{homeserver: 'https://matrix.example.org', room: '!abc:example.org'}}
+"
+        ),
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .code(2)
+        .stderr(contains("`access_token` is needed"));
+    server.write_work_file(
+        "secrets.yaml",
+        "shared: {communication: [{name: ops-chat, configuration: {access_token: TOPSECRET}}]}",
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "preparing communication ops-chat ... ready (runs on demand)",
+        ))
+        .stdout(contains("on demand"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker build -q -t compost-communication:"),
+        "{log}"
+    );
+    assert!(log.contains("describe"), "{log}");
+    let stored = fs::read_to_string(server.server_home.join("compost-server.yaml")).unwrap();
+    assert!(
+        stored.contains("ops-chat") && !stored.contains("TOPSECRET"),
+        "{stored}"
+    );
+    let env = server
+        .server_home
+        .join("shared/communication/ops-chat/secrets/communication.env");
+    assert!(
+        fs::read_to_string(&env)
+            .unwrap()
+            .contains("COMMUNICATION_ACCESS_TOKEN=TOPSECRET")
+    );
+    assert_eq!(
+        fs::metadata(&env).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // Unchanged: no new build. Deploys without the secrets file keep the token.
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("communication ops-chat"));
+    assert!(!server.take_docker_log().contains("docker build"));
+    assert!(fs::read_to_string(&env).unwrap().contains("TOPSECRET"));
+    server
+        .state(&running)
+        .success()
+        .stdout(contains("on demand"));
+    server
+        .run(&["server", "logs", "ops-chat"], &running)
+        .code(2)
+        .stderr(contains("runs only when it sends"));
+
+    server
+        .run(&["notify", "test", "--message", "hello there"], &running)
+        .success()
+        .stdout(contains("ops-chat: sent"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("send --severity info --title Test message from compost --server dev"),
+        "{log}"
+    );
+    assert!(log.contains("send body: hello there"), "{log}");
+    assert!(!log.contains("TOPSECRET"), "{log}");
+    server
+        .run(&["notify", "test", "--to", "nope"], &running)
+        .code(2)
+        .stderr(contains(
+            "--to nope: no such communication app (known: ops-chat)",
+        ));
+    server
+        .run(
+            &["notify", "test"],
+            &[("FAKE_DOCKER_RUNNING", "1"), ("FAKE_SEND_FAIL", "1")],
+        )
+        .failure()
+        .stdout(contains("ops-chat: failed: HTTP 403: forbidden"))
+        .stderr(contains("1 of 1 channels failed"));
 }
 
 #[test]
