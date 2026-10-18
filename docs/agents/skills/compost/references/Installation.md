@@ -1,6 +1,6 @@
 # Installation
 
-compost is a single binary with no dependencies. Linux builds are static and run on any distribution. On your machine it needs `ssh`; servers need Docker with compose v2 (see [Home](Home.md#requirements)).
+compost is a single binary with no dependencies. Linux builds are static and run on any distribution. On your machine it needs `ssh` (and Docker for apps that [build locally](Applications.md#building-images), an experimental feature); servers need Docker with compose v2 (see [Home](Home.md#requirements)).
 
 ## With the install script
 

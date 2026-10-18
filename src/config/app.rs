@@ -184,7 +184,7 @@ pub struct Deployment {
     /// `.compost/compose-override-<n>.yaml`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compose_overrides: Vec<String>,
-    pub build: bool,
+    pub build: Build,
     pub attach_sources: bool,
     /// Releases kept on the server for `app rollback`; 0 keeps none.
     #[serde(skip_serializing_if = "is_default_releases")]
@@ -202,6 +202,48 @@ fn is_default_releases(releases: &u32) -> bool {
     *releases == DEFAULT_RELEASES
 }
 
+/// Where the images of services with a `build` section are built.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Build {
+    /// Nowhere: images are pulled (`false`).
+    #[default]
+    No,
+    /// On the server, from the uploaded sources (`true` or `server`).
+    Server,
+    /// On this machine, then sent to the server (`local`). Experimental.
+    Local,
+}
+
+impl<'de> Deserialize<'de> for Build {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Name(String),
+        }
+        match Raw::deserialize(deserializer) {
+            Ok(Raw::Bool(false)) => Ok(Self::No),
+            Ok(Raw::Bool(true)) => Ok(Self::Server),
+            Ok(Raw::Name(name)) if name == "server" => Ok(Self::Server),
+            Ok(Raw::Name(name)) if name == "local" => Ok(Self::Local),
+            _ => Err(serde::de::Error::custom(
+                "`build` must be false, true, `server` or `local`",
+            )),
+        }
+    }
+}
+
+impl Serialize for Build {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::No => serializer.serialize_bool(false),
+            Self::Server => serializer.serialize_bool(true),
+            Self::Local => serializer.serialize_str("local"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 pub enum DeploymentType {
     #[default]
@@ -216,7 +258,7 @@ impl Default for Deployment {
             source_dir: DEFAULT_SOURCE_DIR.to_string(),
             compose_file: DEFAULT_COMPOSE_FILE.to_string(),
             compose_overrides: Vec::new(),
-            build: false,
+            build: Build::No,
             attach_sources: false,
             releases: DEFAULT_RELEASES,
             backup: None,
@@ -225,9 +267,9 @@ impl Default for Deployment {
 }
 
 impl Deployment {
-    /// Building needs the build contexts on the server.
+    /// Building on the server needs the build contexts there.
     pub fn uploads_sources(&self) -> bool {
-        self.build || self.attach_sources
+        self.build == Build::Server || self.attach_sources
     }
 
     /// The compose files in the uploaded sources, in the order they apply.
@@ -719,6 +761,25 @@ services:
         assert_eq!(config.instance(), "myapp-main");
         assert_eq!(config.deployment.compose_file, "docker-compose.yaml");
         assert!(!config.deployment.uploads_sources());
+    }
+
+    #[test]
+    fn build_values() {
+        for (text, build) in [
+            ("false", Build::No),
+            ("true", Build::Server),
+            ("server", Build::Server),
+            ("local", Build::Local),
+        ] {
+            let config = validate(&format!("name: myapp\ndeployment: {{build: {text}}}")).unwrap();
+            assert_eq!(config.deployment.build, build, "{text}");
+        }
+        let local = validate("name: myapp\ndeployment: {build: local}").unwrap();
+        assert!(!local.deployment.uploads_sources());
+        let stored = serde_yaml_ng::to_string(&local.deployment).unwrap();
+        assert!(stored.contains("build: local"), "{stored}");
+        let err = validate("name: myapp\ndeployment: {build: remote}").unwrap_err();
+        assert!(format!("{err:#}").contains("`build` must be"), "{err:#}");
     }
 
     #[test]

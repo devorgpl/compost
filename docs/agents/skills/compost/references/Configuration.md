@@ -38,7 +38,7 @@ deployment:
   source_dir: .                        # folder uploaded and holding the compose file; relative to compost.yaml
   compose_file: docker-compose.yaml    # default; relative to source_dir
   compose_overrides: []                # more compose files applied after it; relative to compost.yaml
-  build: false                         # true: `docker compose build` on the server; false: `pull`
+  build: false                         # false: `pull`; true (or server): `docker compose build` on the server; local (experimental): build on this machine and send the images
   attach_sources: false                # upload the whole folder; forced true by build: true
   releases: 5                          # releases kept on the server for `app rollback`; 0 keeps none
   backup: predeploy                    # backup profile run before `app deploy --apply` changes a deployed instance

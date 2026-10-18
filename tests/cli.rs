@@ -144,6 +144,8 @@ fn ssh_key_file_is_checked_before_connecting() {
 /// networks that exist. Containers of a compose project run `FAKE_DOCKER_IMAGE_ID`;
 /// `FAKE_DOCKER_TAGS` lists the tags `image ls` shows, and
 /// `FAKE_DOCKER_MISSING_TAGS=1` makes pinned release images missing.
+/// `build: local`: `FAKE_DOCKER_STALE=1` makes every image look different on
+/// the server, `FAKE_DOCKER_BUILD_FAIL=1` fails `compose build`.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
@@ -155,6 +157,7 @@ case "$*" in
   "inspect --format "*) echo sha256:1111111111111111 ;;
   "image prune -f") echo "Total reclaimed space: 10MB" ;;
   "builder prune -f") echo "Total reclaimed space: 300MB" ;;
+  "version -f "*) echo linux/amd64 ;;
   "version "*) echo 29.0.0 ;;
   "compose version"*) echo 2.40.0 ;;
   "compose "*" ps --services "*)
@@ -181,6 +184,11 @@ case "$*" in
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
+  "compose "*" config --format json")
+    echo '{"services":{"web":{"build":{"context":"."}},"api":{"build":{},"image":"shop/api:1"},"db":{"image":"postgres:18"}}}' ;;
+  "compose "*" build "*)
+    [ -z "$FAKE_DOCKER_BUILD_FAIL" ] || { echo "failed to solve: syntax error" >&2; exit 1; }
+    [ -z "$DOCKER_DEFAULT_PLATFORM" ] || echo "platform $DOCKER_DEFAULT_PLATFORM" >> "$FAKE_DOCKER_LOG" ;;
   "compose "*) ;;
   "network inspect "*)
     for network in $FAKE_DOCKER_NETWORKS; do [ "$*" = "network inspect $network" ] && exit 0; done
@@ -190,6 +198,9 @@ case "$*" in
   "ps "*) if [ -n "$FAKE_DOCKER_RUNNING" ]; then echo abc123; fi ;;
   "inspect -f "*) echo "app nginx:1 ${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}" ;;
   "tag "*) ;;
+  "image inspect -f "*) if [ -n "$FAKE_DOCKER_STALE" ]; then echo "config $$"; else echo config; fi ;;
+  "save "*) printf 'fake image archive' ;;
+  "load -q") echo "loaded: $(gzip -dc)" >> "$FAKE_DOCKER_LOG" ;;
   "image inspect compost-release/"*) [ -z "$FAKE_DOCKER_MISSING_TAGS" ] ;;
   "image inspect compost-communication:"*) [ -f "$FAKE_DOCKER_LOG.built" ] ;;
   "build "*) touch "$FAKE_DOCKER_LOG.built" ;;
@@ -1340,6 +1351,81 @@ fn app_deploy_pull_and_recreate() {
     let built = position(" build -q --pull");
     let started = position(" up -d --remove-orphans --force-recreate");
     assert!(pulled < built && built < started, "{log}");
+}
+
+#[test]
+fn app_deploy_builds_locally_and_sends_the_images() {
+    let server = server_with_web_app("name: web\ndeployment: {build: local}\n");
+    server.write_work_file(
+        "web/docker-compose.yaml",
+        "services: {web: {build: .}, api: {build: ., image: 'shop/api:1'}, db: {image: 'postgres:18'}}",
+    );
+    server.write_work_file("web/Dockerfile", "FROM nginx:1\n");
+    let deploy = |extra: &[&str], env: &[(&str, &str)]| {
+        let mut args = vec!["app", "deploy", "-f", "web/compost.yaml"];
+        args.extend(extra);
+        let mut env = env.to_vec();
+        env.push(("FAKE_DOCKER_RUNNING", "1"));
+        server.run(&args, &env)
+    };
+
+    // A failed build stops the deploy before anything on the server changes.
+    deploy(&["--apply"], &[("FAKE_DOCKER_BUILD_FAIL", "1")])
+        .failure()
+        .stderr(contains("cannot build the images on this machine"))
+        .stderr(contains("syntax error"));
+    assert!(!server.server_home.join("apps/web").exists());
+    server.take_docker_log();
+
+    deploy(&["--apply"], &[("FAKE_DOCKER_STALE", "1")])
+        .success()
+        .stdout(contains("building images locally for linux/amd64"))
+        .stdout(contains("sending shop/api:1, web-main-web"));
+    let log = server.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    let built = position(
+        "docker compose -p web-main --project-directory web/. -f web/./docker-compose.yaml build -q\n",
+    );
+    let loaded = position("loaded: fake image archive");
+    let started = position(" up -d --remove-orphans");
+    assert!(built < loaded && loaded < started, "{log}");
+    assert!(log.contains("platform linux/amd64"), "{log}");
+    assert!(
+        log.contains("docker save shop/api:1 web-main-web\n"),
+        "{log}"
+    );
+    assert!(!log.contains(" pull -q"), "{log}");
+    // Nothing is built on the server.
+    assert!(
+        !log.lines()
+            .any(|line| line.contains("--project-directory sources") && line.contains(" build")),
+        "{log}"
+    );
+    // Only the compose file is uploaded.
+    let sources = server.server_home.join("apps/web/main/sources");
+    assert!(sources.join("docker-compose.yaml").exists());
+    assert!(!sources.join("Dockerfile").exists());
+    let stored = server.read_server_file("apps/web/main/compost.yaml");
+    assert!(stored.contains("build: local"), "{stored}");
+
+    // Images the server already has are not sent again.
+    deploy(&["--apply"], &[])
+        .success()
+        .stdout(contains("images are up to date on the server"));
+    let log = server.take_docker_log();
+    assert!(!log.contains("docker save"), "{log}");
+
+    deploy(&["--apply", "--dry-run"], &[])
+        .success()
+        .stdout(contains(
+            "web  built locally; sent and recreated if its image changes",
+        ))
+        .stdout(contains("db   unchanged"));
+    let log = server.take_docker_log();
+    assert!(!log.contains(" build "), "{log}");
 }
 
 /// A server with shared apps and `web/`: an app without links whose compose

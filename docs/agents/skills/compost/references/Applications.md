@@ -59,9 +59,37 @@ app_services:
 
 Compose services not listed are deployed as they are, but links can't target them. compost never changes your compose file: it writes an override file on the server that adds networks and variables.
 
+## Building images
+
+Services with a `build` section in the compose file run images that have to be built. `deployment.build` says where:
+
+| `build` | Images of services with `build` | Uploaded to the server |
+|---|---|---|
+| `false` (default) | not built: every image is pulled | the compose files |
+| `true` or `server` | built on the server with `docker compose build` | the whole folder (`source_dir`) |
+| `local` (experimental) | built on this machine and sent to the server, without a registry | the compose files |
+
+**`build: local` is experimental:** it works, but has the [known limitations](#known-limitations-of-build-local) below, and its behavior may change in a later version without notice. It suits small servers, which then need neither the CPU and memory for builds nor the sources. With `--apply`, a deploy:
+
+1. builds the images here with `docker compose build`, from the same compose files and folder the server would use, for the server's platform (e.g. `linux/amd64`). This happens before anything on the server changes, so a failed build leaves the deployed instance as it was;
+2. compares each image with the one of the same name on the server by its configuration (creation time, layers, settings) and sends those that differ: `docker save`, compressed with gzip, into `docker load` over the server connection. An unchanged image is not sent again;
+3. starts the services as with `build: true`.
+
+It needs Docker with compose v2 on this machine. An image is named as on the server: the service's `image`, or `<instance>-<service>`.
+
+### Known limitations of `build: local`
+
+- **Whole images are sent.** A changed image goes over the connection in full, including base layers the server already has. Over a slow connection, large images may deploy faster with `build: true` or from a registry.
+- **Variables come from this machine.** Variables in the compose file (`${TAG}`) are filled in from this machine's environment and the folder's `.env` while building, and on the server when the services start; keep them the same on both sides.
+- **Other CPUs need emulation.** Building for another CPU (an arm64 Mac for an amd64 server) needs emulation, which is slow: Docker Desktop has it; on Linux install it with `docker run --privileged --rm tonistiigi/binfmt --install all`. The platform is the server's operating system and CPU as its Docker reports them (`linux/amd64`, `linux/arm64`), without a variant such as `arm/v7`.
+- **Rollback can't rebuild.** If the images pinned for a release were removed from the server, `app rollback` can't build them again: the release has only the compose files ([Missing images](#releases-and-rollback)).
+- **The dry run doesn't build.** `--dry-run` can't tell whether an image changes, so it shows such services as `built locally; sent and recreated if its image changes`.
+- **Images pile up.** Every build leaves its image on this machine and, once replaced, an untagged one on the server. `server prune` removes those on the server; `docker image prune` those here.
+- **Only Docker** has been tried on this machine, not Podman or other compose implementations.
+
 ## Sources in another folder
 
-`compost.yaml` doesn't have to live in the app's repository. In a separate deployment repository, `source_dir` points to the app's folder: that folder is uploaded (with `build: true` or `attach_sources: true`) and holds the compose file.
+`compost.yaml` doesn't have to live in the app's repository. In a separate deployment repository, `source_dir` points to the app's folder: that folder is uploaded (with `build: true` or `attach_sources: true`), built from (with `build: local`) and holds the compose file.
 
 ```yaml
 name: shop
@@ -323,13 +351,13 @@ A deploy:
 2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken); with `--apply` and `deployment.backup` (or `--backup <profile>`), backs up the deployed instance with that [profile](Backup-and-Restore.md#before-a-deploy), and stops if the backup fails;
 3. uploads the sources: the whole folder with `build: true` or `attach_sources: true`, otherwise only the compose file. Left out: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and patterns in `.compostignore` (gitignore syntax);
 4. writes the override file and link records. **Without `--apply` it stops here.**
-5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`) or `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
+5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`), sends the images built on this machine (with `build: local`, built before step 3; see [Building images](#building-images)) or runs `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
 
 The result is shown as by `app state`. Running the same deploy again keeps data and passwords and doesn't recreate unchanged containers.
 
-**Updating images and recreating containers.** Without `build: true`, every deploy with `--apply` pulls, so a new image behind the same tag (`:latest`, `:2`) is picked up and its containers are recreated. Two options, both needing `--apply`, do more:
+**Updating images and recreating containers.** With `build: false`, every deploy with `--apply` pulls, so a new image behind the same tag (`:latest`, `:2`) is picked up and its containers are recreated. Two options, both needing `--apply`, do more:
 
-- `--pull`: with `build: true`, also pulls the images of services without `build` and builds with `--pull`, which fetches newer base images. Without `build: true` it changes nothing.
+- `--pull`: with `build: true` or `local`, also pulls the images of services without `build` and builds with `--pull`, which fetches newer base images. With `build: false` it changes nothing.
 - `--recreate`: recreates every container (`up -d --force-recreate`), even unchanged ones. Volumes, databases and passwords are kept.
 
 **What a deploy would change.** `--dry-run` runs the deploy as far as it can without changing the server and compares the result with what is there:
@@ -356,7 +384,7 @@ With `deployment.backup`, a line after the instance's says which profile backs i
 
 - **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
 - **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.
-- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `pulled` (every deploy without `build: true` pulls; a newer image recreates it) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
+- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `built locally` (`build: local`, experimental: the dry run doesn't build, so it can't tell whether the image changes), `pulled` (every deploy with `build: false` pulls; a newer image recreates it) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
 
 `--diff` adds the changed lines of every file without secrets, as a unified diff. It needs `--dry-run`.
 
@@ -377,7 +405,7 @@ compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
 
 - **Data is not rolled back.** Databases and volumes stay as they are; a migration the newer release ran is not undone. Take an `app backup` before deploys that change data.
 - **Links follow the release.** A link that the release doesn't have is removed like any [dropped link](#deploying) (its data is kept); a link it has but the current deploy doesn't is created again. Passwords and the stored overlay ([Secrets](Secrets.md)) are the current ones.
-- **Missing images.** If a pinned image was removed by hand, the rollback warns and pulls or builds as a deploy would.
+- **Missing images.** If a pinned image was removed by hand, the rollback warns and pulls or builds on the server as a deploy would. Images built with `build: local` can't be built again: the release has only the compose files. Deploy that version from its sources instead.
 
 `deployment.releases` (default `5`) is how many releases an instance keeps; older ones and their image tags are deleted after each deploy, and `0` keeps none. Each release holds a copy of the sources, so lower it for big folders uploaded with `build: true`. Releases are not part of [backups](Backup-and-Restore.md), and `app remove` deletes them with their image tags. [`server prune`](Servers-and-Shared-Apps.md#disk-space) keeps release images when it removes unused ones.
 

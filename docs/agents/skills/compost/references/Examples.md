@@ -38,6 +38,13 @@ services:
 compost app deploy --apply --secret .compost-prod.yaml
 ```
 
+To build the image on your machine instead of on the server, and upload only the compose file, use `build: local`. It is experimental; see its [known limitations](Applications.md#known-limitations-of-build-local):
+
+```yaml
+deployment:
+  build: local
+```
+
 ## API with a database and a migration
 
 From [`samples/sampleapp`](https://github.com/devorgpl/compost/tree/master/samples/sampleapp). The migration runs once before the backend starts; compose's `depends_on` handles the order and compost counts an exit with code 0 as healthy.

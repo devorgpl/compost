@@ -163,7 +163,7 @@ Options:
       --dry-run              Validate and show what would change on the server, without changing it
       --diff                 With --dry-run: also show the changed lines of files without secrets
       --force-unlock         Remove a lock left behind by an interrupted compost command
-      --pull                 Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
+      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
       --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --secret <FILE>        Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
   -h, --help                 Print help
@@ -356,7 +356,7 @@ Options:
       --dry-run              Validate and show what would change on the server, without changing it
       --diff                 With --dry-run: also show the changed lines of files without secrets
       --force-unlock         Remove a lock left behind by an interrupted compost command
-      --pull                 Pull images again, even when their tags did not change, and build images built on the server on newer base images (needs `--apply`)
+      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
       --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
       --purge <PURGE>        Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`

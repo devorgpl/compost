@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod exec;
 pub mod instance;
 pub mod list;
+mod local_build;
 pub mod logs;
 mod plan;
 pub mod release;

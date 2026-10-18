@@ -7,13 +7,14 @@ use serde_yaml_ng::Value;
 
 use super::contribution::Contribution;
 use super::instance::{self, Instance, PinnedLink, PinnedLinks};
+use super::local_build::{self, Built};
 use super::plan::AppPlan;
 use super::release::{self, Release};
 use super::restore::RestorePlan;
 use super::secrets::{self, Overlay};
 use super::sources;
 use crate::backup::profile::{self, AppRun, Flags};
-use crate::config::app::{AppConfig, LoadedApp, env_value, link_name};
+use crate::config::app::{AppConfig, Build, LoadedApp, env_value, link_name};
 use crate::config::server::ServerConfig;
 use crate::connector::Connector;
 use crate::connector::dry_run::DryRun;
@@ -34,8 +35,8 @@ pub struct Options<'a> {
     /// With `dry_run`: also print the changed lines of files without secrets.
     pub diff: bool,
     pub force_unlock: bool,
-    /// Also pull images that `build: true` would not: base images and
-    /// services without `build`.
+    /// Also pull images that `build: true` or `local` would not: base images
+    /// and services without `build`.
     pub pull: bool,
     /// Recreate every container, even unchanged ones.
     pub recreate: bool,
@@ -183,6 +184,15 @@ pub fn deploy(
         return dry_run(&ctx, loaded, &plan, options);
     }
 
+    // A local build fails before anything on the server changes. A rollback
+    // or restore builds only when its images are missing.
+    let built = match app.deployment.build {
+        Build::Local if options.apply && options.pinned.is_none() && options.restore.is_none() => {
+            Some(local_build::build(&ctx, loaded, options.pull)?)
+        }
+        _ => None,
+    };
+
     // 2. Upload and render.
     let _lock = Lock::acquire(connector, &ctx.home, options.force_unlock)?;
     if let Some((backup, deployed, run, server_config)) = &backup {
@@ -257,7 +267,7 @@ pub fn deploy(
         links: &dropped,
         purge: &options.purge,
     };
-    match apply(&ctx, loaded, &links, &dropped, options) {
+    match apply(&ctx, loaded, &links, &dropped, built.as_ref(), options) {
         Ok(kept) => {
             if kept.len() != dropped.links.len() {
                 write_pinned(&kept)?;
@@ -528,6 +538,7 @@ fn apply(
     loaded: &LoadedApp,
     links: &[Link],
     dropped: &Dropped,
+    built: Option<&Built>,
     options: &Options,
 ) -> Result<Vec<PinnedLink>> {
     let app = &loaded.config;
@@ -558,14 +569,22 @@ fn apply(
     };
     // With restored or pinned images, `up` still builds or pulls the ones that are missing.
     if !images_restored {
-        if !app.deployment.build || options.pull {
+        let build = app.deployment.build;
+        if build == Build::No || options.pull {
             ctx.connector
                 .exec(&format!("{compose} pull -q --ignore-buildable"))?;
         }
-        if app.deployment.build {
-            out!("  building images ...");
-            let pull = if options.pull { " --pull" } else { "" };
-            ctx.connector.exec(&format!("{compose} build -q{pull}"))?;
+        match build {
+            Build::No => {}
+            Build::Server => {
+                out!("  building images ...");
+                let pull = if options.pull { " --pull" } else { "" };
+                ctx.connector.exec(&format!("{compose} build -q{pull}"))?;
+            }
+            Build::Local => match built {
+                Some(built) => local_build::send(ctx, built)?,
+                None => local_build::send(ctx, &local_build::build(ctx, loaded, options.pull)?)?,
+            },
         }
     }
     if let Some(plan) = restore {

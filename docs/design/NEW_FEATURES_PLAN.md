@@ -16,7 +16,8 @@ Candidate features, taken from what similar tools offer (Kamal, Uncloud, Coolify
 ## Next tier
 
 5. **Zero-downtime deploys.** Kamal and Uncloud have them. compost runs `up -d`, so a recreated service is briefly down. For services behind the ingress: start the new container, wait for its healthcheck, switch the Caddy upstream, then stop the old one.
-6. **Build locally and send the image without a registry.** Uncloud does this, and Kamal builds locally. Today `build: true` builds on the server, which needs CPU and RAM there and uploads the sources.
+6. **Done, experimental:** `build: local` builds on this machine for the server's platform before anything on the server changes, and sends images whose config differs with `docker save | gzip` → `docker load` over the connector; only the compose files are uploaded. Later: send only missing layers (as Uncloud's unregistry does).
+   **Build locally and send the image without a registry.** Uncloud does this, and Kamal builds locally. Today `build: true` builds on the server, which needs CPU and RAM there and uploads the sources.
 7. **Preview environments,** like Coolify and Dokploy's pull-request previews. Instances (`prefix`) and ingress domains already exist. Missing: `--prefix` from the branch name, wildcard domains (e.g. `<prefix>.preview.example.com`), removing stale instances, and a GitHub Action for CI.
 8. **Done:** `communication` shared apps (webhook, Slack, Mattermost, Discord, Matrix, email) run on demand by a small image contract (`send`, `describe`; room for a two-way `listen` later), `compost notify test`, and `notifications` in compost-server.yaml: failed scheduled backups, health changes and low disk, checked by the cron tick and sent once per change.
    **Notifications** when a deploy or backup fails or `state` is not OK, as Coolify does with Slack, Discord and email: a webhook target first, then Matrix or email.
@@ -36,4 +37,4 @@ Candidate features, taken from what similar tools offer (Kamal, Uncloud, Coolify
 
 ## Suggested order
 
-1, 2 and 4 shipped in 1.3.0, 3 after it. 11 and 8 are done too. Next: 5 (zero-downtime deploys).
+1, 2 and 4 shipped in 1.3.0, 3 after it. 11, 8, 9 and 6 are done too. Next: 5 (zero-downtime deploys).

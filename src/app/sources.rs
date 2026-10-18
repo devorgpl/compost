@@ -36,7 +36,7 @@ pub fn collect(loaded: &LoadedApp, config_files: &[PathBuf]) -> Result<Vec<Uploa
     Ok(uploads)
 }
 
-/// Paths relative to `source_dir`, sorted. Without `attach_sources`/`build`
+/// Paths relative to `source_dir`, sorted. Without `attach_sources`/`build: true`
 /// only the compose file is uploaded.
 fn source_files(
     source_dir: &Path,
@@ -100,6 +100,7 @@ pub fn pack(uploads: &[Upload]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::app::Build;
     use std::fs;
     use tempfile::TempDir;
 
@@ -131,7 +132,7 @@ mod tests {
         fs::write(base.join(".gitignore"), "dist/\n").unwrap();
 
         let deployment = Deployment {
-            build: true,
+            build: Build::Server,
             ..Deployment::default()
         };
         let config_files = [base.join("compost.yaml"), base.join("secrets/prod.yaml")];

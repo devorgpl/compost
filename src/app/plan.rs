@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use super::instance;
 use super::release;
 use super::sources::Upload;
-use crate::config::app::LoadedApp;
+use crate::config::app::{Build, LoadedApp};
 use crate::connector::shell_quote;
 use crate::server::plan::{self, Change, FileChange, ServiceChange};
 use crate::server::state_file::StateFile;
@@ -200,7 +200,7 @@ fn service_lines(
     let lines = plan::service_changes(&old, &new)
         .into_iter()
         .map(|(service, change)| {
-            let builds = build
+            let builds = build != Build::No
                 && plan
                     .loaded
                     .compose
@@ -212,13 +212,17 @@ fn service_lines(
                 ServiceChange::Removed => "removed (no longer in the compose files)".to_string(),
                 _ if plan.recreate => "recreated (--recreate)".to_string(),
                 ServiceChange::Changed(details) => format!("recreated: {}", details.join("; ")),
+                // The sources stay on this machine, so only the build can tell.
+                ServiceChange::Unchanged if builds && build == Build::Local => {
+                    "built locally; sent and recreated if its image changes".to_string()
+                }
                 ServiceChange::Unchanged
                     if builds && context_changed(contexts.get(&service), changed_sources) =>
                 {
                     "built again; recreated if its image changes".to_string()
                 }
                 ServiceChange::Unchanged if builds => "unchanged (built from cache)".to_string(),
-                ServiceChange::Unchanged if !build || plan.pull => {
+                ServiceChange::Unchanged if build == Build::No || plan.pull => {
                     "pulled; recreated if a newer image comes".to_string()
                 }
                 ServiceChange::Unchanged => "unchanged".to_string(),

@@ -395,7 +395,7 @@ fn app_files(
     }
     let _ = writeln!(
         config,
-        "  # true: images are built on the server, so the project folder is uploaded.\n  build: {builds}"
+        "  # true: images are built on the server, so the project folder is uploaded;\n  # local (experimental): built on this machine and sent to the server.\n  build: {builds}"
     );
     let db_name = name.replace('-', "_");
     let _ = write!(
