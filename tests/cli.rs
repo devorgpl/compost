@@ -2724,11 +2724,15 @@ fn scheduled_backups_run_from_a_crontab_line() {
         crontab.contains(&format!("# compost: scheduled backups of {home}")),
         "{crontab}"
     );
-    assert!(crontab.contains("*/5 * * * * PATH="), "{crontab}");
+    assert!(
+        crontab.contains(&format!("*/5 * * * * mkdir -p -- '{home}/logs' && PATH=")),
+        "{crontab}"
+    );
     assert!(crontab.contains("backup tick --server-home"), "{crontab}");
     assert!(crontab.contains("--server-name 'dev'"), "{crontab}");
     let binary = server.server_home.join("bin/compost");
     assert!(binary.exists());
+    assert!(server.server_home.join("logs").is_dir());
 
     // An app that turns the schedule off for itself.
     server.write_work_file(

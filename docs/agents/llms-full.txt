@@ -2564,6 +2564,12 @@ backup:
 
 **Requirements.** The server needs `cron` (the `crontab` command). compost copies itself to the server when it is a static Linux build for the server's CPU (the release builds are) or when the server is this machine; otherwise the server downloads the same release from GitHub and checks it against `SHA256SUMS`, which needs `curl` or `wget`. A development build that can't run on the server can't do either: set `COMPOST_SERVER_BINARY` to a static Linux build to install that one. The line names the server as you defined it (`compost server define`), which goes into the archive names; deploy from machines that use the same name.
 
+**When nothing runs.** If `server state` lists no scheduled backups, or one stays `waiting` past its time, check on the server:
+
+- `crontab -l` has the line between `# compost: scheduled backups of …` and `# compost: end of …`. If not, deploy again (`server deploy --apply`).
+- `~/.compost-server/logs/backup.log` grows every five minutes. If it doesn't exist, cron isn't running the line: check that the `cron` service runs, and run the line by hand to see its error.
+- `compost backup run <profile>` works. It runs the same backups now, without cron.
+
 ## Before a deploy
 
 `deployment.backup` names a profile that `app deploy --apply` runs before it changes an instance that is already deployed:

@@ -135,6 +135,11 @@ pub fn ensure(ctx: &ServerCtx, server_name: &str) -> Result<()> {
         return Ok(());
     }
     install_binary(ctx)?;
+    // The crontab line creates the log's folder too, in case it is removed later.
+    ctx.connector.exec(&format!(
+        "mkdir -p -- {}",
+        shell_quote(log_dir(&ctx.path(LOG)))
+    ))?;
     if update_crontab(ctx, Some(&cron_line(ctx, server_name)?))? {
         out!("  installed the crontab line of scheduled backups and notifications");
     }
@@ -160,6 +165,11 @@ pub fn refresh(
     ensure(&ctx, server_name)
 }
 
+/// The folder of the log.
+fn log_dir(log: &str) -> &str {
+    log.rsplit_once('/').map_or(".", |(dir, _)| dir)
+}
+
 /// The crontab entry: `tick` every few minutes, its output in the log.
 fn cron_line(ctx: &ServerCtx, server_name: &str) -> Result<String> {
     // Cron's PATH is short; docker may be elsewhere.
@@ -175,14 +185,28 @@ fn cron_line(ctx: &ServerCtx, server_name: &str) -> Result<String> {
             path.push(dir.to_string());
         }
     }
-    Ok(format!(
-        "{TICK} PATH={} {} backup tick --server-home {} --server-name {} >> {} 2>&1",
-        shell_quote(&path.join(":")),
-        shell_quote(&ctx.path(BINARY)),
-        shell_quote(&ctx.home),
-        shell_quote(server_name),
-        shell_quote(&ctx.path(LOG)),
+    Ok(format_cron_line(
+        &path.join(":"),
+        &ctx.path(BINARY),
+        &ctx.home,
+        server_name,
+        &ctx.path(LOG),
     ))
+}
+
+/// The line itself. It creates the log's folder first: the shell opens the
+/// log before it starts compost, and fails without a word when the folder is
+/// gone.
+fn format_cron_line(path: &str, binary: &str, home: &str, server_name: &str, log: &str) -> String {
+    format!(
+        "{TICK} mkdir -p -- {} && PATH={} {} backup tick --server-home {} --server-name {} >> {} 2>&1",
+        shell_quote(log_dir(log)),
+        shell_quote(path),
+        shell_quote(binary),
+        shell_quote(home),
+        shell_quote(server_name),
+        shell_quote(log),
+    )
 }
 
 fn markers(home: &str) -> (String, String) {
@@ -537,6 +561,21 @@ mod tests {
         assert!(other.contains("*/5 * * * * tick") && other.contains("of /srv/other"));
         assert_eq!(replace_block(&once, home, None), mine);
         assert_eq!(replace_block("", home, None), "");
+    }
+
+    #[test]
+    fn cron_line_creates_the_log_folder_first() {
+        let line = format_cron_line(
+            "/usr/bin:/bin",
+            "/h/bin/compost",
+            "/h",
+            "prod",
+            "/h/logs/backup.log",
+        );
+        assert_eq!(
+            line,
+            "*/5 * * * * mkdir -p -- '/h/logs' && PATH='/usr/bin:/bin' '/h/bin/compost' backup tick --server-home '/h' --server-name 'prod' >> '/h/logs/backup.log' 2>&1"
+        );
     }
 
     #[test]
