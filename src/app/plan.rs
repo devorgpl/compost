@@ -210,6 +210,14 @@ fn service_lines(
             let line = match change {
                 ServiceChange::Created => "created".to_string(),
                 ServiceChange::Removed => "removed (no longer in the compose files)".to_string(),
+                ServiceChange::NotStarted { profiles, running } => {
+                    let running = if running {
+                        "; its running container is left as it is"
+                    } else {
+                        ""
+                    };
+                    format!("not started (profile {}){running}", profiles.join(", "))
+                }
                 _ if plan.recreate => "recreated (--recreate)".to_string(),
                 ServiceChange::Changed(details) => format!("recreated: {}", details.join("; ")),
                 // The sources stay on this machine, so only the build can tell.

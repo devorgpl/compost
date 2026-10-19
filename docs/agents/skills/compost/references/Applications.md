@@ -99,7 +99,7 @@ The database link in `compost.yaml` sets the same `DATABASE_URL`, so the app rea
 
 ### Extra services in a profile
 
-To keep one file, give the extra services a [Compose profile](https://docs.docker.com/compose/how-tos/profiles/). compost turns on no profiles, so they don't start; `docker compose --profile standalone up` starts them:
+To keep one file, give the extra services a [Compose profile](https://docs.docker.com/compose/how-tos/profiles/). compost turns on no profiles, so they don't start (`--dry-run` shows them as `not started`); `docker compose --profile standalone up` starts them:
 
 ```yaml
 # docker-compose.yaml
@@ -540,7 +540,7 @@ With `deployment.backup`, a line after the instance's says which profile backs i
 
 - **sources**: files added, changed or removed, compared by checksum with the uploaded ones.
 - **files**: what compost writes besides the sources: the override, the stored config, link records and, with `--apply`, Caddy's site files. Files with secrets (link records of databases and OIDC, the override, a `--secret` file) are only named.
-- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `built locally` (`build: local`, experimental: the dry run doesn't build, so it can't tell whether the image changes), `pulled` (every deploy with `build: false` pulls; a newer image recreates it) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
+- **services**: what `docker compose up` would do, judged from each service's definition in the compose files and the override: `recreated` (naming what changed; for variables only their names), `created`, `removed`, `built again` (`build: true` and changed sources), `built locally` (`build: local`, experimental: the dry run doesn't build, so it can't tell whether the image changes), `pulled` (every deploy with `build: false` pulls; a newer image recreates it), `not started` (in a [Compose profile](#extra-services-in-a-profile), which compost never turns on; a container that already runs keeps running) or `unchanged`. Compose makes the final decision on the server, so treat this as a close estimate.
 
 `--diff` adds the changed lines of every file without secrets, as a unified diff. It needs `--dry-run`.
 

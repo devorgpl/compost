@@ -149,6 +149,12 @@ pub enum ServiceChange {
     /// What differs, e.g. `image` or `environment: DATABASE_URL`.
     Changed(Vec<String>),
     Unchanged,
+    /// In these profiles, which compost never turns on, so `up` doesn't start
+    /// it. `running`: it wasn't in one before, so its container keeps running.
+    NotStarted {
+        profiles: Vec<String>,
+        running: bool,
+    },
 }
 
 /// Compare every service across compose files that apply in order (the
@@ -160,8 +166,16 @@ pub fn service_changes(old: &[String], new: &[String]) -> BTreeMap<String, Servi
     let names: BTreeSet<&String> = old.keys().chain(new.keys()).collect();
     names
         .into_iter()
-        .map(|name| {
-            let change = match (old.get(name), new.get(name)) {
+        .filter_map(|name| {
+            let old = old.get(name).filter(|s| profiles(s).is_empty());
+            let new = new.get(name);
+            let change = match (old, new) {
+                (_, Some(new)) if !profiles(new).is_empty() => ServiceChange::NotStarted {
+                    profiles: profiles(new),
+                    running: old.is_some(),
+                },
+                // Only in a profile before: there is nothing to remove.
+                (None, None) => return None,
                 (None, _) => ServiceChange::Created,
                 (_, None) => ServiceChange::Removed,
                 (Some(old), Some(new)) => {
@@ -173,9 +187,39 @@ pub fn service_changes(old: &[String], new: &[String]) -> BTreeMap<String, Servi
                     }
                 }
             };
-            (name.clone(), change)
+            Some((name.clone(), change))
         })
         .collect()
+}
+
+/// A service's profiles: compose joins those of every file, and `!reset` or
+/// `!override` replaces the earlier ones.
+fn profiles(sections: &[Value]) -> Vec<String> {
+    let names = |value: &Value| -> Vec<String> {
+        value
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    let mut profiles: Vec<String> = Vec::new();
+    for section in sections {
+        match section.get("profiles") {
+            Some(Value::Tagged(tagged)) if tagged.tag == "reset" || tagged.tag == "override" => {
+                profiles = names(&tagged.value);
+            }
+            Some(value) => {
+                for name in names(value) {
+                    if !profiles.contains(&name) {
+                        profiles.push(name);
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+    profiles
 }
 
 /// Each service's sections, one per file that has it, in file order.
@@ -300,6 +344,40 @@ mod tests {
             service_changes(&new, &more)["web"],
             ServiceChange::Changed(vec!["networks".into()])
         );
+    }
+
+    #[test]
+    fn services_in_profiles_are_not_started() {
+        let old = texts(&[
+            "services: {web: {image: w}, db: {image: p}, mail: {image: m, profiles: [dev]}}",
+        ]);
+        let new = texts(&[
+            "services: {web: {image: w}, db: {image: p}, cache: {image: c, profiles: [dev]}, tool: {image: t, profiles: [dev]}}",
+            "services: {db: {profiles: ['off']}, tool: {profiles: !reset []}, cache: {profiles: []}}",
+        ]);
+        let changes = service_changes(&old, &new);
+        assert_eq!(changes["web"], ServiceChange::Unchanged);
+        assert_eq!(
+            changes["db"],
+            ServiceChange::NotStarted {
+                profiles: vec!["off".into()],
+                running: true
+            }
+        );
+        // An empty list doesn't clear the profiles; `!reset` does.
+        assert_eq!(
+            changes["cache"],
+            ServiceChange::NotStarted {
+                profiles: vec!["dev".into()],
+                running: false
+            }
+        );
+        assert_eq!(changes["tool"], ServiceChange::Created);
+        // `mail` never ran, so dropping it changes nothing.
+        assert!(!changes.contains_key("mail"));
+        // Leaving its profile starts it.
+        let back = texts(&["services: {db: {image: p}}"]);
+        assert_eq!(service_changes(&new, &back)["db"], ServiceChange::Created);
     }
 
     #[test]
