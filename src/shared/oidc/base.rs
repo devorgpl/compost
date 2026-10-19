@@ -52,8 +52,9 @@ pub struct OidcLink {
     /// Default `<app>-<prefix>-<entry>`.
     #[serde(default)]
     pub client_id: Option<String>,
-    /// The realm's own public URL, e.g. `https://login.example.com`, served by
-    /// an ingress route with `link: oidc/<entry>`. Default: the provider's URL.
+    /// The realm's own public URL, e.g. `https://login.example.com` or
+    /// `https://app.example.com/auth`, served by an ingress route with
+    /// `link: oidc/<entry>`. Default: the provider's URL.
     #[serde(default)]
     pub public_url: Option<String>,
     /// A client without a secret, e.g. a single-page app.
@@ -217,7 +218,7 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
         );
     }
     if let Some(url) = &link.public_url {
-        parse_url(url).context("public_url")?;
+        split_public_url(url).context("public_url")?;
     }
     ensure!(
         !link.redirect_uris.is_empty(),
@@ -332,6 +333,22 @@ pub fn is_role_name(value: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
+/// A realm's `public_url` split into the URL of its domain and its path,
+/// e.g. `https://app.example.com` and `/auth`; no path at the root.
+pub fn split_public_url(url: &str) -> Result<(PublicUrl, Option<String>)> {
+    let trimmed = url.trim_end_matches('/');
+    let start = trimmed.find("://").map_or(0, |i| i + 3);
+    let Some(slash) = trimmed[start..].find('/') else {
+        return Ok((parse_url(url)?, None));
+    };
+    let (base, path) = trimmed.split_at(start + slash);
+    ensure!(
+        crate::shared::ingress::is_route_path(path),
+        "url `{url}`: path `{path}` may use only letters, digits and `/-_.~`"
+    );
+    Ok((parse_url(base)?, Some(path.to_string())))
+}
+
 /// Realm and client ID: from the link, or `<app>-<prefix>` and `<app>-<prefix>-<entry>`.
 pub fn names(app: &AppConfig, link: &OidcLink) -> (String, String) {
     let instance = app.instance();
@@ -379,7 +396,10 @@ pub fn record(ctx: &AppCtx, link: &OidcLink) -> Result<OidcRecord> {
         client_secret,
         users: link.users.iter().map(|u| u.username.clone()).collect(),
         public_url: match &link.public_url {
-            Some(url) => Some(parse_url(url)?.url),
+            Some(url) => {
+                let (base, path) = split_public_url(url)?;
+                Some(base.url + path.as_deref().unwrap_or(""))
+            }
             None => None,
         },
     })
@@ -514,9 +534,10 @@ fn origin(url: &str) -> String {
     }
 }
 
-/// The realm on its own domain: its paths, and `/resources` for the shared
-/// static files of the login pages. `upstream` is the provider on the ingress
-/// network.
+/// The realm on its own domain, or under a path of one: its paths, and
+/// `/resources` for the shared static files of the login pages, with the path
+/// removed before they reach the provider. `upstream` is the provider on the
+/// ingress network.
 pub fn exposed_routes(ctx: &AppCtx, link: &OidcLink, upstream: &str) -> Result<Exposed> {
     let Some(url) = &link.public_url else {
         bail!(
@@ -525,20 +546,20 @@ pub fn exposed_routes(ctx: &AppCtx, link: &OidcLink, upstream: &str) -> Result<E
         );
     };
     let (realm, _) = names(ctx.app, link);
+    let (base, path) = split_public_url(url)?;
+    let prefix = path.as_deref().unwrap_or("");
+    let route = |name, below: String| ExposedRoute {
+        name,
+        path: format!("{prefix}{below}"),
+        upstream: upstream.to_string(),
+        strip_path: path.clone(),
+    };
     Ok(Exposed {
         routes: vec![
-            ExposedRoute {
-                name: "realm",
-                path: format!("/realms/{realm}"),
-                upstream: upstream.to_string(),
-            },
-            ExposedRoute {
-                name: "resources",
-                path: "/resources".to_string(),
-                upstream: upstream.to_string(),
-            },
+            route("realm", format!("/realms/{realm}")),
+            route("resources", "/resources".to_string()),
         ],
-        domain: Some(parse_url(url)?.domain),
+        domain: Some(base.domain),
     })
 }
 
@@ -664,6 +685,36 @@ mod tests {
                 .to_string();
             assert!(err.contains(expected), "{extra}: {err}");
         }
+    }
+
+    #[test]
+    fn public_url_may_have_a_path() {
+        let split = |url: &str| {
+            let (base, path) = split_public_url(url).unwrap();
+            (base.url, base.domain, path)
+        };
+        assert_eq!(
+            split("https://login.example.com/"),
+            (
+                "https://login.example.com".into(),
+                "login.example.com".into(),
+                None
+            )
+        );
+        assert_eq!(
+            split("https://app.example.com:8443/id/auth/"),
+            (
+                "https://app.example.com:8443".into(),
+                "app.example.com".into(),
+                Some("/id/auth".into())
+            )
+        );
+        let err = split_public_url("https://a.example.com/auth?x=1")
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("may use only"), "{err}");
+        assert!(split_public_url("https://app.example.com/a b").is_err());
+        assert!(split_public_url("app.example.com/auth").is_err());
     }
 
     #[test]

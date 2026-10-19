@@ -62,6 +62,10 @@ pub struct RouteRecord {
     /// `<alias>:<port>` on the ingress network.
     pub upstream: String,
     pub strip_prefix: bool,
+    /// Removed from the start of the request path before proxying, when that
+    /// is only part of the route's path (e.g. `/auth` of `/auth/realms/myapp`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_path: Option<String>,
 }
 
 /// `connectors/ingress/<ingress>/<instance>-<entry>.yaml` (spec §8.3).
@@ -184,13 +188,8 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
             continue;
         }
         let path = &route.path;
-        let valid_path = path.starts_with('/')
-            && (path == "/" || !path.ends_with('/'))
-            && path
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "/-_.~".contains(c));
         ensure!(
-            valid_path,
+            is_route_path(path),
             "route `{}`: path `{path}` must start with `/`, not end with `/`, and use only letters, digits and `/-_.~`",
             route.name
         );
@@ -204,6 +203,16 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
 }
 
 /// The ingress of the server (there is at most one).
+/// Starts with `/`, doesn't end with one (except `/` itself), and uses only
+/// letters, digits and `/-_.~`.
+pub fn is_route_path(path: &str) -> bool {
+    path.starts_with('/')
+        && (path == "/" || !path.ends_with('/'))
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/-_.~".contains(c))
+}
+
 pub fn resolve<'s>(link: &IngressLink, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
     if link.domains.is_empty() {
         return Ok(Resolution::Skip(
@@ -231,6 +240,7 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
                     path: route.path.clone(),
                     upstream: format!("{}:{port}", ctx.service_alias(service)),
                     strip_prefix: route.strip_prefix,
+                    strip_path: None,
                 });
             }
             Target::Link { kind, entry } => {
@@ -257,6 +267,7 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
                         path: exposed.path,
                         upstream: exposed.upstream,
                         strip_prefix: false,
+                        strip_path: exposed.strip_path,
                     });
                 }
             }

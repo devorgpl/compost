@@ -4600,6 +4600,82 @@ app_services:
         ));
 }
 
+#[test]
+fn realm_under_a_path_of_the_app_domain() {
+    let server = LocalServer::new();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+
+    server.write_work_file(
+        "app/compost.yaml",
+        "\
+name: myapp
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      public_url: https://app.example.com/auth/
+      public_client: true
+      targets: [web]
+      redirect_uris: ['https://app.example.com/*']
+      environment: {OIDC_ISSUER: oidc_issuer, OIDC_URL: oidc_base_url, OIDC_ORIGIN: oidc_origin}
+  ingress:
+    - name: site
+      domains: [app.example.com]
+      routes:
+        - {name: web, target: web, port: 8080}
+        - {name: auth, link: oidc/login}
+app_services:
+  - name: web
+    service: web
+",
+    );
+    server.write_work_file("app/docker-compose.yaml", "services: {web: {image: x}}\n");
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "app/compost.yaml"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "/auth/realms/myapp-main → compost-shared-keycloak:8080",
+        ));
+
+    let site =
+        server.read_server_file("shared/ingress/caddy-main/conf/sites/myapp-main-site.caddy");
+    for expected in [
+        "\t@auth-realm path /auth/realms/myapp-main /auth/realms/myapp-main/*\n\thandle @auth-realm {\n\t\turi strip_prefix /auth\n\t\treverse_proxy compost-shared-keycloak:8080\n",
+        "\t@auth-resources path /auth/resources /auth/resources/*\n\thandle @auth-resources {\n\t\turi strip_prefix /auth\n",
+    ] {
+        assert!(site.contains(expected), "missing {expected:?} in\n{site}");
+    }
+    // The realm comes before the app's fallback.
+    assert!(
+        site.find("@auth-realm").unwrap() < site.find("handle {").unwrap(),
+        "{site}"
+    );
+    let override_yaml = server.read_server_file("apps/myapp/main/compose/compost.override.yaml");
+    for expected in [
+        "OIDC_ISSUER: https://app.example.com/auth/realms/myapp-main",
+        "OIDC_URL: https://app.example.com/auth\n",
+        "OIDC_ORIGIN: https://app.example.com\n",
+    ] {
+        assert!(
+            override_yaml.contains(expected),
+            "missing {expected:?} in\n{override_yaml}"
+        );
+    }
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("-s 'attributes.frontendUrl=https://app.example.com/auth'"),
+        "{log}"
+    );
+}
+
 /// `APP_CONFIG` with the ingress entry `ui-front` renamed to `web`, and with or
 /// without the database link.
 fn renamed_app(database: bool) -> (String, String) {

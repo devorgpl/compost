@@ -13,6 +13,7 @@ use super::{
 };
 use crate::config::app::AppConfig;
 use base::IngressLink;
+pub use base::is_route_path;
 
 pub const KIND: &str = "ingress";
 

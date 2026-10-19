@@ -139,7 +139,7 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `realm` | `<app>-<prefix>` | Created if missing |
 | `client_id` | `<app>-<prefix>-<entry>` | |
 | `public_client` | `false` | No client secret |
-| `public_url` | – | The realm's own domain; needs an ingress route with `link: oidc/<entry>` |
+| `public_url` | – | The realm's own domain, or a path of one (e.g. `https://app.example.com/auth`); needs an ingress route with `link: oidc/<entry>` |
 | `redirect_uris` | required | |
 | `web_origins` | `[]` | |
 | `post_logout_redirect_uris` | the `redirect_uris` | |

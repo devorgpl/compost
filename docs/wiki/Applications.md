@@ -347,6 +347,23 @@ services:
 
 That domain serves only `/realms/<realm>` and `/resources`; the admin console and other realms get a 404 there. The issuer and login pages use `public_url`. Links that share a realm must agree on it.
 
+**A realm under a path of the app's domain.** With a path in `public_url`, the realm is served there, next to the app:
+
+```yaml
+services:
+  oidc:
+    - name: login
+      public_url: https://app.example.com/auth
+  ingress:
+    - name: site
+      domains: [app.example.com]
+      routes:
+        - {name: web, target: web, port: 8080}
+        - {name: auth, link: oidc/login}      # /auth/realms/<realm> and /auth/resources
+```
+
+The issuer is then `https://app.example.com/auth/realms/<realm>`, on the app's own origin: a single-page app can keep a strict CSP (`connect-src 'self'; frame-src 'self'`), Keycloak's cookies are first-party, and keycloak-js `check-sso` works without third-party cookies. The ingress removes `/auth` before passing requests to Keycloak. Other paths under `/auth` go to the site's other routes, here the app.
+
 ## Workflow links
 
 A workflow link gives services a namespace of their own on a [Temporal](Servers-and-Shared-Apps.md#temporal-workflow) server, for workers and the code that starts workflows:

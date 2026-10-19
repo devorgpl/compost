@@ -155,6 +155,8 @@ pub struct ExposedRoute {
     pub path: String,
     /// `<host>:<port>` on the ingress network.
     pub upstream: String,
+    /// Removed from the start of the path before proxying, e.g. `/auth`.
+    pub strip_path: Option<String>,
 }
 
 impl<'a> AppCtx<'a> {

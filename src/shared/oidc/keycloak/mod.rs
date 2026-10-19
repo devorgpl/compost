@@ -321,7 +321,7 @@ fn check_record(record: &OidcRecord) -> Result<()> {
             && record
                 .public_url
                 .as_deref()
-                .is_none_or(|url| base::parse_url(url).is_ok()),
+                .is_none_or(|url| base::split_public_url(url).is_ok()),
         "unexpected names in the link record"
     );
     Ok(())
