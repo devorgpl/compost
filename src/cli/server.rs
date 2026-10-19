@@ -281,11 +281,20 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
             let owner = records.iter().map(|r| r.owner.len()).max().unwrap_or(0);
             let profile = records.iter().map(|r| r.profile.len()).max().unwrap_or(0);
             for record in &records {
-                out!(
-                    "    {:<owner$}  {:<profile$}  {}",
-                    record.owner,
-                    record.profile,
+                let removed = record.owner != crate::server::schedule::SERVER_OWNER
+                    && !state_file
+                        .apps
+                        .iter()
+                        .any(|app| format!("{}-{}", app.name, app.prefix) == record.owner);
+                let text = if removed {
+                    record.describe_removed()
+                } else {
                     record.describe()
+                };
+                out!(
+                    "    {:<owner$}  {:<profile$}  {text}",
+                    record.owner,
+                    record.profile
                 );
             }
         }

@@ -85,6 +85,15 @@ pub struct BackupRecord {
 }
 
 impl BackupRecord {
+    /// For the record of an instance that was removed since: kept, since it
+    /// tells when its last backup ran.
+    pub fn describe_removed(&self) -> String {
+        match self.status {
+            BackupStatus::Waiting => "instance removed before its first run".to_string(),
+            _ => format!("instance removed; last run {}", self.describe()),
+        }
+    }
+
     /// e.g. `ok, 2026-10-18 03:00` or `failed, 2026-10-18 03:00: …`.
     pub fn describe(&self) -> String {
         // RFC 3339 → `2026-10-18 03:00`, in the server's time.

@@ -34,7 +34,7 @@ const LOG_LIMIT: u64 = 1_000_000;
 /// How often cron starts a tick.
 const TICK: &str = "*/5 * * * *";
 /// Owner of the shared apps' jobs in `state.yaml`.
-const SERVER_OWNER: &str = "server";
+pub const SERVER_OWNER: &str = "server";
 /// Releases to download compost from.
 const RELEASES: &str = "https://github.com/devorgpl/compost/releases/download";
 /// A compost binary to install instead of this one or a download, e.g. a static build.

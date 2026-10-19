@@ -5501,3 +5501,26 @@ fn dev_up_turns_off_the_apps_backup_schedules() {
     let stored = server.read_server_file("apps/shop/local/compost.yaml");
     assert!(stored.contains("schedule: off"), "{stored}");
 }
+
+#[test]
+fn state_shows_backups_of_removed_instances_as_such() {
+    let server = server_with_shared_apps();
+    let state = server.read_server_file("state.yaml");
+    server.write_server_file(
+        "state.yaml",
+        &format!(
+            "{state}backups:\n\
+             - {{owner: gone-prod, profile: daily, last_run: '2026-10-19T15:35:01+02:00', status: waiting}}\n\
+             - {{owner: old-prod, profile: daily, last_run: '2026-10-18T03:30:00+02:00', status: ok}}\n"
+        ),
+    );
+    server
+        .state(&[("FAKE_DOCKER_RUNNING", "1")])
+        .success()
+        .stdout(contains(
+            "gone-prod  daily  instance removed before its first run",
+        ))
+        .stdout(contains(
+            "old-prod   daily  instance removed; last run ok, 2026-10-18 03:30",
+        ));
+}
