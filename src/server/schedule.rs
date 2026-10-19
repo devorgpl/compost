@@ -146,6 +146,12 @@ pub fn ensure(ctx: &ServerCtx, server_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Remove compost's crontab line of this server's folder; returns whether
+/// there was one.
+pub fn uninstall(ctx: &ServerCtx) -> Result<bool> {
+    update_crontab(ctx, None)
+}
+
 /// Whether the tick has work: scheduled backups, or notifications to send.
 fn needed(ctx: &ServerCtx) -> Result<bool> {
     let notifies = instance::server_config(ctx)?

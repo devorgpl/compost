@@ -10,6 +10,7 @@ compost dev env -o .env        # the variables for that
 compost dev reset --yes        # empty database, bucket, …; same passwords
 compost dev stop               # pause it; `dev up` resumes
 compost dev down --purge --yes # remove it with its data
+compost dev reset-all          # everything on this machine, to start from nothing
 ```
 
 You need Docker with compose v2. The `dev` commands only work on this machine; they never reach a server over SSH.
@@ -109,6 +110,23 @@ Without `--yes`, it asks first.
 `compost dev down --purge` also deletes the app's data in every shared app it links to, and the volumes of its compose project. It asks first unless you add `--yes`.
 
 Shared apps keep running; [Quick start](Quick-Start.md#5-clean-up) shows how to stop them.
+
+## Starting over: `dev reset-all`
+
+```sh
+compost dev reset-all [--yes]
+```
+
+`dev reset-all` removes everything compost runs on this machine, for every project:
+
+- each instance's containers and volumes, the images compose built for it, and its rollback images;
+- the shared apps' containers and volumes;
+- compost's Docker networks (`compost-…`) that nothing else uses, and its crontab line;
+- compost's folder, `~/.compost-server`, with every database, bucket, realm and generated password, and the backup archives kept in it.
+
+Files in it that belong to other users, like a database's data, are deleted as root in a container (`alpine`). `~/.compost` stays, with your servers and manager key, so `compost dev up` in a project starts from nothing and adds only the shared apps that project needs. If a container can't be removed, the folder stays and the command says what failed; run it again once that is fixed.
+
+It lists what goes and asks first, unless you add `--yes`.
 
 ## A stack for the team
 

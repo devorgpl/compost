@@ -76,7 +76,7 @@ docker compose -p compost-oidc-keycloak down
 docker compose -p compost-monitoring-monitoring down
 ```
 
-Their files are in `~/.compost-server/shared/`.
+Their files are in `~/.compost-server/shared/`. `compost dev reset-all` removes the shared apps, the apps and that folder in one go ([Local development](Local-Development.md#starting-over-dev-reset-all)).
 
 ## Next
 

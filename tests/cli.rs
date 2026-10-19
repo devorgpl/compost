@@ -190,6 +190,8 @@ case "$*" in
     [ -z "$FAKE_DOCKER_BUILD_FAIL" ] || { echo "failed to solve: syntax error" >&2; exit 1; }
     [ -z "$DOCKER_DEFAULT_PLATFORM" ] || echo "platform $DOCKER_DEFAULT_PLATFORM" >> "$FAKE_DOCKER_LOG" ;;
   "compose "*) ;;
+  "network ls "*) printf 'bridge\ncompost-ingress\ncompost-db-postgres16\n' ;;
+  "network rm "*) ;;
   "network inspect "*)
     for network in $FAKE_DOCKER_NETWORKS; do [ "$*" = "network inspect $network" ] && exit 0; done
     exit 1 ;;
@@ -5523,4 +5525,52 @@ fn state_shows_backups_of_removed_instances_as_such() {
         .stdout(contains(
             "old-prod   daily  instance removed; last run ok, 2026-10-18 03:30",
         ));
+}
+
+#[test]
+fn dev_reset_all_removes_everything_compost_runs() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_dev_app();
+    server
+        .run(&["dev", "reset-all"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+    assert!(server.server_home.exists());
+
+    server
+        .run(&["dev", "reset-all", "--yes"], &running)
+        .success()
+        .stdout(contains("instance shop-local"))
+        .stdout(contains("shared app database postgres16"))
+        .stdout(contains("shared app storage storage"))
+        .stdout(contains("removed network compost-db-postgres16"))
+        .stdout(contains("Done."));
+    let log = server.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    assert!(
+        position("compose -p shop-local")
+            < position("-p compost-database-postgres16 down --remove-orphans -v"),
+        "{log}"
+    );
+    assert!(
+        log.contains("down --remove-orphans -v --rmi local"),
+        "{log}"
+    );
+    assert!(!log.contains("network rm bridge"), "{log}");
+    assert!(!server.server_home.exists());
+
+    // A fresh start.
+    server
+        .run(&["dev", "reset-all", "--yes"], &running)
+        .success()
+        .stdout(contains("Nothing to remove"));
+    server
+        .run(&["dev", "up"], &running)
+        .success()
+        .stdout(contains("Initialized"))
+        .stdout(contains("adding database postgres16").not())
+        .stdout(contains("adding database postgres18 (postgres 18)"));
 }

@@ -13,6 +13,7 @@ pub mod schedule;
 pub mod secrets;
 pub mod state;
 pub mod state_file;
+pub mod teardown;
 
 /// Files inside `COMPOST_SERVER_HOME` (spec §8).
 pub const MANAGER_KEY_FILE: &str = "manager_key";

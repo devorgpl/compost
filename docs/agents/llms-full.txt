@@ -225,7 +225,7 @@ docker compose -p compost-oidc-keycloak down
 docker compose -p compost-monitoring-monitoring down
 ```
 
-Their files are in `~/.compost-server/shared/`.
+Their files are in `~/.compost-server/shared/`. `compost dev reset-all` removes the shared apps, the apps and that folder in one go ([Local development](Local-Development.md#starting-over-dev-reset-all)).
 
 ## Next
 
@@ -1302,7 +1302,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 - **Rolling back data.** `app rollback` doesn't undo database migrations or volume changes; take an `app backup` first.
 - **Deploying on a Git push** or from a web dashboard. compost runs from a terminal, on your machine or in your CI.
 - **A web UI.** compost has none; OpenObserve, Keycloak and Temporal have their own.
-- **Removing shared apps.** A shared app taken out of `compost-server.yaml` is reported as `orphaned` and keeps running until you stop it.
+- **Removing shared apps.** A shared app taken out of `compost-server.yaml` is reported as `orphaned` and keeps running until you stop it. Only on this machine, `compost dev reset-all` removes all of them at once, with all data.
 - **Changing some passwords.** Root passwords of compost's databases, Keycloak's admin password and OpenObserve's root login can't change after the first deploy.
 - **More than one ingress** per server, and `caddysecurebuild` behind another proxy or a CDN.
 - **MinIO** as a built-in storage type (an existing MinIO works as external `s3`), and Garage features such as versioning, object lock or bucket policies.
@@ -2482,6 +2482,7 @@ compost dev env -o .env        # the variables for that
 compost dev reset --yes        # empty database, bucket, …; same passwords
 compost dev stop               # pause it; `dev up` resumes
 compost dev down --purge --yes # remove it with its data
+compost dev reset-all          # everything on this machine, to start from nothing
 ```
 
 You need Docker with compose v2. The `dev` commands only work on this machine; they never reach a server over SSH.
@@ -2581,6 +2582,23 @@ Without `--yes`, it asks first.
 `compost dev down --purge` also deletes the app's data in every shared app it links to, and the volumes of its compose project. It asks first unless you add `--yes`.
 
 Shared apps keep running; [Quick start](Quick-Start.md#5-clean-up) shows how to stop them.
+
+## Starting over: `dev reset-all`
+
+```sh
+compost dev reset-all [--yes]
+```
+
+`dev reset-all` removes everything compost runs on this machine, for every project:
+
+- each instance's containers and volumes, the images compose built for it, and its rollback images;
+- the shared apps' containers and volumes;
+- compost's Docker networks (`compost-…`) that nothing else uses, and its crontab line;
+- compost's folder, `~/.compost-server`, with every database, bucket, realm and generated password, and the backup archives kept in it.
+
+Files in it that belong to other users, like a database's data, are deleted as root in a container (`alpine`). `~/.compost` stays, with your servers and manager key, so `compost dev up` in a project starts from nothing and adds only the shared apps that project needs. If a container can't be removed, the folder stays and the command says what failed; run it again once that is fixed.
+
+It lists what goes and asks first, unless you add `--yes`.
 
 ## A stack for the team
 
@@ -4305,12 +4323,13 @@ Run an app with the shared apps it needs on this machine, for development
 Usage: compost dev [OPTIONS] <COMMAND>
 
 Commands:
-  up     Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
-  reset  Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
-  env    Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
-  stop   Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
-  down   Remove the app's containers; with --purge also its data and volumes
-  help   Print this message or the help of the given subcommand(s)
+  up         Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+  reset      Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+  env        Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  stop       Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+  down       Remove the app's containers; with --purge also its data and volumes
+  reset-all  Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
@@ -4413,6 +4432,22 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --yes                  Do not ask for confirmation (only --purge asks)
       --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev reset-all`
+
+```text
+Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
+
+Usage: compost dev reset-all [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

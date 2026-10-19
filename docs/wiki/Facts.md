@@ -42,7 +42,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 - **Rolling back data.** `app rollback` doesn't undo database migrations or volume changes; take an `app backup` first.
 - **Deploying on a Git push** or from a web dashboard. compost runs from a terminal, on your machine or in your CI.
 - **A web UI.** compost has none; OpenObserve, Keycloak and Temporal have their own.
-- **Removing shared apps.** A shared app taken out of `compost-server.yaml` is reported as `orphaned` and keeps running until you stop it.
+- **Removing shared apps.** A shared app taken out of `compost-server.yaml` is reported as `orphaned` and keeps running until you stop it. Only on this machine, `compost dev reset-all` removes all of them at once, with all data.
 - **Changing some passwords.** Root passwords of compost's databases, Keycloak's admin password and OpenObserve's root login can't change after the first deploy.
 - **More than one ingress** per server, and `caddysecurebuild` behind another proxy or a CDN.
 - **MinIO** as a built-in storage type (an existing MinIO works as external `s3`), and Garage features such as versioning, object lock or bucket policies.

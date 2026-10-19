@@ -43,6 +43,10 @@ pub enum DevCommand {
     Stop(DevStopArgs),
     /// Remove the app's containers; with --purge also its data and volumes
     Down(DevDownArgs),
+    /// Remove every app and shared app on this machine with all their data,
+    /// compost's networks and its folder (~/.compost-server), to start again
+    /// from nothing with `dev up`; ~/.compost stays
+    ResetAll(DevResetAllArgs),
 }
 
 /// The app's config files and instance prefix.
@@ -128,6 +132,16 @@ pub enum EnvFormat {
 pub struct DevStopArgs {
     #[command(flatten)]
     pub project: ProjectArgs,
+    /// Remove a lock left behind by an interrupted compost command
+    #[arg(long)]
+    pub force_unlock: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DevResetAllArgs {
+    /// Do not ask for confirmation
+    #[arg(long)]
+    pub yes: bool,
     /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
@@ -240,6 +254,21 @@ pub fn run(
                 force_unlock: false,
             };
             up(home, &manager_key, &server, &project, &up_args, connect)
+        }
+        DevCommand::ResetAll(args) => {
+            let connector = connector::open(&server, home, connect)?;
+            let options = crate::server::teardown::Options {
+                yes: args.yes,
+                force_unlock: args.force_unlock,
+            };
+            crate::server::teardown::teardown(
+                connector.as_ref(),
+                &server.name,
+                server.server_home(),
+                &manager_key,
+                &options,
+            )?;
+            Ok(())
         }
         DevCommand::Env(args) => {
             let project = Project::find(&args.project)?;

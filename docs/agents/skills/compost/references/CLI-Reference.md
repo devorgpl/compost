@@ -671,12 +671,13 @@ Run an app with the shared apps it needs on this machine, for development
 Usage: compost dev [OPTIONS] <COMMAND>
 
 Commands:
-  up     Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
-  reset  Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
-  env    Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
-  stop   Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
-  down   Remove the app's containers; with --purge also its data and volumes
-  help   Print this message or the help of the given subcommand(s)
+  up         Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+  reset      Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+  env        Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  stop       Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+  down       Remove the app's containers; with --purge also its data and volumes
+  reset-all  Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
@@ -779,6 +780,22 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --yes                  Do not ask for confirmation (only --purge asks)
       --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev reset-all`
+
+```text
+Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
+
+Usage: compost dev reset-all [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 
