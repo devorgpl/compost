@@ -5443,3 +5443,38 @@ fn dev_up_host_sets_up_links_for_an_app_outside_docker() {
         .success()
         .stdout(contains("links of shop-local are ready"));
 }
+
+#[test]
+fn dev_up_uses_the_matching_shared_app_for_a_pin_of_another_server() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_shared_apps();
+    // `postgres-main` is the database's name on another server.
+    server.write_work_file(
+        "compost.yaml",
+        &DEV_APP.replace(
+            "version: '>=16',",
+            "version: '>=16', instance: postgres-main,",
+        ),
+    );
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+
+    server
+        .run(&["dev", "up", "--host"], &running)
+        .success()
+        .stdout(contains(
+            "services.database[db]: dev has no `postgres-main`; using postgres16",
+        ))
+        .stdout(contains("adding database").not())
+        .stdout(contains("publishing database postgres16 on 127.0.0.1:"));
+    let stored = server.read_server_file("apps/shop/local/compost.yaml");
+    assert!(stored.contains("instance: postgres16"), "{stored}");
+    assert!(
+        !server
+            .read_server_file("compost-server.yaml")
+            .contains("postgres-main")
+    );
+    server
+        .run(&["dev", "env"], &running)
+        .success()
+        .stdout(contains("DATABASE_URL=postgres://shop_local_db:"));
+}

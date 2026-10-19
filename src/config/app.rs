@@ -352,12 +352,26 @@ impl AppConfig {
         stored: Option<Value>,
         prefix: Option<&str>,
     ) -> Result<LoadedApp> {
+        Self::load_layers(files, stored, None, prefix)
+    }
+
+    /// Like [`AppConfig::load_with`], with `last` merged after every file,
+    /// e.g. the links `compost dev` points at other shared apps.
+    pub fn load_layers(
+        files: &[PathBuf],
+        stored: Option<Value>,
+        last: Option<Value>,
+        prefix: Option<&str>,
+    ) -> Result<LoadedApp> {
         let split = files.len().min(1);
         let mut merged = merge::load_merged(&files[..split])?;
         if let Some(stored) = stored {
             merge::merge(&mut merged, stored);
         }
         merge::merge_files(&mut merged, &files[split..])?;
+        if let Some(last) = last {
+            merge::merge(&mut merged, last);
+        }
         let mut config: AppConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("app configuration: {e}")))?;
         if let Some(prefix) = prefix {

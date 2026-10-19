@@ -2512,7 +2512,7 @@ For every link of the app ([Applications](Applications.md#database-links)), `dev
 | `workflow` | Temporal, with what it needs |
 | `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
 
-A link that names an `instance` gets a shared app with that name. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
+A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
 
 ```text
 Shared apps on local (local)

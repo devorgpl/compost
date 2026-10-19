@@ -252,9 +252,14 @@ pub fn run(
                 &manager.manager_key,
             )
         }
-        AppCommand::Deploy(args) => {
-            deploy(home, &manager.manager_key, &server, args, false, connect)
-        }
+        AppCommand::Deploy(args) => deploy(
+            home,
+            &manager.manager_key,
+            &server,
+            args,
+            DevDeploy::default(),
+            connect,
+        ),
         AppCommand::State(args) => {
             let selector = selector(&args)?;
             let connector = connector::open(&server, home, connect)?;
@@ -463,13 +468,21 @@ pub(super) fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(vec![default])
 }
 
-/// `links_only`: set up the links, but don't start the services (`dev up --host`).
+/// What `compost dev` changes in a deploy.
+#[derive(Default)]
+pub(super) struct DevDeploy {
+    /// Set up the links, but don't start the services (`dev up --host`).
+    pub links_only: bool,
+    /// Merged over the files, e.g. links pointed at this server's shared apps.
+    pub overlay: Option<serde_yaml_ng::Value>,
+}
+
 pub(super) fn deploy(
     home: &CompostHome,
     manager_key: &str,
     server: &ServerEntry,
     args: AppDeployArgs,
-    links_only: bool,
+    dev: DevDeploy,
     connect: &ConnectOptions,
 ) -> Result<()> {
     let AppDeployArgs {
@@ -514,7 +527,7 @@ pub(super) fn deploy(
         )?
         .unzip(),
     };
-    let loaded = AppConfig::load_with(&files, stored, prefix.as_deref())?;
+    let loaded = AppConfig::load_layers(&files, stored, dev.overlay, prefix.as_deref())?;
     // Like the -f files, the secrets file is never uploaded with the sources.
     files.extend(secret);
 
@@ -550,7 +563,7 @@ pub(super) fn deploy(
         purge,
         secrets: overlay.as_ref(),
         pinned: None,
-        links_only,
+        links_only: dev.links_only,
         backup: backup_profile.map(|profile| deploy::PreDeployBackup {
             server_name: &server.name,
             profile,

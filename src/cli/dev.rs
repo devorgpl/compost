@@ -8,7 +8,7 @@ use clap::{Args, Subcommand};
 use serde_yaml_ng::Value;
 
 use super::DeployArgs;
-use super::app::{AppDeployArgs, config_files, instance_id};
+use super::app::{AppDeployArgs, DevDeploy, config_files, instance_id};
 use crate::app::instance::Selector;
 use crate::app::{remove, reset, stop};
 use crate::config::app::AppConfig;
@@ -310,7 +310,7 @@ fn up(
     connect: &ConnectOptions,
 ) -> Result<()> {
     let connector = connector::open(server, home, connect)?;
-    let ready = shared_apps(connector.as_ref(), manager_key, server, project, args)?;
+    let (ready, overlay) = shared_apps(connector.as_ref(), manager_key, server, project, args)?;
     drop(connector);
     if !ready {
         out!("The app's dry run needs those shared apps; run `compost dev up` to add them.");
@@ -333,7 +333,11 @@ fn up(
         backup: None,
         no_backup: true,
     };
-    super::app::deploy(home, manager_key, server, deploy, args.host, connect)?;
+    let dev = DevDeploy {
+        links_only: args.host,
+        overlay,
+    };
+    super::app::deploy(home, manager_key, server, deploy, dev, connect)?;
     if args.host && !args.dry_run {
         out!();
         out!("Run it outside Docker with the variables of `compost dev env`, e.g.");
@@ -378,7 +382,20 @@ fn env(
         &project.prefix,
     )?
     .map(|(_, value)| value);
-    let loaded = AppConfig::load_with(&project.files, stored, Some(&project.prefix))?;
+    let ctx = crate::app::state::initialized_server(
+        connector.as_ref(),
+        server.server_home(),
+        manager_key,
+    )?;
+    let server_config = crate::app::instance::server_config(&ctx)?;
+    let unpinned = AppConfig::load_with(&project.files, stored.clone(), Some(&project.prefix))?;
+    let repins = crate::dev::shared::repins(&server_config, &unpinned.config)?;
+    let loaded = AppConfig::load_layers(
+        &project.files,
+        stored,
+        crate::dev::shared::repin_overlay(&repins),
+        Some(&project.prefix),
+    )?;
     let services = crate::app::deploy::host_env(
         connector.as_ref(),
         server.server_home(),
@@ -497,14 +514,15 @@ fn write_env(path: &Path, text: &str) -> Result<()> {
 }
 
 /// Add the shared apps the app's links need and start the ones that don't
-/// run. Returns `false` when a dry run would add some.
+/// run. Returns `false` when a dry run would add some, and the overlay that
+/// points links at other shared apps than the ones they pin.
 fn shared_apps(
     connector: &dyn Connector,
     manager_key: &str,
     server: &ServerEntry,
     project: &Project,
     args: &DevUpArgs,
-) -> Result<bool> {
+) -> Result<(bool, Option<Value>)> {
     let report = state::check(connector, server.server_home(), manager_key)?;
     let current = match report.status {
         Status::Ok | Status::Degraded => {
@@ -524,8 +542,19 @@ fn shared_apps(
     let free = |port: u16| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
     let host: Option<&dyn Fn(u16) -> bool> = if args.host { Some(&free) } else { None };
     let plan = crate::dev::shared::plan(&current, &loaded.config, host)?;
+    for repin in &plan.repins {
+        out!(
+            "services.{}[{}]: {} has no `{}`; using {}",
+            repin.kind,
+            repin.entry,
+            server.name,
+            repin.from,
+            repin.to
+        );
+    }
+    let overlay = crate::dev::shared::repin_overlay(&plan.repins);
     if !plan.changes() && report.status == Status::Ok {
-        return Ok(true);
+        return Ok((true, overlay));
     }
     out!("Shared apps on {} ({})", server.name, connector.target());
     for added in &plan.added {
@@ -574,9 +603,9 @@ fn shared_apps(
         &options,
     )?;
     if args.dry_run {
-        return Ok(plan.added.is_empty());
+        return Ok((plan.added.is_empty(), overlay));
     }
     schedule::refresh(connector, server.server_home(), manager_key, &server.name)?;
     out!();
-    Ok(true)
+    Ok((true, overlay))
 }

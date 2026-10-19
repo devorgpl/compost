@@ -17,6 +17,84 @@ pub struct Added {
     pub for_link: String,
 }
 
+/// A link that pins a shared app this server doesn't have, e.g. a production
+/// server's name, and that another one serves.
+#[derive(Debug, Clone)]
+pub struct Repin {
+    pub kind: String,
+    pub entry: String,
+    /// The pinned name.
+    pub from: String,
+    /// The shared app that matches the link without the pin.
+    pub to: String,
+}
+
+/// The app's links whose `instance` names no shared app of `server`, but that
+/// exactly one shared app serves when the pin is left out.
+pub fn repins(server: &ServerConfig, app: &AppConfig) -> Result<Vec<Repin>> {
+    let mut repins = Vec::new();
+    for (kind_name, entry) in app.links() {
+        let Some(pin) = entry.get("instance").and_then(Value::as_str) else {
+            continue;
+        };
+        if server.shared_apps().any(|(_, a)| a.name == pin) {
+            continue;
+        }
+        let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
+        let mut unpinned = entry.clone();
+        if let Value::Mapping(map) = &mut unpinned {
+            map.remove("instance");
+        }
+        let available = server.shared.get(kind_name).map_or(&[][..], Vec::as_slice);
+        if let Ok(shared::Resolution::Use(found)) = kind.resolve(&unpinned, available) {
+            repins.push(Repin {
+                kind: kind_name.to_string(),
+                entry: link_name(entry).unwrap_or_default().to_string(),
+                from: pin.to_string(),
+                to: found.name.clone(),
+            });
+        }
+    }
+    Ok(repins)
+}
+
+/// The overlay that points the links at their new shared apps; merged over
+/// the app's files.
+pub fn repin_overlay(repins: &[Repin]) -> Option<Value> {
+    if repins.is_empty() {
+        return None;
+    }
+    let mut services = serde_yaml_ng::Mapping::new();
+    for repin in repins {
+        let mut link = serde_yaml_ng::Mapping::new();
+        link.insert("name".into(), repin.entry.as_str().into());
+        link.insert("instance".into(), repin.to.as_str().into());
+        let entries = services
+            .entry(repin.kind.as_str().into())
+            .or_insert_with(|| Value::Sequence(Vec::new()));
+        if let Value::Sequence(entries) = entries {
+            entries.push(Value::Mapping(link));
+        }
+    }
+    let mut overlay = serde_yaml_ng::Mapping::new();
+    overlay.insert("services".into(), Value::Mapping(services));
+    Some(Value::Mapping(overlay))
+}
+
+/// The app with its links pointed at the shared apps of `repins`.
+fn repinned(app: &AppConfig, repins: &[Repin]) -> AppConfig {
+    let mut app = app.clone();
+    for repin in repins {
+        let entries = app.services.get_mut(&repin.kind).into_iter().flatten();
+        for entry in entries.filter(|e| link_name(e) == Some(repin.entry.as_str())) {
+            if let Value::Mapping(map) = entry {
+                map.insert("instance".into(), repin.to.as_str().into());
+            }
+        }
+    }
+    app
+}
+
 /// A shared app that gets a `host_port`.
 #[derive(Debug)]
 pub struct Published {
@@ -41,6 +119,8 @@ const HOST_PORTS: &[(&str, u16)] = &[
 #[derive(Debug)]
 pub struct Plan {
     pub config: ServerConfig,
+    /// Links pointed at another shared app than the one they pin.
+    pub repins: Vec<Repin>,
     pub added: Vec<Added>,
     pub published: Vec<Published>,
 }
@@ -52,22 +132,27 @@ impl Plan {
 }
 
 /// `server` with the shared apps that the links of `app` need and it lacks.
-/// Shared apps that added ones link to (e.g. Keycloak's Postgres) are added
-/// too. With `host` (which tells whether a port is free), the shared apps the
-/// app's links use get a `host_port`. Nothing else of existing shared apps changes.
+/// A link that pins a shared app this server doesn't have uses the one that
+/// matches it otherwise, if there is exactly one (see [`repins`]). Shared apps
+/// that added ones link to (e.g. Keycloak's Postgres) are added too. With
+/// `host` (which tells whether a port is free), the shared apps the app's
+/// links use get a `host_port`. Nothing else of existing shared apps changes.
 pub fn plan(
     server: &ServerConfig,
     app: &AppConfig,
     host: Option<&dyn Fn(u16) -> bool>,
 ) -> Result<Plan> {
-    let (config, added) = add_missing(server, app)?;
+    let repins = repins(server, app)?;
+    let app = repinned(app, &repins);
+    let (config, added) = add_missing(server, &app)?;
     let mut plan = Plan {
         config,
+        repins,
         added,
         published: Vec::new(),
     };
     if let Some(free) = host {
-        publish(&mut plan, app, free)?;
+        publish(&mut plan, &app, free)?;
     }
     if plan.changes() {
         // Validate the result as `server deploy` would.
@@ -419,6 +504,29 @@ mod tests {
             err.to_string()
                 .contains("host_port 15432 is also the host_port of shared.database[a]"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn a_pin_of_another_server_uses_the_matching_shared_app() {
+        let config = server(
+            "shared:\n  database:\n    - {name: postgres18, type: postgres, version: 18}\n  keyvalue:\n    - {name: valkey, type: valkey}\n",
+        );
+        let links = "  database:\n    - {name: db, type: postgres, version: '18', instance: postgres18}\n  keyvalue:\n    - {name: cache, type: valkey, instance: valkey-main}\n    - {name: other, type: redis, instance: redis-main}\n";
+        let planned = plan(&config, &app(links), None).unwrap();
+        let repins: Vec<String> = planned
+            .repins
+            .iter()
+            .map(|r| format!("{}/{}: {} -> {}", r.kind, r.entry, r.from, r.to))
+            .collect();
+        // postgres18 exists; nothing serves redis, so it is added with the pin's name.
+        assert_eq!(repins, ["keyvalue/cache: valkey-main -> valkey"]);
+        assert_eq!(names(&planned.added), ["keyvalue/redis-main/8"]);
+
+        let overlay = repin_overlay(&planned.repins).unwrap();
+        assert_eq!(
+            serde_yaml_ng::to_string(&overlay).unwrap(),
+            "services:\n  keyvalue:\n  - name: cache\n    instance: valkey\n"
         );
     }
 }
