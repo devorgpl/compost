@@ -26,6 +26,7 @@ compost app deploy --apply --secret .compost-staging.yaml   # your app, with a d
 - **Logins:** an app can get a Keycloak realm, client and test users, with the OIDC settings passed to its services.
 - **Monitoring:** the output and metrics of apps and shared services go to OpenObserve, and services get the variables to send OpenTelemetry traces.
 - **Instances:** the same app runs as `staging`, `prod` or a review copy, each with its own domains and data.
+- **Local development:** `compost dev up` runs an app with the shared apps it needs on your machine, next to your other projects, or only its databases and storage for running it from your IDE. See [Local development](Local-Development.md).
 - **Secrets:** passwords live in files you don't commit, or are stored on the server; generated ones are kept between deploys.
 - **Backup and restore:** apps and shared services, to this machine or to a folder on the server, also to make copies or move to a new server.
 - **Gradual migration:** Caddy serves existing containers, apps link to existing or hosted databases (e.g. AWS RDS), and `compost.yaml` can live apart from apps you don't own. See [Migrating to compost](Migration.md).
@@ -52,7 +53,8 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Installation](Installation.md) | [Applications](Applications.md) | [Configuration](Configuration.md) |
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
-| [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
+| [Examples](Examples.md) | [Local development](Local-Development.md) | |
+| | [Backup and restore](Backup-and-Restore.md) | |
 | [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
 | [Facts and limits](Facts.md) | | |
 
@@ -229,6 +231,7 @@ Their files are in `~/.compost-server/shared/`.
 
 - See the sample's logs and metrics: [Examples](Examples.md#logs-and-metrics-in-openobserve).
 - Add a Keycloak login to the sample: [Examples](Examples.md#log-in-with-keycloak).
+- Run your own apps on this machine with one command each, with the shared apps they need: [Local development](Local-Development.md).
 - Set up your own app: [Applications](Applications.md).
 - Deploy to a real server: [Production setup](Production-Setup.md).
 
@@ -552,6 +555,30 @@ services:
 ```
 
 Each instance gets its own bucket (`photos-prod-uploads`, `photos-staging-uploads`) and key. `app backup` includes the bucket's objects. Set the S3 client to path-style addressing.
+
+## A developer's machine
+
+Two projects on one laptop, one with Postgres and S3 storage, the other with Postgres and Valkey. [`compost dev`](Local-Development.md) runs one Postgres for both, with a database each:
+
+```yaml
+# shop/compost.yaml
+name: shop
+app_services: [{name: api, service: api}]
+services:
+  database:
+    - {name: db, type: postgres, version: ">=16", targets: [api], environment: {DATABASE_URL: db_url}}
+  storage:
+    - {name: files, targets: [api], environment: {S3_ENDPOINT: s3_endpoint, S3_BUCKET: s3_bucket, S3_KEY: s3_access_key_id, S3_SECRET: s3_secret_access_key}}
+```
+
+```sh
+cd shop && compost dev up --host      # adds postgres18 and garage, publishes them on 127.0.0.1
+compost dev env -o .env               # DATABASE_URL=postgres://shop_local_db:…@127.0.0.1:15432/shop_local_db, S3_…
+npm run dev                           # your app, with .env
+
+cd ../blog && compost dev up          # reuses postgres18, adds valkey, runs blog in Docker
+cd ../shop && compost dev reset --kind database --yes   # an empty shop database; blog's is untouched
+```
 
 ## Staging and production from one repository
 
@@ -1253,6 +1280,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 - **Links:** an app gets a domain and routes on the ingress with automatic HTTPS, its own database and user, a key-value database, an S3 bucket and key, a Keycloak realm with a client, roles and users, a Temporal namespace, and log, metric and trace collection. Its services get the connection values as variables ([Applications](Applications.md#ingress-links)).
 - **Your compose file stays as it is.** compost adds networks and variables in an override file on the server. `compose_overrides` change apps you don't own without editing them.
 - **Instances:** the same app as `staging`, `prod` or a review copy on one server, each with its own domains, data and passwords ([Configuration](Configuration.md#overlays)).
+- **Local development:** `compost dev up` runs an app on this machine, adding the shared apps it needs; projects share them with their own data, `dev reset` empties an app's databases and buckets, and `dev up --host` with `dev env` lets you run the app outside Docker ([Local development](Local-Development.md)).
 - **Dry runs:** `--dry-run` shows what a deploy would change (files, services to recreate, links) without touching the server; `--diff` adds the changed lines. Without `--apply` (or the `deploy.apply` preference), a deploy only uploads files and starts nothing.
 - **Repeatable deploys:** deploying again keeps data and passwords and doesn't recreate unchanged containers.
 - **Releases and rollback:** each deploy is a numbered release; `app rollback` starts the images of an earlier one ([Releases and rollback](Applications.md#releases-and-rollback)).
@@ -1753,7 +1781,7 @@ compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--se
                    [--backup <profile> | --no-backup]
 ```
 
-`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`).
+`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`). On your own machine, [`compost dev up`](Local-Development.md) does such a deploy and also adds the shared apps the app's links need.
 
 A deploy:
 
@@ -1822,7 +1850,7 @@ compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
 ## Inspecting
 
 ```sh
-compost app list                                 # every instance: status, running, last update
+compost app list                                 # every instance: status (deployed, candidate, failed; stopped and provisioned from `dev` commands), running, last update
 compost app state myapp-staging                  # or: -f compost.yaml,.compost-staging.yaml / --app myapp --prefix staging
 ```
 
@@ -1950,7 +1978,9 @@ Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, 
 
 When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 
-Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`.
+Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`. On this machine, `compost dev up` adds the shared apps an app needs by itself ([Local development](Local-Development.md#starting-an-app-dev-up)); a later `server deploy` from a file without them reports them as `orphaned`.
+
+Two shared apps can't have the same `host_port`.
 
 ## Shared app types
 
@@ -2107,8 +2137,9 @@ shared:
 | `version` | required | Major version, matched against apps' `version` requirements |
 | `image` | `postgres:<version>` | An official `postgres` image or a compatible one |
 | `configuration.root_password` | generated | Superuser password. Secret. Can't change after the first deploy |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-Postgres is not published on a host port. Only containers on its network `compost-db-<name>` reach it, at host name `<name>`, port 5432.
+Containers on its network `compost-db-<name>` reach it at host name `<name>`, port 5432. Without `host_port` it is not published on a host port.
 
 ### mariadb and mysql (`database`)
 
@@ -2129,8 +2160,9 @@ shared:
 | `version` | `11` (mariadb), `8` (mysql) | Major version, matched against apps' `version` requirements |
 | `image` | `mariadb:<version>`, `mysql:<version>` | An official image or a compatible one |
 | `configuration.root_password` | generated | Password of `root`. Secret, without quotes or `\`. Can't change after the first deploy |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-Like Postgres, it is reached only on `compost-db-<name>`, at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
+Like Postgres, it is reached on `compost-db-<name>` (and on `host_port`, if set), at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
 
 Backups use `mariadb-dump` / `mysqldump` with `--single-transaction`, so InnoDB tables are copied consistently without stopping the app. App dumps leave out `DEFINER` clauses, so they load into a copy with another user. A server backup holds every database, user and grant, and restores onto the same major version.
 
@@ -2157,8 +2189,9 @@ shared:
 | `configuration.password` | generated | Password of the `default` user, for compost and you. Secret; a new value replaces the old one with the next deploy |
 | `configuration.max_memory` | none | e.g. `512mb`: above it the server evicts keys by `eviction` |
 | `configuration.eviction` | `noeviction` | `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, `volatile-lru`, `volatile-lfu`, `volatile-random` or `volatile-ttl` |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
+It is reached on `compost-kv-<name>` (and on `host_port`, if set), at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
 
 A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
 
@@ -2185,6 +2218,7 @@ shared:
 | `configuration.url` | – | Public URL of the S3 API, served by the ingress; apps get it as `s3_public_endpoint` |
 | `configuration.region` | `garage` | Region name clients sign requests with |
 | `configuration.capacity` | `100G` | The node's weight in Garage's layout; not a quota |
+| `configuration.host_port` | – | Also publish its S3 API on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
 It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
 
@@ -2431,6 +2465,137 @@ It removes every tagged image that no container uses, running or stopped, includ
 ## Locks
 
 Commands that change a server hold a lock (`~/.compost-server/lock/`), so two can't run at once. If a command was killed and left it behind, the next one prints who held it; add `--force-unlock` to remove it.
+
+---
+
+<!-- Local-Development.md -->
+
+# Local development
+
+`compost dev` runs an app's stack on your own machine. Run `compost dev up` in the app's folder: compost adds the shared apps the app needs, gives the app its own database, bucket and logins on them, and starts it. Every developer runs the same command with the same committed `compost.yaml`, so everyone gets the same stack.
+
+```sh
+cd myapp
+compost dev up                 # shared apps it lacks, its own data, its containers
+compost dev up --host          # or: only the data, for running the app from your IDE
+compost dev env -o .env        # the variables for that
+compost dev reset --yes        # empty database, bucket, …; same passwords
+compost dev stop               # pause it; `dev up` resumes
+compost dev down --purge --yes # remove it with its data
+```
+
+You need Docker with compose v2. The `dev` commands only work on this machine; they never reach a server over SSH.
+
+## Which machine
+
+`dev` commands use a [local server](Servers-and-Shared-Apps.md#defining-servers), never an SSH one, and ignore the context of `compost connect`. The first that applies wins:
+
+1. `-s <name>` or `COMPOST_SERVER`. It must be a local server.
+2. The `dev.server` preference (`compost config set dev.server <name>`).
+3. The only local server. If there are several, the current context when it is one of them.
+4. Otherwise compost defines a local server named `local` (compost's folder: `~/.compost-server`).
+
+If compost isn't initialized yet, `dev` runs `compost init` first. A machine that already runs the [Quick start](Quick-Start.md) uses its server and shared apps.
+
+## Starting an app: `dev up`
+
+`dev up` reads `compost.yaml` and, if it exists, `.compost-local.yaml`; `-f` gives other files. The instance prefix is `--prefix`, else the files' `prefix`, else `local`, so the instance is e.g. `myapp-local`.
+
+For every link of the app ([Applications](Applications.md#database-links)), `dev up` uses a running shared app that matches it, like `app deploy` does. When none is configured, it adds one, with the settings of `compost server generate`'s setup for this machine:
+
+| Link | Adds |
+|---|---|
+| `database`, `keyvalue` | The link's `type`. Its version is the starter's (e.g. Postgres 18) if the link's `version` allows it, else the lowest major version the link allows, e.g. `postgres15` for `version: "^15"` |
+| `storage` | Garage, named `storage` |
+| `ingress` with domains | Caddy on port 18080, plain HTTP |
+| `oidc` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
+| `workflow` | Temporal, with what it needs |
+| `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
+
+A link that names an `instance` gets a shared app with that name. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
+
+```text
+Shared apps on local (local)
+  adding storage storage (garage 2) for services.storage[files]
+  ingress    caddy-main       unchanged
+  database   postgres18       unchanged
+  storage    storage          updated
+  ...
+Deploying myapp-local to local (local)
+```
+
+Then `dev up` deploys the app with `--apply`. Its domains come from the overlay, e.g. `myapp.localhost`: browsers resolve `*.localhost` to this machine, so it is at `http://myapp.localhost:18080/` without DNS changes. `--dry-run` shows the shared apps it would add; the app's own dry run follows when nothing is missing. `--pull` and `--recreate` work as with [`app deploy`](Applications.md#deploying).
+
+The shared apps that `dev up` added are stored in the local server's `compost-server.yaml` (in `~/.compost-server`). If you also deploy that server from an infrastructure folder with `compost server deploy`, the shared apps missing from that folder's file are reported as `orphaned` and keep running. Add them to the file to keep managing them from there.
+
+## Several projects
+
+Each app is its own instance with its own databases, users, buckets and realms on the same shared apps, so projects don't touch each other's data. To switch projects, go to the other folder and run `compost dev up` there; the first project keeps running.
+
+To free memory, pause a project with `compost dev stop`. It stops the app's containers and keeps everything else; `compost app list` shows it as `stopped`, and `compost dev up` starts it again. Shared apps keep running for the other projects.
+
+## Running the app outside Docker
+
+To run the app from your IDE, with hot reload or a debugger, use `--host`:
+
+```sh
+compost dev up --host
+compost dev env -o .env       # then start the app with these variables
+```
+
+`dev up --host`:
+
+- Gives the shared apps that the app's database, key-value and storage links use a `host_port` on 127.0.0.1, unless they have one. The first free port from 15432 (Postgres), 13306 (MariaDB, MySQL), 16379 (Valkey, Redis) and 13900 (Garage's S3 API) is used. This recreates the shared app's container once; its data is kept.
+- Sets up the links (database and user, bucket and key, key-value database, realm and client, namespace) and stops the app's containers, if an earlier `dev up` started them. `compost app list` shows the instance as `provisioned`.
+- Skips ingress and monitoring links: they need the app's containers.
+
+`compost dev env` prints the variables the links give, as a process on this machine sees them: a database at `127.0.0.1:<host_port>` instead of its Docker name. With `--service`, only that service's variables; without it, those of all services, which must not set a variable differently. `--format` is `dotenv` (the default), `shell` (`export KEY='value'`) or `json`. `-o` writes a file with mode `0600` and warns if git doesn't ignore it: it holds passwords. Add it to `.compostignore` as well, or `dev up` without `--host` uploads it, and Docker Compose reads a `.env` it finds there.
+
+```sh
+$ compost dev env
+DATABASE_URL=postgres://myapp_local_db:4f1c…@127.0.0.1:15432/myapp_local_db
+S3_BUCKET=myapp-local-files
+S3_ENDPOINT=http://127.0.0.1:13900
+```
+
+Only database, key-value and storage links give addresses on 127.0.0.1. The values of other links are those the app's containers get: an OIDC link's `oidc_issuer` is the public `http://auth.localhost:18080/realms/…`, which works from both, but `oidc_internal_url` only works in Docker.
+
+`dev env` also works after `dev up` without `--host` once the shared apps have a `host_port`, e.g. to run a migration or a database client on this machine.
+
+## Fresh data: `dev reset`
+
+```sh
+compost dev reset --yes                      # every link that holds data
+compost dev reset --kind database --yes      # only databases
+compost dev reset --link files --yes         # only one link
+```
+
+`dev reset` stops the app, deletes the data of its links (drops the database and its user, deletes the bucket, the key-value database's keys, the realm, the namespace) and runs `dev up` again in the same mode (`--host` if the app was set up with it), which creates them empty. Passwords and keys stay the same, so a `.env` written by `dev env` keeps working; `--new-credentials` generates new ones. Volumes of the app's own compose services are kept: `dev down --purge` removes those.
+
+Without `--yes`, it asks first.
+
+## Removing an app: `dev down`
+
+`compost dev down` removes the app's containers and its instance folder, like [`app remove`](Applications.md#removing). Its databases, buckets and volumes stay for the next `dev up`.
+
+`compost dev down --purge` also deletes the app's data in every shared app it links to, and the volumes of its compose project. It asks first unless you add `--yes`.
+
+Shared apps keep running; [Quick start](Quick-Start.md#5-clean-up) shows how to stop them.
+
+## A stack for the team
+
+Commit `compost.yaml` and a `.compost-local.example.yaml` with the values for this machine, e.g. `*.localhost` domains:
+
+```yaml
+# .compost-local.example.yaml: copy to .compost-local.yaml
+prefix: local
+services:
+  ingress:
+    - name: site
+      domains: ["myapp.localhost"]
+```
+
+Each developer copies it to `.compost-local.yaml` (which stays uncommitted, like every `.compost-*.yaml`) and runs `compost dev up`. The links' `type` and `version` decide which shared apps everyone gets. Passwords are generated per machine.
 
 ---
 
@@ -3028,7 +3193,7 @@ services:
       domains: [staging.example.com]
 ```
 
-Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
+Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`; `dev` commands load `compost.yaml` and `.compost-local.yaml` (if present). Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
 
 ## compost.yaml
 
@@ -3182,7 +3347,7 @@ Details and examples: [Applications](Applications.md).
 
 ## Overlays
 
-Same schema as `compost.yaml`, plus `prefix` (default `main`). Typically:
+Same schema as `compost.yaml`, plus `prefix` (default `main`; `local` for [`dev` commands](Local-Development.md#starting-an-app-dev-up)). Typically:
 
 ```yaml
 prefix: staging
@@ -3257,6 +3422,8 @@ Keys every shared app has:
 | `external` | – | A server compost doesn't run; databases only |
 | `monitoring` | – | Send its output and metrics to a monitoring app: `instance`, `logs` (default `true`), `metrics` (default `true`). See [Monitoring shared apps](Servers-and-Shared-Apps.md#monitoring-shared-apps) |
 
+`configuration.host_port` (postgres, mariadb, mysql, valkey, redis, garage) also publishes the shared app on 127.0.0.1 of the server, e.g. for an app run outside Docker ([Local development](Local-Development.md#running-the-app-outside-docker)). Each port is used by one shared app at most; external shared apps can't have one.
+
 ## servers.yaml
 
 Written by `server define`; you rarely edit it.
@@ -3283,12 +3450,14 @@ servers:
 ```sh
 compost config set deploy.apply true [--for-server prod]
 compost config unset deploy.apply [--for-server prod]
+compost config set dev.server laptop
 compost config show
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
 | `deploy.apply` | `false` | `server deploy` and `app deploy` start services without `--apply` |
+| `dev.server` | – | The local server `dev` commands use; global only. See [Local development](Local-Development.md#which-machine) |
 
 `--apply`/`--no-apply` win over the server's value, which wins over the global one in `~/.compost/config.yaml`.
 
@@ -3297,7 +3466,7 @@ compost config show
 | Variable | Meaning |
 |---|---|
 | `COMPOST_HOME` | compost's local folder, default `~/.compost` |
-| `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context) |
+| `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context); for `dev` commands it must be a local server |
 | `COMPOST_SSH_KEY_FILE` | SSH private key, when `--ssh-key-file` isn't given (wins over the server's `identity_file`) |
 | `COMPOST_SERVER_BINARY` | compost binary that deploys install on the server for [scheduled backups](Backup-and-Restore.md#scheduled-backups), instead of this one or a download |
 
@@ -3314,7 +3483,7 @@ compost config show
 ```
 ~/.compost/
 ├── compost-manager.yaml    manager key; copy it (or use `init --key`) to manage the same servers elsewhere
-├── servers.yaml            servers from `server define`
+├── servers.yaml            servers from `server define` (and `local`, if a `dev` command defined it)
 ├── config.yaml             preferences from `compost config`
 ├── current_context         server name from `connect`
 └── ssh/                    shared SSH connection sockets
@@ -3328,12 +3497,14 @@ myapp/
 ├── compost.yaml                       how to deploy; commit
 ├── .compost.secrets.example.yaml      example overlay from `app generate`; commit
 ├── .compost-staging.yaml              overlay with secrets; don't commit
+├── .compost-local.yaml                overlay that `dev` commands merge; don't commit
+├── .env                               variables from `compost dev env -o .env`; holds passwords, don't commit
 ├── .compostignore                     not uploaded (gitignore syntax)
 ├── .claude/skills/compost/            Agent Skill from `compost agent skill`, if you install it there
 └── …
 ```
 
-Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns. With `deployment.source_dir`, the uploaded folder is that one instead, and `compost.yaml` can live in a separate deployment repository ([Applications](Applications.md#sources-in-another-folder)).
+Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns. Add a `.env` written by `dev env` to `.compostignore` too: Docker Compose reads a `.env` in the uploaded folder. With `deployment.source_dir`, the uploaded folder is that one instead, and `compost.yaml` can live in a separate deployment repository ([Applications](Applications.md#sources-in-another-folder)).
 
 ## In an infrastructure folder
 
@@ -3482,6 +3653,7 @@ Commands:
   connect     Use <NAME> as the default server for following commands
   disconnect  Forget the default server
   app         Deploy and inspect user applications
+  dev         Run an app with the shared apps it needs on this machine, for development
   connector   Inspect links between applications and shared apps
   backup      Run backup profiles, list and prune backups
   notify      Send notifications through the server's communication apps
@@ -4125,6 +4297,125 @@ Options:
   -h, --help                 Print help
 ```
 
+## `compost dev`
+
+```text
+Run an app with the shared apps it needs on this machine, for development
+
+Usage: compost dev [OPTIONS] <COMMAND>
+
+Commands:
+  up     Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+  reset  Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+  env    Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  stop   Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+  down   Remove the app's containers; with --purge also its data and volumes
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost dev up`
+
+```text
+Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+
+Usage: compost dev up [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --host                 Run the app outside Docker, e.g. from an IDE: set up its links only, stop its containers, and publish the shared apps it uses on 127.0.0.1 (see `dev env`)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --dry-run              Show what would change, without changing anything
+      --pull                 Pull images again, and build on newer base images
+      --recreate             Recreate every container of the app, even unchanged ones; data in volumes is kept
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev reset`
+
+```text
+Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+
+Usage: compost dev reset [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --kind <KIND>          Only links of these kinds, e.g. `--kind database` (default: all that hold data)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --link <LINK>          Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
+      --new-credentials      Generate new passwords and keys instead of keeping them
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev env`
+
+```text
+Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+
+Usage: compost dev env [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --service <SERVICE>    Only the variables of this service (an `app_services` name or a compose service; default: all, which must not set a variable differently)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --format <FORMAT>      `dotenv` (KEY="value"), `shell` (export KEY='value') or `json` [default: dotenv] [possible values: dotenv, shell, json]
+  -o, --output <OUTPUT>      Write to this file (mode 0600) instead of printing
+  -h, --help                 Print help
+```
+
+## `compost dev stop`
+
+```text
+Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+
+Usage: compost dev stop [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost dev down`
+
+```text
+Remove the app's containers; with --purge also its data and volumes
+
+Usage: compost dev down [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --purge                Also delete the app's data: its databases, buckets and other link data, and the compose project's volumes
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --yes                  Do not ask for confirmation (only --purge asks)
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
 ## `compost connector`
 
 ```text
@@ -4341,7 +4632,7 @@ Set and show preferences, e.g. `deploy.apply`
 Usage: compost config [OPTIONS] <COMMAND>
 
 Commands:
-  set    Set a preference, e.g. `compost config set deploy.apply true`
+  set    Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
   unset  Remove a preference, so the global value (or the default) applies
   show   Show the preferences
   help   Print this message or the help of the given subcommand(s)
@@ -4356,7 +4647,7 @@ Options:
 ## `compost config set`
 
 ```text
-Set a preference, e.g. `compost config set deploy.apply true`
+Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
 
 Usage: compost config set [OPTIONS] <KEY> <VALUE>
 

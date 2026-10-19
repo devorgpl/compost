@@ -29,6 +29,9 @@ struct PostgresConfig {
     root_password: Option<String>,
     /// Superuser of an external server; default `postgres`.
     root_user: Option<String>,
+    /// Publish the server's port on 127.0.0.1 of the machine, e.g. for an app
+    /// run outside Docker.
+    host_port: Option<u16>,
 }
 
 /// `root-connector.yaml` of an external server: how to reach it, and the
@@ -363,6 +366,7 @@ impl DatabaseType for Postgres {
                 container => project_name(KIND, &config.name),
                 network => network.as_str(),
                 host => config.name.as_str(),
+                host_port => postgres.host_port,
             },
         )?;
         let root_connector = render_template(

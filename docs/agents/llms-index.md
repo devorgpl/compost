@@ -18,6 +18,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 
 - [Applications](Applications.md): `compost.yaml`, services, ingress, database, key-value, storage, OIDC, workflow and monitoring links, deploying, inspecting, removing
 - [Servers and shared apps](Servers-and-Shared-Apps.md): defining servers, `compost-server.yaml`, the caddy, postgres, mariadb, mysql, valkey, redis, garage, s3, keycloak, openobserve and temporal types, external databases, locks
+- [Local development](Local-Development.md): `compost dev up` on this machine (adds missing shared apps, reuses existing ones), several projects, `dev up --host` and `dev env` for apps run outside Docker, `dev reset`, `dev stop`, `dev down`
 - [Secrets](Secrets.md): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](Backup-and-Restore.md): app and server backups, targets, formats, restoring, copies, moving to a new server
 - [Notifications](Notifications.md): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image

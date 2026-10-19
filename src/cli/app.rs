@@ -252,7 +252,9 @@ pub fn run(
                 &manager.manager_key,
             )
         }
-        AppCommand::Deploy(args) => deploy(home, &manager.manager_key, &server, args, connect),
+        AppCommand::Deploy(args) => {
+            deploy(home, &manager.manager_key, &server, args, false, connect)
+        }
         AppCommand::State(args) => {
             let selector = selector(&args)?;
             let connector = connector::open(&server, home, connect)?;
@@ -437,7 +439,7 @@ fn selector(args: &InstanceArgs) -> Result<Selector> {
 }
 
 /// App name and prefix from the config files; `prefix` replaces theirs.
-fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, String)> {
+pub(super) fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, String)> {
     let merged = merge::load_merged(files)?;
     let id: InstanceId = serde_yaml_ng::from_value(merged)
         .map_err(|e| config_err(format!("app configuration: {e}")))?;
@@ -448,7 +450,7 @@ fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, Strin
 }
 
 /// The given files, or `compost.yaml` in the current directory.
-fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
+pub(super) fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     if !files.is_empty() {
         return Ok(files.to_vec());
     }
@@ -461,11 +463,13 @@ fn config_files(files: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(vec![default])
 }
 
-fn deploy(
+/// `links_only`: set up the links, but don't start the services (`dev up --host`).
+pub(super) fn deploy(
     home: &CompostHome,
     manager_key: &str,
     server: &ServerEntry,
     args: AppDeployArgs,
+    links_only: bool,
     connect: &ConnectOptions,
 ) -> Result<()> {
     let AppDeployArgs {
@@ -546,6 +550,7 @@ fn deploy(
         purge,
         secrets: overlay.as_ref(),
         pinned: None,
+        links_only,
         backup: backup_profile.map(|profile| deploy::PreDeployBackup {
             server_name: &server.name,
             profile,

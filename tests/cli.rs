@@ -212,6 +212,7 @@ case "$*" in
     echo "send body: $(cat)" >> "$FAKE_DOCKER_LOG" ;;
   "image ls "*) for tag in $FAKE_DOCKER_TAGS; do echo "$tag"; done ;;
   "image rm "*) ;;
+  "run "*" rclone/rclone"*" purge "*) ;;
   "run "*" rclone/rclone"*)
     # rclone with the bucket in $FAKE_S3; checks that credentials come in the env file.
     mount=; envf=
@@ -336,6 +337,22 @@ impl LocalServer {
             .env_remove("COMPOST_SERVER")
             .current_dir(self.env.work.path())
             .args(["-s", "dev"])
+            .args(args);
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+        command.assert()
+    }
+
+    /// Like `run`, without `-s dev`.
+    fn run_bare(&self, args: &[&str], extra_env: &[(&str, &str)]) -> assert_cmd::assert::Assert {
+        let mut command = Command::cargo_bin("compost").unwrap();
+        command
+            .env("COMPOST_HOME", self.env.home.path())
+            .env("PATH", &self.path)
+            .env("FAKE_DOCKER_LOG", self.env.work.path().join("docker.log"))
+            .env_remove("COMPOST_SERVER")
+            .current_dir(self.env.work.path())
             .args(args);
         for (key, value) in extra_env {
             command.env(key, value);
@@ -5062,4 +5079,367 @@ fn agent_skill_keeps_another_skill_named_compost() {
         fs::read_to_string(skill.join("SKILL.md")).unwrap(),
         "---\nname: other\n---\n"
     );
+}
+
+const DEV_APP: &str = "\
+name: shop
+app_services: [{name: backend, service: backend}]
+services:
+  database:
+    - {name: db, type: postgres, version: '>=16', targets: [backend], environment: {DATABASE_URL: db_url}}
+  storage:
+    - {name: files, targets: [backend], environment: {S3_BUCKET: s3_bucket}}
+";
+
+/// The shared apps of `server_with_shared_apps` and `shop`, deployed with `dev up`.
+fn server_with_dev_app() -> LocalServer {
+    let server = server_with_shared_apps();
+    server.write_work_file("compost.yaml", DEV_APP);
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(&["dev", "up"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .success();
+    server.take_docker_log();
+    server
+}
+
+#[test]
+fn dev_up_adds_missing_shared_apps_and_keeps_existing_ones() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_shared_apps();
+    server.write_work_file("compost.yaml", DEV_APP);
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+
+    server
+        .run(&["dev", "up", "--dry-run"], &running)
+        .success()
+        .stdout(contains(
+            "adding storage storage (garage 2) for services.storage[files]",
+        ))
+        .stdout(contains("The app's dry run needs those shared apps"));
+    assert!(
+        !server
+            .read_server_file("compost-server.yaml")
+            .contains("garage")
+    );
+
+    server
+        .run(&["dev", "up"], &running)
+        .success()
+        .stdout(contains(
+            "adding storage storage (garage 2) for services.storage[files]",
+        ))
+        .stdout(contains("database   postgres16       unchanged"))
+        .stdout(contains("storage    storage          updated"))
+        .stdout(contains("Deploying shop-local to dev"))
+        .stdout(contains(
+            "database   db               postgres16: database shop_local_db",
+        ))
+        .stdout(contains(
+            "storage    files            storage: bucket shop-local-files",
+        ));
+    let stored = server.read_server_file("compost-server.yaml");
+    assert!(
+        stored.contains("type: garage") && stored.contains("name: postgres16"),
+        "{stored}"
+    );
+    let log = server.take_docker_log();
+    assert!(
+        !log.contains(
+            "compost-database-postgres16 up -d --quiet-pull --remove-orphans --force-recreate"
+        ),
+        "{log}"
+    );
+    assert!(log.contains("CREATE DATABASE"), "{log}");
+
+    // Nothing missing: the shared apps are left alone.
+    server
+        .run(&["dev", "up"], &running)
+        .success()
+        .stdout(contains("Shared apps on").not())
+        .stdout(contains("shop-local: deployed"));
+
+    // .compost-local.yaml is merged and may set the prefix.
+    server.write_work_file(".compost-local.yaml", "prefix: mine\n");
+    server
+        .run(&["dev", "up"], &running)
+        .success()
+        .stdout(contains("Deploying shop-mine to dev"));
+}
+
+#[test]
+fn dev_up_starts_from_an_empty_machine() {
+    let server = LocalServer::new();
+    server.write_work_file("compost.yaml", DEV_APP);
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(&["dev", "up"], &[("FAKE_DOCKER_RUNNING", "1")])
+        .success()
+        .stdout(contains(
+            "adding database postgres18 (postgres 18) for services.database[db]",
+        ))
+        .stdout(contains("adding storage storage (garage 2)"))
+        .stdout(contains("Initialized"))
+        .stdout(contains(
+            "database   db               postgres18: database shop_local_db",
+        ));
+}
+
+#[test]
+fn dev_commands_only_manage_local_servers() {
+    let server = LocalServer::new();
+    server.write_work_file("compost.yaml", DEV_APP);
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(&["server", "define", "prod1", "--address", "10.0.0.1"], &[])
+        .success();
+    server
+        .run_bare(&["-s", "prod1", "dev", "up"], &[])
+        .code(2)
+        .stderr(contains(
+            "dev commands only manage this machine, and `prod1` (from --server) is an SSH server",
+        ));
+    server
+        .run_bare(&["config", "set", "dev.server", "prod1"], &[])
+        .code(2)
+        .stderr(contains("`prod1` is an SSH server"));
+
+    // The current context is an SSH server: dev uses the local one.
+    server.run_bare(&["connect", "prod1"], &[]).success();
+    server
+        .run_bare(&["dev", "up", "--dry-run"], &[])
+        .success()
+        .stdout(contains("Shared apps on dev (local)"));
+
+    // Several local servers: the dev.server setting chooses.
+    let other = server.env.work.path().join("other-home");
+    server
+        .run(
+            &[
+                "server",
+                "define",
+                "other",
+                "--local",
+                "--server-home",
+                other.to_str().unwrap(),
+            ],
+            &[],
+        )
+        .success();
+    server
+        .run_bare(&["dev", "stop"], &[])
+        .code(2)
+        .stderr(contains("several local servers (dev, other)"));
+    server
+        .run_bare(&["config", "set", "dev.server", "other"], &[])
+        .success()
+        .stdout(contains("dev.server = other"));
+    server
+        .run_bare(&["config", "show"], &[])
+        .success()
+        .stdout(contains("dev.server = other"));
+    server
+        .run_bare(&["dev", "up", "--dry-run"], &[])
+        .success()
+        .stdout(contains("Shared apps on other (local)"));
+}
+
+#[test]
+fn dev_defines_a_local_server_when_there_is_none() {
+    let server = LocalServer::new();
+    let home = server.env.work.path().join("user-home");
+    fs::create_dir(&home).unwrap();
+    server
+        .run(
+            &[
+                "server",
+                "define",
+                "dev",
+                "--address",
+                "10.0.0.1",
+                "--force",
+            ],
+            &[],
+        )
+        .success();
+    server.write_work_file("compost.yaml", DEV_APP);
+    server
+        .run_bare(&["dev", "stop"], &[("HOME", home.to_str().unwrap())])
+        .code(3)
+        .stdout(contains(
+            "Defined server local: this machine, compost's folder ~/.compost-server",
+        ));
+    let servers = fs::read_to_string(server.env.home.path().join("servers.yaml")).unwrap();
+    assert!(servers.contains("name: local"), "{servers}");
+}
+
+#[test]
+fn dev_reset_deletes_data_and_keeps_credentials() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_dev_app();
+    let record = "connectors/database/postgres16/shop-local-db.yaml";
+    let before = server.read_server_file(record);
+
+    server
+        .run(&["dev", "reset"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+    server
+        .run(&["dev", "reset", "--link", "nope", "--yes"], &running)
+        .code(2)
+        .stderr(contains("--link nope: the instance has no such link"));
+    server
+        .run(&["dev", "reset", "--kind", "database", "--yes"], &running)
+        .success()
+        .stdout(contains("database db on postgres16"))
+        .stdout(contains("storage files").not())
+        .stdout(contains("Passwords and keys stay the same."))
+        .stdout(contains("shop-local: deployed"));
+    let log = server.take_docker_log();
+    let position = |needle: &str| {
+        log.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not in\n{log}"))
+    };
+    assert!(
+        position("compose -p shop-local") < position("DROP DATABASE IF EXISTS \"shop_local_db\"")
+            && position("DROP DATABASE") < position("CREATE DATABASE"),
+        "{log}"
+    );
+    assert!(log.contains(" stop\n"), "{log}");
+    assert_eq!(server.read_server_file(record), before);
+}
+
+#[test]
+fn dev_stop_and_down() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_dev_app();
+
+    server
+        .run(&["dev", "stop"], &running)
+        .success()
+        .stdout(contains("Stopped shop-local; its data is kept."));
+    assert!(server.take_docker_log().contains("compose -p shop-local"));
+    server
+        .run(&["app", "list"], &running)
+        .success()
+        .stdout(contains("shop-local  stopped"));
+
+    // Without --purge, the data stays and nothing is asked.
+    server
+        .run(&["dev", "down"], &running)
+        .success()
+        .stdout(contains("Removed shop-local."));
+    let log = server.take_docker_log();
+    assert!(
+        !log.contains("DROP") && !log.contains("down --remove-orphans -v"),
+        "{log}"
+    );
+
+    server.run(&["dev", "up"], &running).success();
+    server
+        .run(&["dev", "down", "--purge"], &running)
+        .code(2)
+        .stderr(contains("add --yes"));
+    server
+        .run(&["dev", "down", "--purge", "--yes"], &running)
+        .success()
+        .stdout(contains(
+            "link database db to postgres16, and delete its data",
+        ))
+        .stdout(contains(
+            "link storage files to storage, and delete its data",
+        ));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("DROP DATABASE IF EXISTS \"shop_local_db\""),
+        "{log}"
+    );
+    assert!(log.contains("down --remove-orphans -v"), "{log}");
+}
+
+#[test]
+fn dev_up_host_sets_up_links_for_an_app_outside_docker() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_shared_apps();
+    server.write_work_file(
+        "compost.yaml",
+        &format!(
+            "{DEV_APP}  ingress:\n    - {{name: site, domains: [shop.localhost], routes: [{{name: app, target: backend, port: 8080}}]}}\n"
+        ),
+    );
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+
+    server
+        .run(&["dev", "env"], &running)
+        .code(3)
+        .stderr(contains("run `compost dev up --host` first"));
+
+    server
+        .run(&["dev", "up", "--host"], &running)
+        .success()
+        .stdout(contains("publishing database postgres16 on 127.0.0.1:"))
+        .stdout(contains("; recreates its container, data is kept"))
+        .stdout(contains("publishing storage storage on 127.0.0.1:"))
+        .stdout(contains(
+            "services.ingress[site]: skipped (the app runs outside Docker)",
+        ))
+        .stdout(contains("links of shop-local are ready"))
+        .stdout(contains("compost dev env -o .env"));
+    let compose = server.read_server_file("shared/database/postgres16/compose.yaml");
+    assert!(compose.contains("ports: [\"127.0.0.1:"), "{compose}");
+    let log = server.take_docker_log();
+    assert!(log.contains("CREATE DATABASE"), "{log}");
+    assert!(log.contains("compost.override.yaml stop"), "{log}");
+    assert!(!log.contains("compost.override.yaml up"), "{log}");
+    server
+        .run(&["app", "list"], &running)
+        .success()
+        .stdout(contains("shop-local  provisioned"));
+
+    let stdout = server
+        .run(&["dev", "env"], &running)
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let env = String::from_utf8(stdout).unwrap();
+    assert!(
+        env.contains("DATABASE_URL=postgres://shop_local_db:"),
+        "{env}"
+    );
+    assert!(env.contains("@127.0.0.1:"), "{env}");
+    assert!(env.contains("S3_BUCKET=shop-local-files\n"), "{env}");
+    server
+        .run(
+            &["dev", "env", "--format", "shell", "--service", "backend"],
+            &running,
+        )
+        .success()
+        .stdout(contains("export S3_BUCKET="));
+    server
+        .run(&["dev", "env", "--format", "json"], &running)
+        .success()
+        .stdout(contains("\"S3_BUCKET\": \"shop-local-files\""));
+    server
+        .run(&["dev", "env", "-o", ".env"], &running)
+        .success()
+        .stdout(contains("Wrote .env"));
+    let file = server.env.work.path().join(".env");
+    assert_eq!(fs::read_to_string(&file).unwrap(), env);
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // A second run changes no shared app, and reset keeps the host mode.
+    server
+        .run(&["dev", "up", "--host"], &running)
+        .success()
+        .stdout(contains("Shared apps on").not());
+    server
+        .run(&["dev", "reset", "--yes"], &running)
+        .success()
+        .stdout(contains("links of shop-local are ready"));
 }

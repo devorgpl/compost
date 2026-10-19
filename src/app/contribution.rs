@@ -12,6 +12,8 @@ use crate::config::app::ComposeFile;
 pub struct Contribution {
     services: BTreeMap<String, ServiceChanges>,
     external_networks: BTreeSet<String>,
+    /// Values are for processes on the server's machine outside Docker.
+    for_host: bool,
 }
 
 #[derive(Debug, Default)]
@@ -24,6 +26,27 @@ struct ServiceChanges {
 }
 
 impl Contribution {
+    /// Collects the values a process on the server's machine, outside Docker,
+    /// uses: shared apps on their `host_port` instead of their Docker names.
+    pub fn for_host() -> Self {
+        Self {
+            for_host: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_for_host(&self) -> bool {
+        self.for_host
+    }
+
+    /// The variables of each compose service.
+    pub fn environment(&self) -> BTreeMap<&str, &BTreeMap<String, String>> {
+        self.services
+            .iter()
+            .map(|(name, changes)| (name.as_str(), &changes.environment))
+            .collect()
+    }
+
     /// Attach a compose service to an external network, optionally with an alias.
     pub fn join_network(&mut self, service: &str, network: &str, alias: Option<String>) {
         self.external_networks.insert(network.to_string());

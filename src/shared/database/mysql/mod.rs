@@ -142,6 +142,9 @@ struct MySqlConfig {
     root_password: Option<String>,
     /// Administrator of an external server; default `root`.
     root_user: Option<String>,
+    /// Publish the server's port on 127.0.0.1 of the machine, e.g. for an app
+    /// run outside Docker.
+    host_port: Option<u16>,
 }
 
 /// `root-connector.yaml` of an external server: how to reach it, and the
@@ -494,6 +497,7 @@ impl DatabaseType for MySql {
                 host => config.name.as_str(),
                 env_file => self.flavor.env_file(),
                 healthcheck => self.flavor.healthcheck(),
+                host_port => mysql.host_port,
             },
         )?;
         let root_connector = render_template(

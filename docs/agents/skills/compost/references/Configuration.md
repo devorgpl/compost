@@ -27,7 +27,7 @@ services:
       domains: [staging.example.com]
 ```
 
-Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`. Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
+Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`; `dev` commands load `compost.yaml` and `.compost-local.yaml` (if present). Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
 
 ## compost.yaml
 
@@ -181,7 +181,7 @@ Details and examples: [Applications](Applications.md).
 
 ## Overlays
 
-Same schema as `compost.yaml`, plus `prefix` (default `main`). Typically:
+Same schema as `compost.yaml`, plus `prefix` (default `main`; `local` for [`dev` commands](Local-Development.md#starting-an-app-dev-up)). Typically:
 
 ```yaml
 prefix: staging
@@ -256,6 +256,8 @@ Keys every shared app has:
 | `external` | – | A server compost doesn't run; databases only |
 | `monitoring` | – | Send its output and metrics to a monitoring app: `instance`, `logs` (default `true`), `metrics` (default `true`). See [Monitoring shared apps](Servers-and-Shared-Apps.md#monitoring-shared-apps) |
 
+`configuration.host_port` (postgres, mariadb, mysql, valkey, redis, garage) also publishes the shared app on 127.0.0.1 of the server, e.g. for an app run outside Docker ([Local development](Local-Development.md#running-the-app-outside-docker)). Each port is used by one shared app at most; external shared apps can't have one.
+
 ## servers.yaml
 
 Written by `server define`; you rarely edit it.
@@ -282,12 +284,14 @@ servers:
 ```sh
 compost config set deploy.apply true [--for-server prod]
 compost config unset deploy.apply [--for-server prod]
+compost config set dev.server laptop
 compost config show
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
 | `deploy.apply` | `false` | `server deploy` and `app deploy` start services without `--apply` |
+| `dev.server` | – | The local server `dev` commands use; global only. See [Local development](Local-Development.md#which-machine) |
 
 `--apply`/`--no-apply` win over the server's value, which wins over the global one in `~/.compost/config.yaml`.
 
@@ -296,6 +300,6 @@ compost config show
 | Variable | Meaning |
 |---|---|
 | `COMPOST_HOME` | compost's local folder, default `~/.compost` |
-| `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context) |
+| `COMPOST_SERVER` | Target server, when `-s` isn't given (wins over the context); for `dev` commands it must be a local server |
 | `COMPOST_SSH_KEY_FILE` | SSH private key, when `--ssh-key-file` isn't given (wins over the server's `identity_file`) |
 | `COMPOST_SERVER_BINARY` | compost binary that deploys install on the server for [scheduled backups](Backup-and-Restore.md#scheduled-backups), instead of this one or a download |

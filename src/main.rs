@@ -22,6 +22,7 @@ mod backup;
 mod cli;
 mod config;
 mod connector;
+mod dev;
 mod error;
 mod interrupt;
 mod notify;

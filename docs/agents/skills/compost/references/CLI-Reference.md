@@ -19,6 +19,7 @@ Commands:
   connect     Use <NAME> as the default server for following commands
   disconnect  Forget the default server
   app         Deploy and inspect user applications
+  dev         Run an app with the shared apps it needs on this machine, for development
   connector   Inspect links between applications and shared apps
   backup      Run backup profiles, list and prune backups
   notify      Send notifications through the server's communication apps
@@ -662,6 +663,125 @@ Options:
   -h, --help                 Print help
 ```
 
+## `compost dev`
+
+```text
+Run an app with the shared apps it needs on this machine, for development
+
+Usage: compost dev [OPTIONS] <COMMAND>
+
+Commands:
+  up     Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+  reset  Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+  env    Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  stop   Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+  down   Remove the app's containers; with --purge also its data and volumes
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost dev up`
+
+```text
+Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
+
+Usage: compost dev up [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --host                 Run the app outside Docker, e.g. from an IDE: set up its links only, stop its containers, and publish the shared apps it uses on 127.0.0.1 (see `dev env`)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --dry-run              Show what would change, without changing anything
+      --pull                 Pull images again, and build on newer base images
+      --recreate             Recreate every container of the app, even unchanged ones; data in volumes is kept
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev reset`
+
+```text
+Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
+
+Usage: compost dev reset [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --kind <KIND>          Only links of these kinds, e.g. `--kind database` (default: all that hold data)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --link <LINK>          Only this link: `<entry>` or `<kind>:<entry>` (repeatable)
+      --new-credentials      Generate new passwords and keys instead of keeping them
+      --yes                  Do not ask for confirmation
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
+## `compost dev env`
+
+```text
+Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+
+Usage: compost dev env [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --service <SERVICE>    Only the variables of this service (an `app_services` name or a compose service; default: all, which must not set a variable differently)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --format <FORMAT>      `dotenv` (KEY="value"), `shell` (export KEY='value') or `json` [default: dotenv] [possible values: dotenv, shell, json]
+  -o, --output <OUTPUT>      Write to this file (mode 0600) instead of printing
+  -h, --help                 Print help
+```
+
+## `compost dev stop`
+
+```text
+Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
+
+Usage: compost dev stop [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost dev down`
+
+```text
+Remove the app's containers; with --purge also its data and volumes
+
+Usage: compost dev down [OPTIONS]
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --purge                Also delete the app's data: its databases, buckets and other link data, and the compose project's volumes
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+      --yes                  Do not ask for confirmation (only --purge asks)
+      --force-unlock         Remove a lock left behind by an interrupted compost command
+  -h, --help                 Print help
+```
+
 ## `compost connector`
 
 ```text
@@ -878,7 +998,7 @@ Set and show preferences, e.g. `deploy.apply`
 Usage: compost config [OPTIONS] <COMMAND>
 
 Commands:
-  set    Set a preference, e.g. `compost config set deploy.apply true`
+  set    Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
   unset  Remove a preference, so the global value (or the default) applies
   show   Show the preferences
   help   Print this message or the help of the given subcommand(s)
@@ -893,7 +1013,7 @@ Options:
 ## `compost config set`
 
 ```text
-Set a preference, e.g. `compost config set deploy.apply true`
+Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
 
 Usage: compost config set [OPTIONS] <KEY> <VALUE>
 

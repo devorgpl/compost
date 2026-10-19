@@ -49,6 +49,22 @@ pub struct ServerEntry {
 pub struct Settings {
     #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
     pub deploy: DeploySettings,
+    #[serde(default, skip_serializing_if = "DevSettings::is_empty")]
+    pub dev: DevSettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevSettings {
+    /// The local server `compost dev` uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
+}
+
+impl DevSettings {
+    pub fn is_empty(&self) -> bool {
+        self.server.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

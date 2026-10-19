@@ -4,6 +4,10 @@ services:
     image: {{ image }}
     container_name: {{ container }}
     restart: unless-stopped
+{%- if host_port %}
+    # Also on this machine's loopback address, for processes outside Docker.
+    ports: ["127.0.0.1:{{ host_port }}:3900"]
+{%- endif %}
     # As the server user, so that compost can back up and remove its files.
     user: "{{ user }}"
     volumes:

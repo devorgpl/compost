@@ -271,6 +271,7 @@ fn restore_deployment(
         purge: Vec::new(),
         secrets: None,
         pinned: None,
+        links_only: false,
         backup: None,
     };
     deploy::deploy(

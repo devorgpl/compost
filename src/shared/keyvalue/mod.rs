@@ -17,7 +17,7 @@ use serde_yaml_ng::Value;
 use super::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
     RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, app_service, connectors_dir,
-    generate_password, is_variable_name, parse_link, project_name, render_template,
+    generate_password, host_address, is_variable_name, parse_link, project_name, render_template,
     resolve_versioned, service_name, shared_dir,
 };
 use crate::config::app::AppConfig;
@@ -102,6 +102,9 @@ struct KeyValueConfig {
     max_memory: Option<String>,
     /// `maxmemory-policy`, e.g. `allkeys-lru` for a cache. Default `noeviction`.
     eviction: Option<String>,
+    /// Publish the server's port on 127.0.0.1 of the machine, e.g. for an app
+    /// run outside Docker.
+    host_port: Option<u16>,
 }
 
 const EVICTION: [&str; 8] = [
@@ -466,6 +469,7 @@ impl Kind for KeyValueKind {
                 server => flavor.server(),
                 cli => flavor.cli(),
                 config_hash => &sha256_hex(&format!("{conf}\0{password}"))[..12],
+                host_port => kv.host_port,
             },
         )?;
         let acl = acl_file(flavor, &password, &read_records(ctx, &config.name)?)?;
@@ -577,11 +581,15 @@ impl Kind for KeyValueKind {
                 },
             },
         };
-        let host = ctx.shared.name.clone();
+        let (host, port) = if out.is_for_host() {
+            host_address(ctx.shared)?
+        } else {
+            (ctx.shared.name.clone(), PORT)
+        };
         let db = record.db.unwrap_or(0);
         let values: BTreeMap<&str, String> = BTreeMap::from([
             ("kv_host", host.clone()),
-            ("kv_port", PORT.to_string()),
+            ("kv_port", port.to_string()),
             ("kv_user", record.user.clone()),
             ("kv_password", record.password.clone()),
             ("kv_db", db.to_string()),
@@ -589,7 +597,7 @@ impl Kind for KeyValueKind {
             (
                 "kv_url",
                 format!(
-                    "redis://{}:{}@{host}:{PORT}/{db}",
+                    "redis://{}:{}@{host}:{port}/{db}",
                     record.user, record.password
                 ),
             ),

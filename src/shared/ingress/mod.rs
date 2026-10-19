@@ -209,6 +209,10 @@ impl Kind for IngressKind {
         base::describe_link(ctx, entry)
     }
 
+    fn needs_app_containers(&self) -> bool {
+        true
+    }
+
     /// Routing has no data to purge; `--purge ingress` is rejected before this runs.
     fn remove_application(&self, ctx: &AppCtx, entry: &str, _purge: bool) -> Result<()> {
         find_type(&ctx.shared.type_name)?.remove_application(ctx, entry)

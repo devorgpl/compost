@@ -52,6 +52,29 @@ compost app remove --app sampleapp --prefix local --purge database --yes
 
 The shared apps keep running. Stop them with `docker compose -p compost-ingress-caddy-main down`, `docker compose -p compost-database-postgres18 down` and `docker compose -p compost-oidc-keycloak down` and `docker compose -p compost-monitoring-monitoring down`. Their files are in `~/.compost-server/shared/`.
 
+## With `compost dev`
+
+[`compost dev`](../docs/wiki/Local-Development.md) does the above in one command per app: it adds the shared apps an app needs (here Caddy and Postgres, if this machine has none) and deploys it.
+
+```sh
+cd samples/sampleapp
+cp .compost-local.example.yaml .compost-local.yaml
+compost dev up
+curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits   # {"hits": 1, "mode": "local"}
+
+compost dev reset --yes        # an empty database with the same password: hits start at 1 again
+compost dev down --purge --yes # remove it with its database and volumes
+```
+
+To run the backend yourself instead (with Python and `psycopg`), set up only its database and publish Postgres on 127.0.0.1:
+
+```sh
+compost dev up --host
+compost dev env --service backend --format shell   # export DATABASE_URL='postgres://…@127.0.0.1:15432/…'
+eval "$(compost dev env --service backend --format shell)"
+python backend/migrate.py
+```
+
 ## Logs and metrics
 
 The server samples include OpenObserve (`shared.monitoring`). Caddy, Postgres and Keycloak send their output to it (`monitoring: {}`), and Caddy its access log and metrics. The sample app's `telemetry` link sends the output of `web`, `backend` and `migrate`; it is `optional`, so the app deploys on servers without monitoring too.

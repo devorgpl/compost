@@ -61,6 +61,18 @@ compost app state myapp-staging
 
 Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stores the overlay on the server, so later deploys from any machine or CI need only `compost.yaml` and the prefix (`compost app deploy --apply --prefix staging`), and a new `--secret` replaces the stored copy as a whole. `-f compost.yaml,.compost-local.yaml` (nothing stored, every deploy needs the file) is for instances on this machine and throwaway copies.
 
+**Local development** ([Local development](references/Local-Development.md)), in the app's folder:
+
+```sh
+compost dev up --dry-run      # shared apps it would add to this machine
+compost dev up                # adds missing shared apps, reuses existing ones, deploys the app with --apply
+compost dev up --host         # or: links only, shared apps published on 127.0.0.1, for running the app outside Docker
+compost dev env -o .env       # its variables with 127.0.0.1 addresses (passwords: keep .env out of git and add it to .compostignore)
+compost dev stop              # pause; `dev up` resumes
+```
+
+`dev` commands only use a local server (`-s`/`COMPOST_SERVER` must name one, else the `dev.server` preference, else the only local server, else they define `local`), never the SSH context, and load `compost.yaml` plus `.compost-local.yaml` with prefix `local` by default. `dev up` applies without asking, but only to this machine. `dev reset` (drops the app's databases, buckets, realms and namespaces, then recreates them empty) and `dev down --purge` delete data: ask first and never add `--yes` on your own.
+
 **Roll back a bad deploy:** `compost app releases <instance>` lists the releases; `compost app rollback <instance> --dry-run` shows what the release before the current one changes (images, links), then `compost app rollback <instance>` (or `--to <n>`) deploys it again with the images it ran. It restarts the instance's services and doesn't roll back databases or volumes, so ask first.
 
 **Update images or recreate containers:** add `--pull` (pull images again, even with unchanged tags; rebuild the images compost builds: on the server with `build: true`, or on this machine with `build: local`) or `--recreate` (recreate every container; volumes are kept) to `server deploy --apply` or `app deploy --apply`. Shared apps are never pulled without `--pull` unless `version` or `image` changes; recreating them restarts what every app uses.
@@ -94,6 +106,7 @@ Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stor
 | A new server, end to end | [Production setup](references/Production-Setup.md) |
 | A ready-made setup (static site, API with DB, Keycloak login, Temporal, OpenObserve, RDS, apps you don't own) | [Examples](references/Examples.md) |
 | `compost.yaml`, links (ingress, database, oidc, workflow, monitoring), deploy, remove | [Applications](references/Applications.md) |
+| Run apps on this machine for development, `dev` commands | [Local development](references/Local-Development.md) |
 | `compost-server.yaml`, shared app types, TLS, external databases, locks | [Servers and shared apps](references/Servers-and-Shared-Apps.md) |
 | Every config key, merge rules, preferences, environment variables | [Configuration](references/Configuration.md) |
 | Passwords and overlays | [Secrets](references/Secrets.md) |

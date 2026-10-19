@@ -1,3 +1,5 @@
 # Not uploaded to the server (gitignore syntax). .git and .compost-*.yaml are
 # always left out.
 __pycache__/
+# Variables from `compost dev env -o .env`.
+.env

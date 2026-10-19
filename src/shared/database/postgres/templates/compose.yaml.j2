@@ -4,6 +4,10 @@ services:
     image: {{ image }}
     container_name: {{ container }}
     restart: unless-stopped
+{%- if host_port %}
+    # Also on this machine's loopback address, for processes outside Docker.
+    ports: ["127.0.0.1:{{ host_port }}:5432"]
+{%- endif %}
     # Read by docker compose (as the deploy user), so the file can stay 0600.
     env_file: [./secrets/postgres.env]
     environment:

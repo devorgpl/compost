@@ -341,6 +341,19 @@ impl ServerConfig {
         config.complete()
     }
 
+    /// This config (e.g. the effective one stored on a server, without
+    /// secrets) with `stored` merged over it, as `load_with` merges it.
+    pub fn with_stored(&self, stored: Option<Value>) -> Result<Self> {
+        let mut merged = serde_yaml_ng::to_value(self)?;
+        if let Some(mut stored) = stored {
+            without_unknown_apps(&mut stored, &merged);
+            merge::merge(&mut merged, stored);
+        }
+        let config: ServerConfig = serde_yaml_ng::from_value(merged)
+            .map_err(|e| config_err(format!("server configuration: {e}")))?;
+        config.complete()
+    }
+
     /// Fill in defaults, then validate: the effective configuration (spec §7).
     fn complete(mut self) -> Result<Self> {
         for (kind_name, apps) in &mut self.shared {
@@ -523,6 +536,29 @@ impl ServerConfig {
             }
             kind.validate_instances(apps)
                 .map_err(|e| config_err(format!("shared.{kind_name}: {e:#}")))?;
+        }
+        // `host_port`: the types that have it parse it; core keeps them apart.
+        let mut host_ports: BTreeMap<u64, String> = BTreeMap::new();
+        for (kind_name, app) in self.shared_apps() {
+            let Some(port) = app.configuration.get("host_port") else {
+                continue;
+            };
+            let path = format!("shared.{kind_name}[{}]", app.name);
+            if app.is_external() {
+                return Err(config_err(format!(
+                    "{path}: host_port is not supported with `external`: compost does not run it"
+                )));
+            }
+            let Some(port) = port.as_u64().filter(|p| (1..=65535).contains(p)) else {
+                return Err(config_err(format!(
+                    "{path}: host_port must be a port number"
+                )));
+            };
+            if let Some(other) = host_ports.insert(port, path.clone()) {
+                return Err(config_err(format!(
+                    "{path}: host_port {port} is also the host_port of {other}"
+                )));
+            }
         }
         // Links between shared apps, once every shared app is valid on its own.
         for (kind_name, app) in self.shared_apps() {

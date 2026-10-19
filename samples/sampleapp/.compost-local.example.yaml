@@ -2,7 +2,7 @@
 # the database password), so it also works as is. Copy to .compost-local.yaml
 # and deploy with:
 #
-#   compost app deploy --apply -f compost.yaml,.compost-local.yaml
+#   compost dev up       # or: compost app deploy --apply -f compost.yaml,.compost-local.yaml
 #   curl -H 'Host: sampleapp.localhost' http://localhost:18080/api/hits
 prefix: local
 

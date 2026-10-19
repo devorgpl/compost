@@ -11,6 +11,7 @@ Start
 Use
 - [Applications](Applications.md)
 - [Servers and shared apps](Servers-and-Shared-Apps.md)
+- [Local development](Local-Development.md)
 - [Secrets](Secrets.md)
 - [Backup and restore](Backup-and-Restore.md)
 - [Notifications](Notifications.md)

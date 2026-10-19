@@ -16,6 +16,7 @@ compost app deploy --apply --secret .compost-staging.yaml   # your app, with a d
 - **Logins:** an app can get a Keycloak realm, client and test users, with the OIDC settings passed to its services.
 - **Monitoring:** the output and metrics of apps and shared services go to OpenObserve, and services get the variables to send OpenTelemetry traces.
 - **Instances:** the same app runs as `staging`, `prod` or a review copy, each with its own domains and data.
+- **Local development:** `compost dev up` runs an app with the shared apps it needs on your machine, next to your other projects, or only its databases and storage for running it from your IDE. See [Local development](Local-Development.md).
 - **Secrets:** passwords live in files you don't commit, or are stored on the server; generated ones are kept between deploys.
 - **Backup and restore:** apps and shared services, to this machine or to a folder on the server, also to make copies or move to a new server.
 - **Gradual migration:** Caddy serves existing containers, apps link to existing or hosted databases (e.g. AWS RDS), and `compost.yaml` can live apart from apps you don't own. See [Migrating to compost](Migration.md).
@@ -42,7 +43,8 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Installation](Installation.md) | [Applications](Applications.md) | [Configuration](Configuration.md) |
 | [Quick start](Quick-Start.md) | [Servers and shared apps](Servers-and-Shared-Apps.md) | [Files and folders](Files-and-Folders.md) |
 | [Production setup](Production-Setup.md) | [Secrets](Secrets.md) | [CLI reference](CLI-Reference.md) |
-| [Examples](Examples.md) | [Backup and restore](Backup-and-Restore.md) | |
+| [Examples](Examples.md) | [Local development](Local-Development.md) | |
+| | [Backup and restore](Backup-and-Restore.md) | |
 | [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
 | [Facts and limits](Facts.md) | | |
 

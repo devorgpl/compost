@@ -15,8 +15,8 @@ use serde_yaml_ng::Value;
 use super::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
     RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, SharedLinks, app_service,
-    connectors_dir, is_variable_name, parse_link, parse_url, project_name, render_template,
-    service_name, shared_dir,
+    connectors_dir, host_address, is_variable_name, parse_link, parse_url, project_name,
+    render_template, service_name, shared_dir,
 };
 use crate::backup::remote::RCLONE_IMAGE;
 use crate::config::app::AppConfig;
@@ -50,6 +50,9 @@ struct GarageConfig {
     /// Weight of the node in Garage's layout (not a quota), e.g. `100G`.
     capacity: Option<String>,
     region: Option<String>,
+    /// Publish the S3 API on 127.0.0.1 of the machine, e.g. for an app
+    /// run outside Docker.
+    host_port: Option<u16>,
 }
 
 /// `external` of an `s3` storage app.
@@ -434,6 +437,7 @@ impl Kind for StorageKind {
                 network => network.as_str(),
                 host => config.name.as_str(),
                 user => user.trim(),
+                host_port => garage_config.host_port,
             },
         )?;
         let toml = render_template(
@@ -824,8 +828,14 @@ fn set_variables(
     out: &mut Contribution,
 ) -> Result<()> {
     let endpoints = endpoints(ctx.shared)?;
+    let internal = if out.is_for_host() && !ctx.shared.is_external() {
+        let (host, port) = host_address(ctx.shared)?;
+        format!("http://{host}:{port}")
+    } else {
+        endpoints.internal
+    };
     let values: BTreeMap<&str, String> = BTreeMap::from([
-        ("s3_endpoint", endpoints.internal),
+        ("s3_endpoint", internal),
         ("s3_public_endpoint", endpoints.public),
         ("s3_region", endpoints.region),
         ("s3_bucket", record.bucket.clone()),

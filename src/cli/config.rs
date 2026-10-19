@@ -3,14 +3,18 @@
 use anyhow::Result;
 use clap::Subcommand;
 
+use crate::config::check_name;
 use crate::config::local::{CompostHome, DeploySettings};
 use crate::error::config_err;
 
-const KEYS: &[&str] = &["deploy.apply"];
+const DEPLOY_APPLY: &str = "deploy.apply";
+const DEV_SERVER: &str = "dev.server";
+const KEYS: &[&str] = &[DEPLOY_APPLY, DEV_SERVER];
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// Set a preference, e.g. `compost config set deploy.apply true`
+    /// Set a preference, e.g. `compost config set deploy.apply true` or
+    /// `compost config set dev.server laptop`
     Set {
         key: String,
         value: String,
@@ -35,13 +39,56 @@ pub fn run(home: &CompostHome, command: ConfigCommand) -> Result<()> {
             key,
             value,
             for_server,
+        } if key == DEV_SERVER => update_dev_server(home, for_server.as_deref(), Some(value)),
+        ConfigCommand::Set {
+            key,
+            value,
+            for_server,
         } => {
             let value = parse_bool(&key, &value)?;
             update(home, &key, for_server.as_deref(), Some(value))
         }
+        ConfigCommand::Unset { key, for_server } if key == DEV_SERVER => {
+            update_dev_server(home, for_server.as_deref(), None)
+        }
         ConfigCommand::Unset { key, for_server } => update(home, &key, for_server.as_deref(), None),
         ConfigCommand::Show => show(home),
     }
+}
+
+/// Set (`Some`) or remove (`None`) `dev.server`: a global setting naming a
+/// local server.
+fn update_dev_server(
+    home: &CompostHome,
+    server: Option<&str>,
+    value: Option<String>,
+) -> Result<()> {
+    if server.is_some() {
+        return Err(config_err(format!(
+            "{DEV_SERVER} is global; leave out --for-server"
+        )));
+    }
+    home.require_manager()?;
+    if let Some(name) = &value {
+        check_name("server name", name)?;
+        let entry = home.find_server(name)?;
+        if !matches!(
+            entry.connector,
+            crate::config::local::ConnectorConfig::Local
+        ) {
+            return Err(config_err(format!(
+                "{DEV_SERVER}: `{name}` is an SSH server; dev commands only manage local servers"
+            )));
+        }
+    }
+    let mut settings = home.settings()?;
+    settings.dev.server.clone_from(&value);
+    home.save_settings(&settings)?;
+    match value {
+        Some(name) => out!("{DEV_SERVER} = {name}"),
+        None => out!("{DEV_SERVER} unset"),
+    }
+    Ok(())
 }
 
 fn check_key(key: &str) -> Result<()> {
@@ -109,6 +156,10 @@ fn show(home: &CompostHome) -> Result<()> {
             );
         }
     }
+    out!(
+        "{DEV_SERVER} = {}",
+        settings.dev.server.as_deref().unwrap_or("- (default)")
+    );
     Ok(())
 }
 

@@ -197,6 +197,30 @@ services:
 
 Each instance gets its own bucket (`photos-prod-uploads`, `photos-staging-uploads`) and key. `app backup` includes the bucket's objects. Set the S3 client to path-style addressing.
 
+## A developer's machine
+
+Two projects on one laptop, one with Postgres and S3 storage, the other with Postgres and Valkey. [`compost dev`](Local-Development.md) runs one Postgres for both, with a database each:
+
+```yaml
+# shop/compost.yaml
+name: shop
+app_services: [{name: api, service: api}]
+services:
+  database:
+    - {name: db, type: postgres, version: ">=16", targets: [api], environment: {DATABASE_URL: db_url}}
+  storage:
+    - {name: files, targets: [api], environment: {S3_ENDPOINT: s3_endpoint, S3_BUCKET: s3_bucket, S3_KEY: s3_access_key_id, S3_SECRET: s3_secret_access_key}}
+```
+
+```sh
+cd shop && compost dev up --host      # adds postgres18 and garage, publishes them on 127.0.0.1
+compost dev env -o .env               # DATABASE_URL=postgres://shop_local_db:…@127.0.0.1:15432/shop_local_db, S3_…
+npm run dev                           # your app, with .env
+
+cd ../blog && compost dev up          # reuses postgres18, adds valkey, runs blog in Docker
+cd ../shop && compost dev reset --kind database --yes   # an empty shop database; blog's is untouched
+```
+
 ## Staging and production from one repository
 
 Each overlay is an instance. They share `compost.yaml` and the server's shared apps, with separate domains, databases and containers.

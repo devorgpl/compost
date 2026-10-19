@@ -4,6 +4,7 @@ mod agent;
 mod app;
 mod config;
 mod context;
+mod dev;
 mod generate;
 mod init;
 mod secret;
@@ -57,6 +58,9 @@ pub enum Command {
     /// Deploy and inspect user applications
     #[command(subcommand)]
     App(app::AppCommand),
+    /// Run an app with the shared apps it needs on this machine, for development
+    #[command(subcommand)]
+    Dev(dev::DevCommand),
     /// Inspect links between applications and shared apps
     #[command(subcommand)]
     Connector(ConnectorCommand),
@@ -302,6 +306,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, &connect),
+        Command::Dev(command) => dev::run(&home, server, command, &connect),
         Command::Connector(ConnectorCommand::List) => {
             server::connector_list(&home, server, &connect)
         }

@@ -1,5 +1,6 @@
 //! `compost app deploy` (spec §10.8).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -50,6 +51,10 @@ pub struct Options<'a> {
     pub pinned: Option<&'a Release>,
     /// Back up the deployed instance before changing it (`deployment.backup`).
     pub backup: Option<PreDeployBackup<'a>>,
+    /// Set up the links, but stop the services instead of starting them: they
+    /// run outside compost (`dev up --host`). Links that need the app's
+    /// containers are skipped.
+    pub links_only: bool,
 }
 
 /// A backup that `--apply` takes before it changes a deployed instance.
@@ -152,7 +157,11 @@ pub fn deploy(
             .clone()
             .context("server home was not resolved")?,
     };
-    let links = resolve_links(&ctx, loaded, &report, &StateFile::load(&ctx)?)?;
+    let state_file = StateFile::load(&ctx)?;
+    let (links, skipped) = resolve_links(&ctx, loaded, &report, &state_file, options.links_only)?;
+    for line in skipped {
+        out!("  {line}");
+    }
     let pinned_links: Vec<PinnedLink> = links.iter().map(Link::pinned).collect();
     let dropped = dropped_links(&ctx, app, &pinned_links)?;
     let files = sources::collect(loaded, config_files)?;
@@ -187,7 +196,12 @@ pub fn deploy(
     // A local build fails before anything on the server changes. A rollback
     // or restore builds only when its images are missing.
     let built = match app.deployment.build {
-        Build::Local if options.apply && options.pinned.is_none() && options.restore.is_none() => {
+        Build::Local
+            if options.apply
+                && !options.links_only
+                && options.pinned.is_none()
+                && options.restore.is_none() =>
+        {
             Some(local_build::build(&ctx, loaded, options.pull)?)
         }
         _ => None,
@@ -272,14 +286,19 @@ pub fn deploy(
             if kept.len() != dropped.links.len() {
                 write_pinned(&kept)?;
             }
-            // The services run; a release that cannot be recorded does not undo that.
-            let rollback_of = options.pinned.map(|release| release.number);
-            match release::record(&ctx, app, rollback_of) {
-                Ok(Some(number)) => out!("  recorded release {number}"),
-                Ok(None) => {}
-                Err(err) => eprintln!("warning: could not record a release: {err:#}"),
-            }
-            state_file.set_app(&app.name, &app.prefix, DeployStatus::Deployed);
+            let status = if options.links_only {
+                DeployStatus::Provisioned
+            } else {
+                // The services run; a release that cannot be recorded does not undo that.
+                let rollback_of = options.pinned.map(|release| release.number);
+                match release::record(&ctx, app, rollback_of) {
+                    Ok(Some(number)) => out!("  recorded release {number}"),
+                    Ok(None) => {}
+                    Err(err) => eprintln!("warning: could not record a release: {err:#}"),
+                }
+                DeployStatus::Deployed
+            };
+            state_file.set_app(&app.name, &app.prefix, status);
             state_file.save(&ctx)?;
             out!();
             super::state::print(
@@ -303,9 +322,73 @@ pub fn deploy(
 /// Run the links' render hooks, which write link records, and return the
 /// compose override with the variables and networks they add.
 fn render_override(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Result<String> {
+    let mut contribution = Contribution::default();
+    contribute(ctx, loaded, links, &mut contribution)?;
+    contribution.override_yaml(&loaded.compose)
+}
+
+/// The variables of each compose service of a deployed instance, as a
+/// process on the server's machine sees them outside Docker (`dev env`).
+/// Changes nothing on the server.
+pub fn host_env(
+    connector: &dyn Connector,
+    server_home: &str,
+    manager_key: &str,
+    loaded: &LoadedApp,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let app = &loaded.config;
+    let ctx = super::state::initialized_server(connector, server_home, manager_key)?;
+    let report = state::check(connector, server_home, manager_key)?;
+    let state_file = StateFile::load(&ctx)?;
+    let not_set_up = || {
+        not_ready(&format!(
+            "{} is not set up with its current links; run `compost dev up --host` first",
+            app.instance()
+        ))
+    };
+    let deployed = state_file
+        .app(&app.name, &app.prefix)
+        .is_some_and(|record| {
+            matches!(
+                record.status,
+                DeployStatus::Deployed | DeployStatus::Provisioned | DeployStatus::Stopped
+            )
+        });
+    let Some(pinned) = instance::load(&ctx, &app.name, &app.prefix)?.filter(|_| deployed) else {
+        return Err(not_set_up());
+    };
+    let (links, _) = resolve_links(&ctx, loaded, &report, &state_file, true)?;
+    // A link without a record would get new passwords that nothing uses.
+    if !links
+        .iter()
+        .all(|link| pinned.links.iter().any(|p| p.same(&link.pinned())))
+    {
+        return Err(not_set_up());
+    }
+    let dry = DryRun::new(connector);
+    let dry_ctx = ServerCtx {
+        connector: &dry,
+        home: ctx.home.clone(),
+    };
+    let mut contribution = Contribution::for_host();
+    contribute(&dry_ctx, loaded, &links, &mut contribution)?;
+    Ok(contribution
+        .environment()
+        .into_iter()
+        .map(|(service, environment)| (service.to_string(), environment.clone()))
+        .collect())
+}
+
+/// Add the variables and networks of `app_services` and of every link to
+/// `contribution`; the links' render hooks write their records.
+fn contribute(
+    ctx: &ServerCtx,
+    loaded: &LoadedApp,
+    links: &[Link],
+    contribution: &mut Contribution,
+) -> Result<()> {
     let app = &loaded.config;
     let peers: Vec<Peer> = links.iter().map(Link::peer).collect();
-    let mut contribution = Contribution::default();
     for service in &app.app_services {
         for (key, value) in &service.environment {
             let value = env_value(value).context("environment values are checked on load")?;
@@ -321,10 +404,10 @@ fn render_override(ctx: &ServerCtx, loaded: &LoadedApp, links: &[Link]) -> Resul
         };
         // Fails on server-side conflicts, e.g. a domain used by another instance.
         link.kind
-            .prepare_application(&link_ctx, link.entry, &mut contribution)
+            .prepare_application(&link_ctx, link.entry, contribution)
             .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
     }
-    contribution.override_yaml(&loaded.compose)
+    Ok(())
 }
 
 /// `--dry-run`: render as a deploy would, through a connector that keeps the
@@ -475,22 +558,32 @@ struct Dropped<'a> {
     purge: &'a [String],
 }
 
-/// Pick a shared app for every link; links skipped by their kind are left out.
+/// Pick a shared app for every link; links skipped by their kind are left
+/// out, and with `links_only` those that need the app's containers. Returns
+/// lines about the skipped links too.
 fn resolve_links<'a>(
     ctx: &ServerCtx,
     loaded: &'a LoadedApp,
     report: &Report,
     state_file: &StateFile,
-) -> Result<Vec<Link<'a>>> {
+    links_only: bool,
+) -> Result<(Vec<Link<'a>>, Vec<String>)> {
     let text = ctx
         .read(SERVER_CONFIG_FILE)?
         .context("the server has no compost-server.yaml; run `compost server deploy` first")?;
     let server_config = ServerConfig::parse(&text)?;
 
     let mut links = Vec::new();
+    let mut skipped = Vec::new();
     for (kind_name, entry) in loaded.config.links() {
         let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
         let name = link_name(entry).context("link names are checked on load")?;
+        if links_only && kind.needs_app_containers() {
+            skipped.push(format!(
+                "services.{kind_name}[{name}]: skipped (the app runs outside Docker)"
+            ));
+            continue;
+        }
         // Only shared apps that are deployed and running can be linked.
         let available: Vec<SharedAppConfig> = server_config
             .shared
@@ -521,11 +614,11 @@ fn resolve_links<'a>(
                 entry,
                 shared: shared.clone(),
             }),
-            Resolution::Skip(reason) => out!("  {path}: skipped ({reason})"),
+            Resolution::Skip(reason) => skipped.push(format!("{path}: skipped ({reason})")),
         }
     }
     links.sort_by_key(|link| link.kind.apply_order());
-    Ok(links)
+    Ok((links, skipped))
 }
 
 /// Run hooks and docker compose. A restore loads its data after the links
@@ -562,6 +655,12 @@ fn apply(
 
     let project = app.instance();
     let compose = instance::compose_command(ctx, app);
+    if options.links_only {
+        // Containers of an earlier deploy would compete with the app run outside Docker.
+        ctx.connector.exec(&format!("{compose} stop"))?;
+        out!("  links of {project} are ready; its services run outside Docker");
+        return super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true);
+    }
     let images_restored = match (restore, options.pinned) {
         (Some(plan), _) => plan.load_images(ctx, app)?,
         (None, Some(release)) => release::retag(ctx, &project, release)?,

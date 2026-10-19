@@ -433,7 +433,7 @@ compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--se
                    [--backup <profile> | --no-backup]
 ```
 
-`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`).
+`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`). On your own machine, [`compost dev up`](Local-Development.md) does such a deploy and also adds the shared apps the app's links need.
 
 A deploy:
 
@@ -502,7 +502,7 @@ compost app rollback myapp-staging [--to <n>] [--dry-run] [--yes]
 ## Inspecting
 
 ```sh
-compost app list                                 # every instance: status, running, last update
+compost app list                                 # every instance: status (deployed, candidate, failed; stopped and provisioned from `dev` commands), running, last update
 compost app state myapp-staging                  # or: -f compost.yaml,.compost-staging.yaml / --app myapp --prefix staging
 ```
 

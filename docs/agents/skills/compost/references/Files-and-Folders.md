@@ -7,7 +7,7 @@
 ```
 ~/.compost/
 ├── compost-manager.yaml    manager key; copy it (or use `init --key`) to manage the same servers elsewhere
-├── servers.yaml            servers from `server define`
+├── servers.yaml            servers from `server define` (and `local`, if a `dev` command defined it)
 ├── config.yaml             preferences from `compost config`
 ├── current_context         server name from `connect`
 └── ssh/                    shared SSH connection sockets
@@ -21,12 +21,14 @@ myapp/
 ├── compost.yaml                       how to deploy; commit
 ├── .compost.secrets.example.yaml      example overlay from `app generate`; commit
 ├── .compost-staging.yaml              overlay with secrets; don't commit
+├── .compost-local.yaml                overlay that `dev` commands merge; don't commit
+├── .env                               variables from `compost dev env -o .env`; holds passwords, don't commit
 ├── .compostignore                     not uploaded (gitignore syntax)
 ├── .claude/skills/compost/            Agent Skill from `compost agent skill`, if you install it there
 └── …
 ```
 
-Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns. With `deployment.source_dir`, the uploaded folder is that one instead, and `compost.yaml` can live in a separate deployment repository ([Applications](Applications.md#sources-in-another-folder)).
+Not uploaded with the sources: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and `.compostignore` patterns. Add a `.env` written by `dev env` to `.compostignore` too: Docker Compose reads a `.env` in the uploaded folder. With `deployment.source_dir`, the uploaded folder is that one instead, and `compost.yaml` can live in a separate deployment repository ([Applications](Applications.md#sources-in-another-folder)).
 
 ## In an infrastructure folder
 

@@ -11,7 +11,7 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir, generate_password,
-    is_network_name, is_variable_name, resolve_versioned,
+    host_address, is_network_name, is_variable_name, resolve_versioned,
 };
 
 /// Values a link can map to app variables (spec §6.1).
@@ -339,7 +339,20 @@ pub fn prepare_application(
     out: &mut Contribution,
 ) -> Result<()> {
     let credentials = credentials(ctx, link, provisioned, endpoint)?;
-    let target = target(ctx.shared, endpoint)?;
+    let target = match target(ctx.shared, endpoint)? {
+        Target {
+            network: Some(_), ..
+        } if out.is_for_host() && !ctx.shared.is_external() => {
+            let (host, port) = host_address(ctx.shared)?;
+            Target {
+                host,
+                port,
+                network: None,
+                sslmode: None,
+            }
+        }
+        target => target,
+    };
     let query = target
         .sslmode
         .as_ref()

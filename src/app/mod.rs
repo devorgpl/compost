@@ -11,12 +11,14 @@ pub mod logs;
 mod plan;
 pub mod release;
 pub mod remove;
+pub mod reset;
 pub mod restore;
 pub mod rollback;
 pub mod secrets;
 mod sources;
 pub mod state;
 mod steps;
+pub mod stop;
 mod volumes;
 
 use std::io::{BufRead, IsTerminal, Write};

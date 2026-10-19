@@ -175,6 +175,10 @@ impl Kind for MonitoringKind {
         base::describe_link(ctx, entry)
     }
 
+    fn needs_app_containers(&self) -> bool {
+        true
+    }
+
     /// Collected data stays until the backend's retention deletes it.
     fn remove_application(&self, ctx: &AppCtx, entry: &str, _purge: bool) -> Result<()> {
         base::remove_application(ctx, entry)

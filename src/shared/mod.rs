@@ -421,6 +421,12 @@ pub trait Kind: Sync {
     /// One line about a deployed link, for `app state`.
     fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String>;
 
+    /// Links of this kind only work with the app's containers, e.g. routes to
+    /// them; a deploy of the links alone (`dev up --host`) skips them.
+    fn needs_app_containers(&self) -> bool {
+        false
+    }
+
     /// `--purge <kind>` is allowed: the kind holds data of the app.
     fn supports_purge(&self) -> bool {
         false
@@ -577,6 +583,23 @@ pub fn resolve_versioned<'s>(
             )
         }
     }
+}
+
+/// Where processes on the server's machine reach a shared app compost runs
+/// outside Docker: its `host_port` on 127.0.0.1.
+pub fn host_address(config: &SharedAppConfig) -> Result<(String, u16)> {
+    let port = config
+        .configuration
+        .get("host_port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .with_context(|| {
+            format!(
+                "{} publishes no port on this machine (`host_port`); run `compost dev up --host`",
+                config.name
+            )
+        })?;
+    Ok(("127.0.0.1".to_string(), port))
 }
 
 /// `shared/<kind>/<name>`: the shared app's folder and compose project directory.

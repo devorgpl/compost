@@ -130,6 +130,10 @@ pub enum DeployStatus {
     Candidate,
     Deployed,
     Failed,
+    /// Deployed, then its containers were stopped (`dev stop`).
+    Stopped,
+    /// Its links are set up, but its services run outside compost (`dev up --host`).
+    Provisioned,
 }
 
 impl fmt::Display for DeployStatus {
@@ -138,6 +142,8 @@ impl fmt::Display for DeployStatus {
             DeployStatus::Candidate => "candidate",
             DeployStatus::Deployed => "deployed",
             DeployStatus::Failed => "failed",
+            DeployStatus::Stopped => "stopped",
+            DeployStatus::Provisioned => "provisioned",
         })
     }
 }

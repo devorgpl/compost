@@ -82,5 +82,6 @@ Their files are in `~/.compost-server/shared/`.
 
 - See the sample's logs and metrics: [Examples](Examples.md#logs-and-metrics-in-openobserve).
 - Add a Keycloak login to the sample: [Examples](Examples.md#log-in-with-keycloak).
+- Run your own apps on this machine with one command each, with the shared apps they need: [Local development](Local-Development.md).
 - Set up your own app: [Applications](Applications.md).
 - Deploy to a real server: [Production setup](Production-Setup.md).

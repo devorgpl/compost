@@ -75,7 +75,9 @@ Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, 
 
 When a shared app loses a link (say its `monitoring` is removed), the deploy with `--apply` removes the link and recreates the shared app without it.
 
-Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`.
+Shared apps removed from the config are reported as `orphaned` and keep running; stop them with `docker compose -p compost-<kind>-<name> down`. On this machine, `compost dev up` adds the shared apps an app needs by itself ([Local development](Local-Development.md#starting-an-app-dev-up)); a later `server deploy` from a file without them reports them as `orphaned`.
+
+Two shared apps can't have the same `host_port`.
 
 ## Shared app types
 
@@ -232,8 +234,9 @@ shared:
 | `version` | required | Major version, matched against apps' `version` requirements |
 | `image` | `postgres:<version>` | An official `postgres` image or a compatible one |
 | `configuration.root_password` | generated | Superuser password. Secret. Can't change after the first deploy |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-Postgres is not published on a host port. Only containers on its network `compost-db-<name>` reach it, at host name `<name>`, port 5432.
+Containers on its network `compost-db-<name>` reach it at host name `<name>`, port 5432. Without `host_port` it is not published on a host port.
 
 ### mariadb and mysql (`database`)
 
@@ -254,8 +257,9 @@ shared:
 | `version` | `11` (mariadb), `8` (mysql) | Major version, matched against apps' `version` requirements |
 | `image` | `mariadb:<version>`, `mysql:<version>` | An official image or a compatible one |
 | `configuration.root_password` | generated | Password of `root`. Secret, without quotes or `\`. Can't change after the first deploy |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-Like Postgres, it is reached only on `compost-db-<name>`, at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
+Like Postgres, it is reached on `compost-db-<name>` (and on `host_port`, if set), at host name `<name>`, port 3306. User names are at most 32 characters (MySQL's limit, kept for MariaDB too, so databases can move between them): a longer default name is cut and ends in a short hash, e.g. `shop_production_custo_5f6407f3`; `app state` shows it.
 
 Backups use `mariadb-dump` / `mysqldump` with `--single-transaction`, so InnoDB tables are copied consistently without stopping the app. App dumps leave out `DEFINER` clauses, so they load into a copy with another user. A server backup holds every database, user and grant, and restores onto the same major version.
 
@@ -282,8 +286,9 @@ shared:
 | `configuration.password` | generated | Password of the `default` user, for compost and you. Secret; a new value replaces the old one with the next deploy |
 | `configuration.max_memory` | none | e.g. `512mb`: above it the server evicts keys by `eviction` |
 | `configuration.eviction` | `noeviction` | `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, `volatile-lru`, `volatile-lfu`, `volatile-random` or `volatile-ttl` |
+| `configuration.host_port` | – | Also publish it on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
-It is reached only on `compost-kv-<name>`, at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
+It is reached on `compost-kv-<name>` (and on `host_port`, if set), at host name `<name>`, port 6379, and keeps its data with AOF (every write is logged) in `data/`. Each link's user is in the server's ACL file, which compost writes from the link records (passwords only as hashes) and loads with `ACL LOAD`, so linking an app never restarts it; a change of `password`, `max_memory` or `eviction` does.
 
 A server backup takes a fresh snapshot (`dump.rdb`) of all databases; `server restore` loads it and then turns AOF on again.
 
@@ -310,6 +315,7 @@ shared:
 | `configuration.url` | – | Public URL of the S3 API, served by the ingress; apps get it as `s3_public_endpoint` |
 | `configuration.region` | `garage` | Region name clients sign requests with |
 | `configuration.capacity` | `100G` | The node's weight in Garage's layout; not a quota |
+| `configuration.host_port` | – | Also publish its S3 API on 127.0.0.1 of the server at this port, for processes outside Docker (see [Local development](Local-Development.md#running-the-app-outside-docker)) |
 
 It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
 

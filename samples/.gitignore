@@ -3,3 +3,5 @@
 .compost-*.yaml
 !.compost-*.example.yaml
 .compost.secrets.yaml
+# Variables from `compost dev env -o .env`.
+.env
