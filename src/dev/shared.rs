@@ -4,7 +4,9 @@ use anyhow::{Context, Result, bail};
 use semver::{Op, Version, VersionReq};
 use serde_yaml_ng::Value;
 
+use crate::backup::schedule::OFF;
 use crate::config::app::{AppConfig, link_name};
+use crate::config::backup::AppProfile;
 use crate::config::server::ServerConfig;
 use crate::shared::{self, Kind, SharedAppConfig, communication};
 
@@ -58,11 +60,41 @@ pub fn repins(server: &ServerConfig, app: &AppConfig) -> Result<Vec<Repin>> {
     Ok(repins)
 }
 
-/// The overlay that points the links at their new shared apps; merged over
-/// the app's files.
-pub fn repin_overlay(repins: &[Repin]) -> Option<Value> {
-    if repins.is_empty() {
+/// The app's backup profiles with a schedule. Its schedules are meant for its
+/// servers, so `dev` turns them off on this machine.
+pub fn scheduled_profiles(app: &AppConfig) -> Vec<&str> {
+    app.backup
+        .profiles
+        .iter()
+        .filter(|(_, profile)| match profile {
+            AppProfile::Settings(profile) => profile.schedule.as_deref().is_some_and(|s| s != OFF),
+            AppProfile::Enabled(_) => false,
+        })
+        .map(|(name, _)| name.as_str())
+        .collect()
+}
+
+/// What `dev` merges over the app's files: links pointed at their new shared
+/// apps, and the schedules of the app's backup profiles turned off.
+pub fn dev_overlay(repins: &[Repin], app: &AppConfig) -> Option<Value> {
+    let scheduled = scheduled_profiles(app);
+    if repins.is_empty() && scheduled.is_empty() {
         return None;
+    }
+    let mut overlay = serde_yaml_ng::Mapping::new();
+    if !scheduled.is_empty() {
+        let mut profiles = serde_yaml_ng::Mapping::new();
+        for name in scheduled {
+            let mut profile = serde_yaml_ng::Mapping::new();
+            profile.insert("schedule".into(), OFF.into());
+            profiles.insert(name.into(), Value::Mapping(profile));
+        }
+        let mut backup = serde_yaml_ng::Mapping::new();
+        backup.insert("profiles".into(), Value::Mapping(profiles));
+        overlay.insert("backup".into(), Value::Mapping(backup));
+    }
+    if repins.is_empty() {
+        return Some(Value::Mapping(overlay));
     }
     let mut services = serde_yaml_ng::Mapping::new();
     for repin in repins {
@@ -76,7 +108,6 @@ pub fn repin_overlay(repins: &[Repin]) -> Option<Value> {
             entries.push(Value::Mapping(link));
         }
     }
-    let mut overlay = serde_yaml_ng::Mapping::new();
     overlay.insert("services".into(), Value::Mapping(services));
     Some(Value::Mapping(overlay))
 }
@@ -523,10 +554,24 @@ mod tests {
         assert_eq!(repins, ["keyvalue/cache: valkey-main -> valkey"]);
         assert_eq!(names(&planned.added), ["keyvalue/redis-main/8"]);
 
-        let overlay = repin_overlay(&planned.repins).unwrap();
+        let overlay = dev_overlay(&planned.repins, &app(links)).unwrap();
         assert_eq!(
             serde_yaml_ng::to_string(&overlay).unwrap(),
             "services:\n  keyvalue:\n  - name: cache\n    instance: valkey\n"
+        );
+    }
+
+    #[test]
+    fn schedules_of_the_app_are_turned_off() {
+        let app: AppConfig = serde_yaml_ng::from_str(
+            "name: shop\nbackup:\n  profiles:\n    daily: {schedule: '30 3 * * *', keep: 14}\n    weekly: {schedule: 'off'}\n    manual: {keep: 3}\n    nightly: false\n",
+        )
+        .unwrap();
+        assert_eq!(scheduled_profiles(&app), ["daily"]);
+        let overlay = dev_overlay(&[], &app).unwrap();
+        assert_eq!(
+            serde_yaml_ng::to_string(&overlay).unwrap(),
+            "backup:\n  profiles:\n    daily:\n      schedule: off\n"
         );
     }
 }

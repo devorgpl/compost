@@ -393,7 +393,7 @@ fn env(
     let loaded = AppConfig::load_layers(
         &project.files,
         stored,
-        crate::dev::shared::repin_overlay(&repins),
+        crate::dev::shared::dev_overlay(&repins, &unpinned.config),
         Some(&project.prefix),
     )?;
     let services = crate::app::deploy::host_env(
@@ -552,7 +552,12 @@ fn shared_apps(
             repin.to
         );
     }
-    let overlay = crate::dev::shared::repin_overlay(&plan.repins);
+    for profile in crate::dev::shared::scheduled_profiles(&loaded.config) {
+        out!(
+            "backup.profiles.{profile}: not scheduled on this machine (`compost app backup --profile {profile}` runs it)"
+        );
+    }
+    let overlay = crate::dev::shared::dev_overlay(&plan.repins, &loaded.config);
     if !plan.changes() && report.status == Status::Ok {
         return Ok((true, overlay));
     }

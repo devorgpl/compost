@@ -52,7 +52,7 @@ Shared apps on local (local)
 Deploying myapp-local to local (local)
 ```
 
-Then `dev up` deploys the app with `--apply`. Its domains come from the overlay, e.g. `myapp.localhost`: browsers resolve `*.localhost` to this machine, so it is at `http://myapp.localhost:18080/` without DNS changes. `--dry-run` shows the shared apps it would add; the app's own dry run follows when nothing is missing. `--pull` and `--recreate` work as with [`app deploy`](Applications.md#deploying).
+Then `dev up` deploys the app with `--apply`. The `schedule` of the app's own [backup profiles](Backup-and-Restore.md#profiles) is turned off for it (`backup.profiles.daily: not scheduled on this machine`): those schedules are meant for its servers. `compost app backup --profile <name>` still backs it up by hand, and the profiles of the local server's `compost-server.yaml` still apply. Its domains come from the overlay, e.g. `myapp.localhost`: browsers resolve `*.localhost` to this machine, so it is at `http://myapp.localhost:18080/` without DNS changes. `--dry-run` shows the shared apps it would add; the app's own dry run follows when nothing is missing. `--pull` and `--recreate` work as with [`app deploy`](Applications.md#deploying).
 
 The shared apps that `dev up` added are stored in the local server's `compost-server.yaml` (in `~/.compost-server`). If you also deploy that server from an infrastructure folder with `compost server deploy`, the shared apps missing from that folder's file are reported as `orphaned` and keep running. Add them to the file to keep managing them from there.
 

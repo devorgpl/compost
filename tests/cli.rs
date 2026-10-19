@@ -5478,3 +5478,26 @@ fn dev_up_uses_the_matching_shared_app_for_a_pin_of_another_server() {
         .success()
         .stdout(contains("DATABASE_URL=postgres://shop_local_db:"));
 }
+
+#[test]
+fn dev_up_turns_off_the_apps_backup_schedules() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = server_with_shared_apps();
+    server.write_work_file(
+        "compost.yaml",
+        &format!(
+            "{DEV_APP}backup:\n  profiles:\n    daily: {{schedule: '30 3 * * *', keep: 14}}\n"
+        ),
+    );
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+    server
+        .run(&["dev", "up"], &running)
+        .success()
+        .stdout(contains(
+            "backup.profiles.daily: not scheduled on this machine (`compost app backup --profile daily` runs it)",
+        ))
+        .stdout(contains("installed the crontab line").not());
+    assert!(!server.env.work.path().join("crontab").exists());
+    let stored = server.read_server_file("apps/shop/local/compost.yaml");
+    assert!(stored.contains("schedule: off"), "{stored}");
+}
