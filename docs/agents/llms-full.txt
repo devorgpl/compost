@@ -1407,6 +1407,72 @@ app_services:
 
 Compose services not listed are deployed as they are, but links can't target them. compost never changes your compose file: it writes an override file on the server that adds networks and variables.
 
+## With and without compost
+
+A project often runs its own database, cache or mail catcher with `docker compose up`, which compost replaces with shared apps. compost starts every service of the compose files (`docker compose up` without service names): leaving a service out of `app_services` doesn't keep it from starting, it only keeps links from targeting it. Two layouts let the same project run both ways.
+
+### Extra services in an override file
+
+Without `-f`, Docker Compose also reads `docker-compose.override.yaml` (`compose.override.yaml` next to a `compose.yaml`). compost always names its files with `-f` (`compose_file`, then `compose_overrides`), so it never reads that file:
+
+```
+myapp/
+├── docker-compose.yaml            the app's own services: compost deploys these
+├── docker-compose.override.yaml   database, cache, … for plain `docker compose up`
+└── compost.yaml
+```
+
+```yaml
+# docker-compose.yaml
+services:
+  backend:
+    build: .
+```
+
+```yaml
+# docker-compose.override.yaml
+services:
+  backend:
+    environment:
+      DATABASE_URL: postgres://myapp:myapp@db:5432/myapp
+    depends_on:
+      db: {condition: service_healthy}
+  db:
+    image: postgres:18
+    environment: {POSTGRES_USER: myapp, POSTGRES_PASSWORD: myapp}
+    healthcheck: {test: pg_isready -U myapp, interval: 2s}
+```
+
+The database link in `compost.yaml` sets the same `DATABASE_URL`, so the app reads it the same way under both. Keep everything that names the extra services, like `depends_on`, in the override file. With `build: true` the file is uploaded with the folder but not used.
+
+### Extra services in a profile
+
+To keep one file, give the extra services a [Compose profile](https://docs.docker.com/compose/how-tos/profiles/). compost turns on no profiles, so they don't start; `docker compose --profile standalone up` starts them:
+
+```yaml
+# docker-compose.yaml
+services:
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: postgres://myapp:myapp@db:5432/myapp   # compost's override sets its own
+    depends_on:
+      db: {condition: service_healthy, required: false}
+  db:
+    image: postgres:18
+    profiles: [standalone]
+    environment: {POSTGRES_USER: myapp, POSTGRES_PASSWORD: myapp}
+    healthcheck: {test: pg_isready -U myapp, interval: 2s}
+```
+
+- A `depends_on` on a service in a profile needs `required: false` (Compose 2.20 or newer); without it Compose refuses the project when the profile is off.
+- The variables a link sets replace those of the compose file, since compost's override comes last.
+- `compost app generate` adds an `app_services` entry for every service, including those in profiles: remove them, and don't make them targets of links.
+- Moving a service that already runs into a profile doesn't stop it: Compose leaves its container running.
+- `COMPOSE_PROFILES` in a `.env` file in the project folder turns profiles on for compost too, as Compose reads that file on the server. Set it in your shell instead.
+
+Both layouts work with [`compost dev up`](Local-Development.md), which leaves the extra services off and uses shared apps. For an app you can't edit, turn its extra services off with `compose_overrides` instead ([Sources in another folder](#sources-in-another-folder)).
+
 ## Building images
 
 Services with a `build` section in the compose file run images that have to be built. `deployment.build` says where:
@@ -2614,6 +2680,8 @@ services:
 ```
 
 Each developer copies it to `.compost-local.yaml` (which stays uncommitted, like every `.compost-*.yaml`) and runs `compost dev up`. The links' `type` and `version` decide which shared apps everyone gets. Passwords are generated per machine.
+
+To keep the project working with plain `docker compose up` as well, put the services that compost replaces (a database, a cache) in `docker-compose.override.yaml` or a Compose profile: see [With and without compost](Applications.md#with-and-without-compost).
 
 ---
 

@@ -142,3 +142,5 @@ services:
 ```
 
 Each developer copies it to `.compost-local.yaml` (which stays uncommitted, like every `.compost-*.yaml`) and runs `compost dev up`. The links' `type` and `version` decide which shared apps everyone gets. Passwords are generated per machine.
+
+To keep the project working with plain `docker compose up` as well, put the services that compost replaces (a database, a cache) in `docker-compose.override.yaml` or a Compose profile: see [With and without compost](Applications.md#with-and-without-compost).
