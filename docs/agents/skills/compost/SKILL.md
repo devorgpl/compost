@@ -88,6 +88,7 @@ Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stor
 
 | Task | Reference |
 |---|---|
+| Whether compost can do something; what it doesn't do yet, limits | [Facts and limits](references/Facts.md) |
 | Install or update compost | [Installation](references/Installation.md) |
 | Try it locally with the samples | [Quick start](references/Quick-Start.md) |
 | A new server, end to end | [Production setup](references/Production-Setup.md) |

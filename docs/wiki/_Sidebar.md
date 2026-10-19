@@ -6,6 +6,7 @@ Start
 - [Production setup](Production-Setup.md)
 - [Examples](Examples.md)
 - [Migrating to compost](Migration.md)
+- [Facts and limits](Facts.md)
 
 Use
 - [Applications](Applications.md)

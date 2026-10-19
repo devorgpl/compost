@@ -12,6 +12,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Production setup](Production-Setup.md): from an empty Linux server to an app on HTTPS, step by step, with a checklist
 - [Examples](Examples.md): static site, API with a database, WordPress on MariaDB, uploads in S3 storage, staging and production, apps you don't own, AWS RDS, Keycloak logins, Temporal workflows, OpenObserve, review copies, nightly backups
 - [Migrating to compost](Migration.md): move a server with hand-made containers to compost in reversible phases
+- [Facts and limits](Facts.md): what works, what doesn't yet (no failover, no zero-downtime deploys, no isolation between apps on a shared app), requirements, limits, security, license and status
 
 ## Use
 
