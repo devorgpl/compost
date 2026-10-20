@@ -3343,7 +3343,7 @@ notifications:
     assert_eq!(
         sent(&log),
         [
-            "security: --severity info --title Bans in the last 24h: 2 (1 simulated) --server dev --event bans_daily"
+            "security: --severity info --title 1 address banned in the last 24h, 1 more would have been (simulated) --server dev --event bans_daily"
         ]
     );
     assert!(
@@ -3357,7 +3357,7 @@ notifications:
     fs::write(
         &alerts,
         r#"[{"id": 5, "kind": "crowdsec", "scenario": "crowdsecurity/http-probing",
-             "source": {"value": "203.0.113.9"}, "decisions": [{"type": "ban"}], "events": null}]"#,
+             "source": {"value": "203.0.113.9"}, "decisions": [{"type": "ban", "duration": "4h"}], "events": null}]"#,
     )
     .unwrap();
     server.run(&tick, &env).success();
@@ -3367,15 +3367,32 @@ notifications:
         ["security: --severity warning --title 1 address banned --server dev --event bans"]
     );
     assert!(
-        log.contains("203.0.113.9  crowdsecurity/http-probing  alert 5"),
+        log.contains("203.0.113.9  crowdsecurity/http-probing (alert 5)"),
         "{log}"
     );
     server.run(&tick, &env).success();
     assert!(sent(&server.take_docker_log()).is_empty(), "reported once");
+
+    // Still banned, it sets off another scenario: not news.
+    fs::write(
+        &alerts,
+        r#"[{"id": 5, "kind": "crowdsec", "scenario": "crowdsecurity/http-probing",
+             "source": {"value": "203.0.113.9"}, "decisions": [{"type": "ban", "duration": "3h55m"}]},
+            {"id": 6, "kind": "crowdsec", "scenario": "LePresidente/http-generic-403-bf",
+             "source": {"value": "203.0.113.9"}, "decisions": [{"type": "ban", "duration": "4h"}]}]"#,
+    )
+    .unwrap();
+    server.run(&tick, &env).success();
+    let log = server.take_docker_log();
+    assert!(sent(&log).is_empty(), "{log}");
+    assert!(
+        log.contains("cscli alerts list -i 203.0.113.9 -l 0 -o json"),
+        "{log}"
+    );
     assert!(
         fs::read_to_string(server.server_home.join("state.yaml"))
             .unwrap()
-            .contains("last_alert: 5")
+            .contains("last_alert: 6")
     );
 
     server
@@ -3384,7 +3401,7 @@ notifications:
         .stdout(contains(
             "bans: 1 by this server's scenarios (crowdsecurity/http-probing 1), 1 from blocklists",
         ))
-        .stdout(contains("last 24h: 1 alert\n"));
+        .stdout(contains("last 24h: 2 alerts\n"));
 }
 
 #[test]

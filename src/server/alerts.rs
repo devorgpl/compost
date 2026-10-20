@@ -26,6 +26,8 @@ const DISK_MARGIN: f64 = 2.0;
 /// Bad health checks in a row before an alert: a container restarting
 /// shouldn't wake anyone.
 const HEALTH_CHECKS: u32 = 2;
+/// Addresses whose earlier bans a check looks up, at most.
+const HISTORIES: usize = 50;
 
 /// One thing to watch, as found by this check.
 #[derive(Debug, Clone)]
@@ -264,6 +266,24 @@ fn report_bans(
                 let new: Vec<_> = alerts
                     .iter()
                     .filter(|alert| alert.id > last && alert.is_ban())
+                    .collect();
+                // A banned scanner that keeps going sets off more scenarios,
+                // with its requests answered 403: that isn't news.
+                // One cscli call per address: in a burst, the rest are listed.
+                let mut histories = std::collections::BTreeMap::new();
+                for alert in &new {
+                    let address = alert.source.value.as_str();
+                    if !histories.contains_key(address) && histories.len() < HISTORIES {
+                        histories.insert(address, crowdsec::alerts_of(ctx, name, address)?);
+                    }
+                }
+                let new: Vec<_> = new
+                    .into_iter()
+                    .filter(|alert| {
+                        histories
+                            .get(alert.source.value.as_str())
+                            .is_none_or(|history| !alert.banned_before(history, last))
+                    })
                     .collect();
                 if let Some(message) = crowdsec::bans_message(&new, name) {
                     let severity = if message.banned {

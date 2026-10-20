@@ -2,6 +2,7 @@
 //! and active bans, for `server state` and the `bans` notifications.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::IpAddr;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -11,7 +12,7 @@ use crate::connector::shell_quote;
 use crate::shared::ingress::KIND;
 use crate::shared::{ServerCtx, project_name, shared_dir};
 
-/// Alerts listed in a notification; the rest are counted.
+/// Addresses listed in a notification; the rest are counted.
 const LISTED: usize = 20;
 /// Addresses in the daily summary.
 const TOP_ADDRESSES: usize = 10;
@@ -49,6 +50,18 @@ pub struct Decision {
     /// e.g. `ban`.
     #[serde(rename = "type", default)]
     pub action: String,
+    /// Time left, e.g. `3h59m45s`; negative once it ended or was lifted.
+    #[serde(default)]
+    pub duration: String,
+    #[serde(default)]
+    pub simulated: bool,
+}
+
+impl Decision {
+    /// A ban still in force (or in simulation).
+    fn in_force(&self) -> bool {
+        self.action == "ban" && !self.duration.is_empty() && !self.duration.starts_with('-')
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,18 +101,51 @@ impl Alert {
             .collect()
     }
 
-    fn line(&self) -> String {
-        let sites: Vec<&str> = self.sites().into_iter().collect();
-        let mut line = format!("{}  {}", self.source.value, self.scenario);
-        if !sites.is_empty() {
-            line.push_str(&format!("  {}", sites.join(" ")));
-        }
-        line.push_str(&format!("  alert {}", self.id));
-        if self.simulated {
-            line.push_str("  (simulated)");
-        }
-        line
+    /// Whether the address of this alert was banned already before it:
+    /// `history` (the address's alerts) has one up to `last` whose ban is
+    /// still in force. A simulated ban only counts for simulated alerts.
+    pub fn banned_before(&self, history: &[Alert], last: u64) -> bool {
+        history
+            .iter()
+            .filter(|old| old.id <= last && old.source.value == self.source.value)
+            .flat_map(|old| old.decisions.iter().flatten())
+            .any(|decision| decision.in_force() && (!decision.simulated || self.simulated))
     }
+}
+
+/// One line per address: its sites, then each alert's scenario and id.
+fn address_lines(alerts: &[&Alert]) -> Vec<(bool, String)> {
+    let mut order: Vec<&str> = Vec::new();
+    let mut by_address: BTreeMap<&str, Vec<&Alert>> = BTreeMap::new();
+    for alert in alerts {
+        let address = alert.source.value.as_str();
+        if !by_address.contains_key(address) {
+            order.push(address);
+        }
+        by_address.entry(address).or_default().push(alert);
+    }
+    order
+        .into_iter()
+        .map(|address| {
+            let alerts = &by_address[address];
+            let sites: BTreeSet<&str> = alerts.iter().flat_map(|a| a.sites()).collect();
+            let sites: Vec<&str> = sites.into_iter().collect();
+            let scenarios: Vec<String> = alerts
+                .iter()
+                .map(|a| {
+                    let simulated = if a.simulated { ", simulated" } else { "" };
+                    format!("{} (alert {}{simulated})", a.scenario, a.id)
+                })
+                .collect();
+            let banned = alerts.iter().any(|a| !a.simulated);
+            let mut line = address.to_string();
+            if !sites.is_empty() {
+                line.push_str(&format!("  {}", sites.join(" ")));
+            }
+            line.push_str(&format!("  {}", scenarios.join(", ")));
+            (banned, line)
+        })
+        .collect()
 }
 
 /// Active bans by where they come from.
@@ -169,6 +215,20 @@ pub fn alerts(ctx: &ServerCtx, name: &str, since: &str) -> Result<Vec<Alert>> {
     )?)
 }
 
+/// All alerts of one address, to tell whether it was banned already; none
+/// for a range.
+pub fn alerts_of(ctx: &ServerCtx, name: &str, address: &str) -> Result<Vec<Alert>> {
+    // Addresses come from CrowdSec's output: only real ones reach the shell.
+    let Ok(address) = address.parse::<IpAddr>() else {
+        return Ok(Vec::new());
+    };
+    parse_alerts(&cscli(
+        ctx,
+        name,
+        &format!("alerts list -i {address} -l 0 -o json"),
+    )?)
+}
+
 /// `cscli … -o json` prints `null` when there is nothing.
 fn parse_alerts(text: &str) -> Result<Vec<Alert>> {
     let text = text.trim();
@@ -189,6 +249,8 @@ pub fn active_bans(ctx: &ServerCtx, name: &str) -> Result<ActiveBans> {
 }
 
 /// Lines of `id,source,ip,reason,action,country,as,events_count,expiration,simulated,alert_id`.
+/// Nothing is quoted: the reason and the AS name can hold commas, so the
+/// reason ends at the action, `ban`, and the rest is read from the end.
 fn parse_decisions(text: &str) -> ActiveBans {
     let mut bans = ActiveBans::default();
     for line in text.lines().filter(|line| !line.starts_with("id,")) {
@@ -197,8 +259,10 @@ fn parse_decisions(text: &str) -> ActiveBans {
         if n < 11 {
             continue;
         }
-        // The reason is the only field that could hold a comma.
-        let reason = fields[3..n - 7].join(",");
+        let Some(action) = (4..n - 6).find(|&i| fields[i] == "ban") else {
+            continue;
+        };
+        let reason = fields[3..action].join(",");
         match (fields[1], fields[n - 2] == "true") {
             ("crowdsec", true) => bans.simulated += 1,
             ("crowdsec", false) => *bans.scenarios.entry(reason).or_default() += 1,
@@ -274,24 +338,23 @@ fn addresses(n: usize) -> String {
     }
 }
 
-/// The `bans` notification for new ban alerts; none when there are none.
+/// The `bans` notification for new ban alerts, one line per address; none
+/// when there are none.
 pub fn bans_message(alerts: &[&Alert], ingress: &str) -> Option<Message> {
     if alerts.is_empty() {
         return None;
     }
-    let simulated = alerts.iter().filter(|a| a.simulated).count();
-    let banned = alerts.len() - simulated;
-    let title = match (banned, simulated) {
-        (0, m) => format!("{} would have been banned (simulated)", addresses(m)),
-        (n, 0) => format!("{} banned", addresses(n)),
-        (n, m) => format!(
-            "{} banned, {m} more would have been (simulated)",
-            addresses(n)
-        ),
-    };
-    let mut lines: Vec<String> = alerts.iter().take(LISTED).map(|a| a.line()).collect();
-    if alerts.len() > LISTED {
-        lines.push(format!("and {} more", alerts.len() - LISTED));
+    let grouped = address_lines(alerts);
+    let banned = grouped.iter().filter(|(banned, _)| *banned).count();
+    let simulated = grouped.len() - banned;
+    let title = ban_title(banned, simulated, "");
+    let mut lines: Vec<String> = grouped
+        .iter()
+        .take(LISTED)
+        .map(|(_, line)| line.clone())
+        .collect();
+    if grouped.len() > LISTED {
+        lines.push(format!("and {} more", addresses(grouped.len() - LISTED)));
     }
     lines.push(String::new());
     lines.push(format!(
@@ -309,19 +372,36 @@ pub fn bans_message(alerts: &[&Alert], ingress: &str) -> Option<Message> {
     })
 }
 
+/// e.g. `2 addresses banned, 1 more would have been (simulated)`.
+fn ban_title(banned: usize, simulated: usize, when: &str) -> String {
+    match (banned, simulated) {
+        (0, 0) => format!("No addresses banned{when}"),
+        (0, m) => format!("{} would have been banned{when} (simulated)", addresses(m)),
+        (n, 0) => format!("{} banned{when}", addresses(n)),
+        (n, m) => format!(
+            "{} banned{when}, {m} more would have been (simulated)",
+            addresses(n)
+        ),
+    }
+}
+
 /// The `bans_daily` summary of a day's alerts.
 pub fn daily_message(alerts: &[Alert], bans: &ActiveBans, ingress: &str) -> Message {
     let ban_alerts: Vec<&Alert> = alerts.iter().filter(|a| a.is_ban()).collect();
-    let simulated = ban_alerts.iter().filter(|a| a.simulated).count();
-    let total = ban_alerts.len();
-    let title = match (total, simulated) {
-        (0, _) => "Bans in the last 24h: none".to_string(),
-        (n, 0) => format!("Bans in the last 24h: {n}"),
-        (n, m) => format!("Bans in the last 24h: {n} ({m} simulated)"),
-    };
+    let banned: BTreeSet<&str> = ban_alerts
+        .iter()
+        .filter(|a| !a.simulated)
+        .map(|a| a.source.value.as_str())
+        .collect();
+    let simulated: BTreeSet<&str> = ban_alerts
+        .iter()
+        .filter(|a| a.simulated && !banned.contains(a.source.value.as_str()))
+        .map(|a| a.source.value.as_str())
+        .collect();
+    let title = ban_title(banned.len(), simulated.len(), " in the last 24h");
     let mut lines = Vec::new();
-    if total > 0 {
-        lines.push("By scenario:".to_string());
+    if !ban_alerts.is_empty() {
+        lines.push("Alerts by scenario:".to_string());
         let mut scenarios: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
         for alert in &ban_alerts {
             let entry = scenarios.entry(&alert.scenario).or_default();
@@ -371,7 +451,7 @@ pub fn daily_message(alerts: &[Alert], bans: &ActiveBans, ingress: &str) -> Mess
     Message {
         title,
         body: lines.join("\n"),
-        banned: total > simulated,
+        banned: !banned.is_empty(),
     }
 }
 
@@ -435,6 +515,11 @@ mod tests {
             ActiveBans::default()
         );
         assert_eq!(ActiveBans::default().describe(), "none");
+        // Not quoted: commas in the AS name don't move the other fields.
+        let commas = parse_decisions(
+            "11,crowdsec,Ip:203.0.113.5,crowdsecurity/http-probing,ban,US,15169 Google, LLC,11,4h,true,12\n",
+        );
+        assert_eq!(commas.simulated, 1);
     }
 
     #[test]
@@ -456,6 +541,17 @@ mod tests {
         );
     }
 
+    /// An alert of `scenario` for `address`, with a ban that has `left`.
+    fn alert(id: u64, address: &str, scenario: &str, left: &str) -> Alert {
+        parse_alerts(&format!(
+            r#"[{{"id": {id}, "kind": "crowdsec", "scenario": "{scenario}", "simulated": false,
+                "source": {{"value": "{address}"}},
+                "decisions": [{{"type": "ban", "duration": "{left}", "simulated": false}}]}}]"#
+        ))
+        .unwrap()
+        .remove(0)
+    }
+
     #[test]
     fn bans_message_lists_new_bans() {
         let alerts = fixture();
@@ -468,8 +564,8 @@ mod tests {
         assert!(message.banned);
         assert_eq!(
             message.body,
-            "198.51.100.7  crowdsecurity/http-probing  app.example.com  alert 1
-198.51.100.8  crowdsecurity/http-crawl-non_statics  app.example.com  alert 2  (simulated)
+            "198.51.100.7  app.example.com  crowdsecurity/http-probing (alert 1)
+198.51.100.8  app.example.com  crowdsecurity/http-crawl-non_statics (alert 2, simulated)
 
 The requests behind one: compost server cmd caddy-main.alert <id>
 Lift a ban: compost server cmd caddy-main.unban <address>"
@@ -483,10 +579,83 @@ Lift a ban: compost server cmd caddy-main.unban <address>"
         assert!(!simulated.banned && !simulated.body.contains("unban"));
         assert_eq!(bans_message(&[], "caddy-main"), None);
 
-        let many: Vec<&Alert> = std::iter::repeat_n(bans[0], 25).collect();
+        let many: Vec<Alert> = (0..25)
+            .map(|i| {
+                alert(
+                    i,
+                    &format!("203.0.113.{i}"),
+                    "crowdsecurity/http-probing",
+                    "4h",
+                )
+            })
+            .collect();
+        let many: Vec<&Alert> = many.iter().collect();
         let message = bans_message(&many, "caddy-main").unwrap();
         assert_eq!(message.title, "25 addresses banned");
-        assert!(message.body.contains("\nand 5 more\n"), "{}", message.body);
+        assert!(
+            message.body.contains("\nand 5 addresses more\n"),
+            "{}",
+            message.body
+        );
+    }
+
+    #[test]
+    fn one_line_per_address() {
+        let alerts = [
+            alert(
+                210,
+                "45.138.12.25",
+                "crowdsecurity/http-path-traversal-probing",
+                "4h",
+            ),
+            alert(
+                211,
+                "45.138.12.25",
+                "crowdsecurity/http-sensitive-files",
+                "4h",
+            ),
+            alert(212, "203.0.113.9", "crowdsecurity/http-probing", "4h"),
+        ];
+        let alerts: Vec<&Alert> = alerts.iter().collect();
+        let message = bans_message(&alerts, "caddy-main").unwrap();
+        assert_eq!(message.title, "2 addresses banned");
+        assert!(
+            message.body.starts_with(
+                "45.138.12.25  crowdsecurity/http-path-traversal-probing (alert 210), crowdsecurity/http-sensitive-files (alert 211)
+203.0.113.9  crowdsecurity/http-probing (alert 212)
+"
+            ),
+            "{}",
+            message.body
+        );
+    }
+
+    #[test]
+    fn knows_addresses_banned_before() {
+        // Banned at alert 132, still for 20 minutes: 210 isn't news.
+        let history = [
+            alert(132, "45.138.12.25", "crowdsecurity/http-probing", "21m51s"),
+            alert(210, "45.138.12.25", "crowdsecurity/http-probing", "3h45m"),
+        ];
+        assert!(history[1].banned_before(&history, 209));
+        // Alerts of this check don't count, however close together.
+        assert!(!history[1].banned_before(&history[1..], 209));
+        // A ban that ended, or was lifted, doesn't count either.
+        let lifted = [
+            alert(208, "89.206.7.17", "crowdsecurity/http-probing", "-46m51s"),
+            alert(209, "89.206.7.17", "crowdsecurity/http-probing", "4h"),
+        ];
+        assert!(!lifted[1].banned_before(&lifted, 208));
+        // A simulated ban doesn't block, so a real one after it is news.
+        let mut simulated = alert(
+            100,
+            "198.51.100.8",
+            "crowdsecurity/http-crawl-non_statics",
+            "1h",
+        );
+        simulated.decisions.as_mut().unwrap()[0].simulated = true;
+        let real = alert(101, "198.51.100.8", "crowdsecurity/http-probing", "4h");
+        assert!(!real.banned_before(&[simulated], 100));
     }
 
     #[test]
@@ -495,21 +664,32 @@ Lift a ban: compost server cmd caddy-main.unban <address>"
             blocklists: 3,
             ..ActiveBans::default()
         };
-        let message = daily_message(&fixture(), &bans, "caddy-main");
-        assert_eq!(message.title, "Bans in the last 24h: 2 (1 simulated)");
+        let mut alerts = fixture();
+        alerts.push(alert(
+            5,
+            "198.51.100.7",
+            "crowdsecurity/http-sensitive-files",
+            "4h",
+        ));
+        let message = daily_message(&alerts, &bans, "caddy-main");
+        assert_eq!(
+            message.title,
+            "1 address banned in the last 24h, 1 more would have been (simulated)"
+        );
         assert_eq!(
             message.body,
-            "By scenario:
+            "Alerts by scenario:
   crowdsecurity/http-crawl-non_statics  1 simulated
   crowdsecurity/http-probing  1 banned
+  crowdsecurity/http-sensitive-files  1 banned
 Most alerts:
-  198.51.100.7  1  app.example.com
+  198.51.100.7  2  app.example.com
   198.51.100.8  1  app.example.com
 Bans in force: 3 from blocklists
 All alerts: compost server cmd caddy-main.alerts"
         );
         let quiet = daily_message(&[], &ActiveBans::default(), "caddy-main");
-        assert_eq!(quiet.title, "Bans in the last 24h: none");
+        assert_eq!(quiet.title, "No addresses banned in the last 24h");
         assert_eq!(
             quiet.body,
             "Bans in force: none\nAll alerts: compost server cmd caddy-main.alerts"
