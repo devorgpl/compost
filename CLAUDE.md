@@ -24,7 +24,7 @@ When a change is visible to users (a command, option, config key, default, outpu
   | `agent *`, `docs/agents` | `AI-Agents.md` |
   | A new feature worth a walkthrough | `Examples.md`, and `Home.md` if it changes what compost is |
 
-- `docs/agents` is the same documentation for AI agents, built into the binary (`compost agent`) and attached to releases. `just docs` generates `llms.txt`, `llms-full.txt` and the skill's `references/` from `docs/wiki`; never edit them by hand. Two files are written by hand:
+- `docs/agents` is the same documentation for AI agents, built into the binary (`compost agent`) and attached to releases. Stable release tags also copy `docs/agents/skills/compost` to `skills/compost` in devorgpl/agent-skills and tag it `compost-vX.Y.Z` (`scripts/publish-skills.sh`), for `gh skill install`; nobody edits that repository's copy. `just docs` generates `llms.txt`, `llms-full.txt` and the skill's `references/` from `docs/wiki`; never edit them by hand. Two files are written by hand:
   - `llms-index.md`: one line per wiki page; `just ci` fails when a page is missing.
   - `skills/compost/SKILL.md`: update it when a workflow, a command it names, or a default that matters for safety (e.g. what `--apply` or `--yes` does) changes.
 - A new page also goes in `_Sidebar.md`, the table in `Home.md` and `docs/agents/llms-index.md`. Pages are flat (no folders), named `Words-With-Dashes.md`, and link to each other as `[Text](Page.md#heading)`; `just ci` checks those links.
@@ -32,4 +32,4 @@ When a change is visible to users (a command, option, config key, default, outpu
 - Check what you write against the code, not `docs/design/`: the specs there are design history and are not updated.
 - `samples/README.md` and `samples/` are part of the docs: keep them working.
 
-To publish by hand (backfill, or a failed release step): `just wiki v0.3.0` with `WIKI_TOKEN` set (a personal access token with write access to the repository).
+To publish by hand (backfill, or a failed release step), check out the release tag, then run `just wiki v0.3.0` with `WIKI_TOKEN` set (a personal access token with write access to the repository) and `just skills v0.3.0` with `SKILLS_TOKEN` set (one with write access to devorgpl/agent-skills).

@@ -50,7 +50,7 @@ User-visible changes update the matching page in [`docs/wiki`](docs/wiki/Home.md
 
 GitHub Actions ([`.github/workflows`](.github/workflows)):
 - **Every branch push and pull request:** runs `just ci`.
-- **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag. For tags without a `-`, it also publishes `docs/wiki` to the repository's wiki (`scripts/publish-wiki.sh`; `just wiki v0.3.0` does the same by hand).
+- **A pushed `v*` tag:** tests, builds the portable binaries and publishes a release with notes generated from the commits since the previous tag. For tags without a `-`, it also publishes `docs/wiki` to the repository's wiki (`scripts/publish-wiki.sh`; `just wiki v0.3.0` does the same by hand) and the Agent Skill to [devorgpl/agent-skills](https://github.com/devorgpl/agent-skills) as `compost-v0.3.0` (`scripts/publish-skills.sh`; `just skills v0.3.0`).
 
 Between releases, master carries the next version with a `-dev` suffix (e.g. `0.2.0-dev`), so builds from master never pass for a release. To release it:
 

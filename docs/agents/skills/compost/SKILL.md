@@ -1,6 +1,7 @@
 ---
 name: compost
 description: Deploy docker-compose apps to Linux servers with the compost CLI. Use when working with compost commands or files (compost.yaml, compost-server.yaml, .compost-*.yaml overlays), when deploying, inspecting, backing up or restoring apps and their shared Caddy, Postgres, MariaDB, MySQL, Valkey, Redis, Garage, Keycloak, OpenObserve or Temporal, when managing compost secrets, or when moving existing Docker servers to compost.
+license: MIT OR Apache-2.0
 ---
 
 # compost

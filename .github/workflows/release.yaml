@@ -5,7 +5,7 @@
 #
 # The tag must match the version in Cargo.toml. Tags with a `-` (v0.2.0-rc.1)
 # become pre-releases. Other tags also publish docs/wiki to the repository's
-# wiki.
+# wiki and the compost Agent Skill to devorgpl/agent-skills.
 name: Release
 
 on:
@@ -74,3 +74,12 @@ jobs:
           # repository as the WIKI_TOKEN secret.
           WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
         run: scripts/publish-wiki.sh "${{ github.ref_name }}"
+
+      - name: Publish the Agent Skill to devorgpl/agent-skills
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          # The job's own token cannot push to another repository: add a
+          # fine-grained personal access token with Contents read and write
+          # access to devorgpl/agent-skills as the SKILLS_TOKEN secret.
+          SKILLS_TOKEN: ${{ secrets.SKILLS_TOKEN }}
+        run: scripts/publish-skills.sh "${{ github.ref_name }}"

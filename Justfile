@@ -59,6 +59,10 @@ docs-check:
 wiki tag:
     scripts/publish-wiki.sh {{tag}}
 
+# Publish the Agent Skill to devorgpl/agent-skills, e.g. `just skills v0.3.0` (needs SKILLS_TOKEN)
+skills tag:
+    scripts/publish-skills.sh {{tag}}
+
 # Install compost into ~/.cargo/bin
 install:
     cargo install --path .

@@ -24,6 +24,18 @@ compost agent llms --full                    # print llms-full.txt
 
 `agent skill` replaces the `compost` skill in that folder, so run it again after updating compost. It refuses to overwrite a `compost/SKILL.md` that isn't compost's skill. You can commit the skill to your app or infrastructure repository so everyone's agent gets it.
 
+## With gh skill
+
+Every stable release also publishes the skill to [devorgpl/agent-skills](https://github.com/devorgpl/agent-skills), where the [GitHub CLI](https://cli.github.com) installs it into the skills folder of Claude Code, Copilot, Codex, Cursor and other agents:
+
+```sh
+gh skill install devorgpl/agent-skills compost                                   # asks which agent and scope
+gh skill install devorgpl/agent-skills compost --agent claude-code --scope user  # Claude Code, all your projects
+gh skill update                                                                  # the skill of the latest release
+```
+
+Without a version you get the skill of the latest stable release. To match the compost you run, name its release: `compost@compost-vX.Y.Z` installs that version, and `--pin compost-vX.Y.Z` also keeps `gh skill update` from changing it. Pre-releases are not published there.
+
 ## From a release
 
 Every [release](https://github.com/devorgpl/compost/releases) has `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz`, listed in its `SHA256SUMS`. The archive holds the `compost` skill folder:

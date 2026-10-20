@@ -37,7 +37,7 @@ install -m 755 compost-vX.Y.Z-x86_64-unknown-linux-musl/compost ~/.local/bin/com
 compost --version
 ```
 
-Each release also has the documentation for AI agents: `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz` (see [AI agents](AI-Agents.md#from-a-release)).
+Each release also has the documentation for AI agents: `llms.txt`, `llms-full.txt` and `compost-skill-vX.Y.Z.tar.gz` (see [AI agents](AI-Agents.md#from-a-release)). Stable releases also publish the skill to [devorgpl/agent-skills](https://github.com/devorgpl/agent-skills) for `gh skill install` (see [AI agents](AI-Agents.md#with-gh-skill)).
 
 ## macOS
 
