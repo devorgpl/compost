@@ -182,6 +182,7 @@ impl DatabaseType for MySql {
         Ok(Monitored {
             services: vec![app_service(self.type_name(), service_name(&config.name))],
             metrics: Vec::new(),
+            traces: false,
         })
     }
 

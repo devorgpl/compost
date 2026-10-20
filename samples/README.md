@@ -77,7 +77,7 @@ python backend/migrate.py
 
 ## Logs and metrics
 
-The server samples include OpenObserve (`shared.monitoring`). Caddy, Postgres and Keycloak send their output to it (`monitoring: {}`), and Caddy its access log and metrics. The sample app's `telemetry` link sends the output of `web`, `backend` and `migrate`; it is `optional`, so the app deploys on servers without monitoring too.
+The server samples include OpenObserve (`shared.monitoring`). Caddy, Postgres and Keycloak send their output to it (`monitoring: {}`), and Caddy its access log, metrics and a trace per request (`traces: true`). The sample app's `telemetry` link sends the output of `web`, `backend` and `migrate`; it is `optional`, so the app deploys on servers without monitoring too.
 
 Open http://logs.localhost:18080/ and log in with the root email and password compost generated:
 
@@ -85,7 +85,7 @@ Open http://logs.localhost:18080/ and log in with the root email and password co
 grep root_ ~/.compost-server/connectors/monitoring/monitoring/root-connector.yaml
 ```
 
-Under Logs, pick the stream `docker`, e.g. with the filter `fluent_tag = 'sampleapp-local.backend'`. Under Metrics are Caddy's `caddy_http_*` and the containers' `container_*` metrics. The backend also gets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME`, for an OpenTelemetry SDK it doesn't use.
+Under Logs, pick the stream `docker`, e.g. with the filter `fluent_tag = 'sampleapp-local.backend'`. Under Metrics are Caddy's `caddy_http_*` and the containers' `container_*` metrics, under Traces a trace per request from Caddy. The backend also gets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME`, for an OpenTelemetry SDK it doesn't use.
 
 ## Log in with Keycloak
 

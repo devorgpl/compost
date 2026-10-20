@@ -394,6 +394,7 @@ impl Kind for StorageKind {
         Ok(Monitored {
             services: vec![app_service("garage", service_name(&config.name))],
             metrics: Vec::new(),
+            traces: false,
         })
     }
 

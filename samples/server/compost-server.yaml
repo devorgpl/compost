@@ -18,8 +18,9 @@ shared:
         tls: "off"
         # Log every request; with `monitoring`, the log goes to OpenObserve.
         access_log: true
-      # Send its output and metrics to the monitoring app below.
-      monitoring: {}
+      # Send its output, metrics and a trace per request to the monitoring
+      # app below.
+      monitoring: {traces: true}
   database:
     - name: postgres18
       type: postgres

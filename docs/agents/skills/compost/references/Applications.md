@@ -500,6 +500,8 @@ services:
 | `service_name` | `backend`: the compose service of each target |
 | `resource_attributes` | `service.namespace=myapp-staging,deployment.environment=staging` |
 
+With [request tracing](Servers-and-Shared-Apps.md#request-tracing) on the ingress, requests reach the app with a `traceparent` header: an SDK that reads it puts the app's spans in the trace Caddy started.
+
 Services in `targets` and `metrics` join the monitoring network as `<instance>-<service>`. The collector picks up a metrics endpoint once the app runs, without a restart.
 
 compost collects the output with Docker's `fluentd` log driver, set in its override file, so `docker logs` keeps working. A service that sets its own `logging` in the compose file can't be a target with `logs: true`: the deploy fails and says so.

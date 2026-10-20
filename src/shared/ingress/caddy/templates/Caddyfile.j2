@@ -6,10 +6,23 @@
 {%- endfor %}
 }
 {%- endif %}
+{%- if tracing %}
+
+# A span per request, sent to the monitoring app; the request goes on to the
+# app with a `traceparent` header, and the access log gets its traceID.
+(compost_tracing) {
+	tracing {
+		span {http.request.host}
+	}
+}
+{%- endif %}
 {%- if security %}
 
-# Logs of every site; CrowdSec reads the `crowdsec` one.
+# Logs and traces of every site; CrowdSec reads the `crowdsec` log.
 (compost_log) {
+{%- if tracing %}
+	import compost_tracing
+{%- endif %}
 {%- if access_log %}
 	log
 {%- endif %}
@@ -35,6 +48,9 @@
 
 # Imported by every site.
 (compost_site) {
+{%- if tracing %}
+	import compost_tracing
+{%- endif %}
 {%- if access_log %}
 	log
 {%- endif %}

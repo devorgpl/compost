@@ -174,7 +174,8 @@ impl IngressType for Caddy {
         Some(DEFAULT_VERSION)
     }
 
-    /// Its output and, served on an internal port, its metrics.
+    /// Its output, its metrics, served on an internal port, and traces of
+    /// the requests it serves.
     fn monitored(&self, config: &SharedAppConfig) -> Result<Monitored> {
         Ok(Monitored {
             services: vec![app_service("caddy", service_name(&config.name))],
@@ -183,6 +184,7 @@ impl IngressType for Caddy {
                 port: METRICS_PORT,
                 path: "/metrics",
             }],
+            traces: true,
         })
     }
 
@@ -368,6 +370,7 @@ impl IngressType for Caddy {
             options.push(format!("email {email}"));
         }
         let metrics = config.monitoring.as_ref().is_some_and(|m| m.metrics);
+        let tracing = config.monitoring.as_ref().is_some_and(|m| m.traces);
         if metrics {
             options.push("metrics".to_string());
         }
@@ -449,6 +452,7 @@ impl IngressType for Caddy {
                 log_lines,
                 custom_sites => !caddy.sites.is_empty(),
                 access_log => caddy.access_log,
+                tracing,
                 metrics_port => metrics.then_some(METRICS_PORT),
             },
         )?;
@@ -942,6 +946,29 @@ mod tests {
         );
         let no_metrics = caddyfile("{name: c, type: caddy, monitoring: {metrics: false}}");
         assert!(!no_metrics.contains("metrics"), "{no_metrics}");
+        assert!(!monitored.contains("tracing"), "{monitored}");
+    }
+
+    #[test]
+    fn renders_tracing_for_every_site() {
+        let caddyfile = |text: &str| file(&render(text), "conf/Caddyfile").to_string();
+        let traced = caddyfile("{name: c, type: caddy, monitoring: {traces: true}}");
+        assert!(
+            traced.contains(
+                "(compost_tracing) {\n\ttracing {\n\t\tspan {http.request.host}\n\t}\n}\n"
+            ),
+            "{traced}"
+        );
+        assert!(
+            traced.contains("(compost_site) {\n\timport compost_tracing\n}\n"),
+            "{traced}"
+        );
+        // Sites with their own security import compost_log, not compost_site.
+        let secure = caddyfile("{name: c, type: caddysecurebuild, monitoring: {traces: true}}");
+        assert!(
+            secure.contains("(compost_log) {\n\timport compost_tracing\n\tlog crowdsec {\n"),
+            "{secure}"
+        );
     }
 
     #[test]

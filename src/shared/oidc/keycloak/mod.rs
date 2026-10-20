@@ -85,6 +85,7 @@ impl OidcType for Keycloak {
         Ok(Monitored {
             services: vec![app_service(SERVICE, service_name(&config.name))],
             metrics: Vec::new(),
+            traces: false,
         })
     }
 

@@ -426,6 +426,7 @@ impl Kind for KeyValueKind {
         Ok(Monitored {
             services: vec![app_service(&config.type_name, service_name(&config.name))],
             metrics: Vec::new(),
+            traces: false,
         })
     }
 

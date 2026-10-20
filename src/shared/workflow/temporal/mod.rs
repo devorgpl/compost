@@ -126,6 +126,7 @@ impl WorkflowType for Temporal {
                 port: METRICS_PORT,
                 path: "/metrics",
             }],
+            traces: false,
         })
     }
 

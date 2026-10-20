@@ -65,6 +65,9 @@ pub struct SharedMonitoring {
     /// Scrape the metrics it serves, if its type serves any.
     #[serde(default = "yes")]
     pub metrics: bool,
+    /// Trace the requests it serves; only types that trace (see [`Monitored::traces`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub traces: bool,
 }
 
 fn yes() -> bool {
@@ -78,6 +81,9 @@ pub struct Monitored {
     pub services: Vec<AppService>,
     /// Prometheus endpoints it serves.
     pub metrics: Vec<MetricsEndpoint>,
+    /// It can send OpenTelemetry traces: with `monitoring.traces`, its
+    /// services get the collector's address in the `OTEL_*` variables.
+    pub traces: bool,
 }
 
 #[derive(Debug)]

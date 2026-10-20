@@ -439,7 +439,7 @@ shared:
       type: caddy
       configuration:
         access_log: true
-      monitoring: {}            # output, and Caddy's metrics
+      monitoring: {traces: true}  # output, Caddy's metrics and a trace per request
   database:
     - name: postgres18
       type: postgres
@@ -485,7 +485,7 @@ compost connector list
 #    └─ shared ingress/caddy-main/monitoring  logs caddy; metrics compost-shared-caddy-main:9180/metrics
 ```
 
-Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; traces from the SDK show under Traces.
+Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; under Traces is a trace per request from Caddy, with the backend's spans in it if its SDK reads the `traceparent` header.
 
 ## Block brute-force logins
 

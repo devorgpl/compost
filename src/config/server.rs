@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
@@ -189,7 +189,11 @@ fn monitoring_link(monitoring: &SharedMonitoring, monitored: &Monitored) -> Resu
         link.insert("instance".into(), instance.as_str().into());
     }
     link.insert("logs".into(), monitoring.logs.into());
-    if monitoring.logs {
+    ensure!(
+        !monitoring.traces || monitored.traces,
+        "monitoring.traces: this shared app sends no traces; only an ingress does"
+    );
+    if monitoring.logs || monitoring.traces {
         let targets: Vec<Value> = monitored
             .services
             .iter()
@@ -210,6 +214,18 @@ fn monitoring_link(monitoring: &SharedMonitoring, monitored: &Monitored) -> Resu
             })
             .collect::<Result<_, _>>()?;
         link.insert("metrics".into(), Value::Sequence(metrics));
+    }
+    if monitoring.traces {
+        let environment: serde_yaml_ng::Mapping = [
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "otlp_endpoint"),
+            ("OTEL_EXPORTER_OTLP_PROTOCOL", "otlp_protocol"),
+            ("OTEL_SERVICE_NAME", "service_name"),
+            ("OTEL_RESOURCE_ATTRIBUTES", "resource_attributes"),
+        ]
+        .into_iter()
+        .map(|(variable, value)| (variable.into(), value.into()))
+        .collect();
+        link.insert("environment".into(), Value::Mapping(environment));
     }
     Ok(Value::Mapping(link))
 }
@@ -1025,6 +1041,7 @@ shared:
         );
         assert_eq!(link.entry["targets"][0], "caddy");
         assert_eq!(link.entry["metrics"][0]["port"], 9180);
+        assert!(link.entry.get("environment").is_none());
 
         let pg = config.consumer("database", &config.shared["database"][0]);
         let pg = pg.unwrap().unwrap();
@@ -1032,6 +1049,30 @@ shared:
         // Keycloak links to a database that has links itself.
         let kc = config.consumer("oidc", &config.shared["oidc"][0]).unwrap();
         assert_eq!(kc.unwrap().links.len(), 2);
+    }
+
+    #[test]
+    fn traced_ingress_gets_the_collector_address() {
+        let config = parse(&MONITORED.replace(
+            "monitoring: {}}",
+            "monitoring: {logs: false, traces: true}}",
+        ))
+        .unwrap();
+        let caddy = config.consumer("ingress", &config.shared["ingress"][0]);
+        let link = &caddy.unwrap().unwrap().links[0];
+        assert_eq!(link.entry["logs"], false);
+        assert_eq!(link.entry["targets"][0], "caddy");
+        let environment = &link.entry["environment"];
+        assert_eq!(environment["OTEL_EXPORTER_OTLP_ENDPOINT"], "otlp_endpoint");
+        assert_eq!(environment["OTEL_EXPORTER_OTLP_PROTOCOL"], "otlp_protocol");
+
+        let err =
+            error(&MONITORED.replace("monitoring: {metrics: false}", "monitoring: {traces: true}"));
+        assert!(
+            err.contains("shared.database[pg18]")
+                && err.contains("monitoring.traces: this shared app sends no traces"),
+            "{err}"
+        );
     }
 
     #[test]

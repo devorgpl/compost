@@ -63,6 +63,7 @@ impl DatabaseType for Postgres {
         Ok(Monitored {
             services: vec![app_service("postgres", service_name(&config.name))],
             metrics: Vec::new(),
+            traces: false,
         })
     }
 

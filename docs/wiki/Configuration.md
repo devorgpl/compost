@@ -273,7 +273,7 @@ Keys every shared app has:
 | `image` | per type | |
 | `configuration` | `{}` | The type's keys |
 | `external` | – | A server compost doesn't run; databases only |
-| `monitoring` | – | Send its output and metrics to a monitoring app: `instance`, `logs` (default `true`), `metrics` (default `true`). See [Monitoring shared apps](Servers-and-Shared-Apps.md#monitoring-shared-apps) |
+| `monitoring` | – | Send its output and metrics to a monitoring app: `instance`, `logs` (default `true`), `metrics` (default `true`), `traces` (default `false`, ingress only). See [Monitoring shared apps](Servers-and-Shared-Apps.md#monitoring-shared-apps) |
 
 `configuration.host_port` (postgres, mariadb, mysql, valkey, redis, garage) also publishes the shared app on 127.0.0.1 of the server, e.g. for an app run outside Docker ([Local development](Local-Development.md#running-the-app-outside-docker)). Each port is used by one shared app at most; external shared apps can't have one.
 
