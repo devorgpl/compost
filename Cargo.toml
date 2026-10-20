@@ -1,6 +1,6 @@
 [package]
 name = "compost"
-version = "1.10.0"
+version = "1.10.1-dev"
 edition = "2024"
 rust-version = "1.85"
 description = "Dependency and deployment manager for docker-based servers"
