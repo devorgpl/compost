@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 use super::backup::AppProfile;
+use super::command::Template;
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared;
@@ -36,6 +37,9 @@ pub struct AppConfig {
     pub app_services: Vec<AppService>,
     #[serde(default, skip_serializing_if = "BackupConfig::is_empty")]
     pub backup: BackupConfig,
+    /// Named commands run in the app's containers (`app cmd`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub commands: BTreeMap<String, Template>,
 }
 
 /// What `app backup` saves besides link data and sources, and the steps
@@ -588,7 +592,34 @@ impl AppConfig {
                     .map_err(|e| config_err(format!("{path}: {e:#}")))?;
             }
         }
+
+        for (name, command) in &self.commands {
+            check_name("command name", name)?;
+            self.validate_command(compose, command)
+                .map_err(|e| config_err(format!("commands.{name}: {e:#}")))?;
+        }
         Ok(())
+    }
+
+    fn validate_command(&self, compose: &ComposeFile, command: &Template) -> Result<()> {
+        if command.shared_app.is_some() || command.service.is_some() {
+            anyhow::bail!(
+                "`shared_app` and `service` are for commands of compost-server.yaml; use `exec` or `run`"
+            );
+        }
+        let service = match (&command.exec, &command.run) {
+            (Some(service), None) | (None, Some(service)) => service,
+            _ => anyhow::bail!(
+                "set one of `exec` (the service's running container) or `run` (a new one-off container)"
+            ),
+        };
+        if !compose.services.contains_key(service) {
+            anyhow::bail!(
+                "service `{service}` is not in {}",
+                self.deployment.compose_file
+            );
+        }
+        command.validate(false)
     }
 }
 
@@ -1019,5 +1050,37 @@ services:
             "{name: a, app_services: [{name: web, service: front-webapp, environment: {X: [1]}}]}",
         );
         assert!(err.contains("environment.X"), "{err}");
+    }
+
+    #[test]
+    fn commands_run_in_a_service_of_the_compose_file() {
+        validate("{name: a, commands: {migrate: {run: backend-migration, command: [./migrate], confirm: true}, shell: {exec: backend-webapp, command: [sh]}}}")
+            .unwrap();
+        for (commands, message) in [
+            ("{x: {command: [sh]}}", "commands.x: set one of `exec`"),
+            (
+                "{x: {exec: front-webapp, run: front-webapp, command: [sh]}}",
+                "set one of `exec`",
+            ),
+            (
+                "{x: {exec: nope, command: [sh]}}",
+                "commands.x: service `nope` is not in",
+            ),
+            (
+                "{x: {shared_app: pg, exec: front-webapp, command: [sh]}}",
+                "use `exec` or `run`",
+            ),
+            (
+                "{Bad: {exec: front-webapp, command: [sh]}}",
+                "invalid command name `Bad`",
+            ),
+            (
+                "{x: {exec: front-webapp, args: {a: {}}, command: [sh]}}",
+                "commands.x: args.a: not used",
+            ),
+        ] {
+            let err = error(&format!("{{name: a, commands: {commands}}}"));
+            assert!(err.contains(message), "{commands}: {err}");
+        }
     }
 }

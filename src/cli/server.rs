@@ -203,6 +203,78 @@ pub fn logs(
     )
 }
 
+#[derive(Debug, Args)]
+pub struct ServerExecArgs {
+    /// Shared app, as in compost-server.yaml, e.g. `postgres18` (`<kind>/<name>` if two kinds use the name)
+    pub name: String,
+    /// Another service of the shared app, e.g. `crowdsec` of a caddysecurebuild ingress
+    /// (default: its main container)
+    #[arg(long)]
+    pub service: Option<String>,
+    /// The command and its arguments, after `--`, e.g. `-- sh` or `-- psql -U postgres`
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    pub command: Vec<String>,
+}
+
+pub fn exec(
+    home: &CompostHome,
+    server: Option<&str>,
+    args: ServerExecArgs,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    if let Some(service) = &args.service {
+        check_name("service", service)?;
+    }
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    crate::server::exec::exec(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+        &args.name,
+        args.service.as_deref(),
+        &args.command,
+    )
+}
+
+#[derive(Debug, Args)]
+pub struct ServerCmdArgs {
+    /// Command from `commands` of compost-server.yaml, then its arguments, in order or as
+    /// `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them
+    #[arg(
+        value_name = "COMMAND] [ARGS",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    pub words: Vec<String>,
+}
+
+pub fn cmd(
+    home: &CompostHome,
+    server: Option<&str>,
+    args: ServerCmdArgs,
+    connect: &ConnectOptions,
+) -> Result<()> {
+    let mut words = args.words.into_iter();
+    let name = words.next();
+    if let Some(name) = &name {
+        check_name("command name", name)?;
+    }
+    let words: Vec<String> = words.collect();
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    crate::server::exec::cmd(
+        connector.as_ref(),
+        &server.name,
+        server.server_home(),
+        &manager.manager_key,
+        name.as_deref(),
+        &words,
+    )
+}
+
 pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;

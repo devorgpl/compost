@@ -68,6 +68,8 @@ Commands:
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
   logs      Show the output of a shared application's containers
+  exec      Run a command in a shared application's container, e.g. a shell
+  cmd       List the commands of compost-server.yaml, or run one by name in its shared app's container
   prune     Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
   help      Print this message or the help of the given subcommand(s)
 
@@ -232,6 +234,42 @@ Options:
   -h, --help                 Print help
 ```
 
+## `compost server exec`
+
+```text
+Run a command in a shared application's container, e.g. a shell
+
+Usage: compost server exec [OPTIONS] <NAME> -- <COMMAND>...
+
+Arguments:
+  <NAME>        Shared app, as in compost-server.yaml, e.g. `postgres18` (`<kind>/<name>` if two kinds use the name)
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- psql -U postgres`
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --service <SERVICE>    Another service of the shared app, e.g. `crowdsec` of a caddysecurebuild ingress (default: its main container)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost server cmd`
+
+```text
+List the commands of compost-server.yaml, or run one by name in its shared app's container
+
+Usage: compost server cmd [OPTIONS] [COMMAND] [ARGS]...
+
+Arguments:
+  [COMMAND] [ARGS]...  Command from `commands` of compost-server.yaml, then its arguments, in order or as `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
 ## `compost server prune`
 
 ```text
@@ -295,6 +333,7 @@ Commands:
   logs      Show the output of an application instance's containers
   exec      Run a command in a service's running container, e.g. a shell
   run       Run a command in a new one-off container of a service, e.g. a migration
+  cmd       List the commands of the instance's compost.yaml, or run one by name
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
@@ -454,6 +493,26 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --service <SERVICE>    Compose service whose container runs the command
       --no-deps              Don't start the services it depends on (`depends_on`)
+  -h, --help                 Print help
+```
+
+## `compost app cmd`
+
+```text
+List the commands of the instance's compost.yaml, or run one by name
+
+Usage: compost app cmd [OPTIONS] [INSTANCE] [COMMAND] [ARGS]...
+
+Arguments:
+  [INSTANCE] [COMMAND] [ARGS]...  Instance as shown by `app list`, then the command's name and its arguments; with -f, --app or --prefix, the instance is left out. Without a command, lists them. Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`) come after its name
+
+Options:
+  -f, --file <FILES>         Config files merged in order, to select the instance (repeatable or comma-separated); the commands are those of the deployed instance
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>            Application name (instead of config files)
+  -v, --verbose              Print every command run on the server
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

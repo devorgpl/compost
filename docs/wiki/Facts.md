@@ -28,7 +28,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 - **Secrets:** in overlays you don't commit, or stored on the server so any machine or CI deploys with `compost.yaml` alone. Passwords you leave out are generated and kept ([Secrets](Secrets.md)).
 - **Backup and restore:** apps (database dumps, buckets, volumes, sources, images) and shared apps, to your machine, a folder on the server or S3; profiles with `keep`, scheduled by cron on the server, or run before each deploy. Restores also make copies of an app and move everything to a new server ([Backup and restore](Backup-and-Restore.md)).
 - **Notifications** of failed scheduled backups, apps or shared apps going down, and a full disk, to webhook, Slack, Mattermost, Discord, Matrix or email ([Notifications](Notifications.md)).
-- **Day to day:** `app state`, `app logs`, `app exec`, `app run`, `server state`, `server logs`, `connector list`, `server prune`.
+- **Day to day:** `app state`, `app logs`, `app exec`, `app run`, `app cmd`, `server state`, `server logs`, `server exec`, `server cmd`, `connector list`, `server prune`.
 - **Gradual migration** of servers set up by hand: Caddy serves existing containers, apps keep their databases and volumes, and every phase can be undone. The procedure in [Migrating to compost](Migration.md) was run on a real server.
 - **AI agents:** `llms.txt`, `llms-full.txt` and an Agent Skill, built into the binary for its own version ([AI agents](AI-Agents.md)).
 - **Several machines and people** can manage the same servers by sharing the manager key; a lock keeps two commands from changing a server at once.

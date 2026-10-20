@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod backup;
+pub mod command;
 pub mod local;
 pub mod merge;
 pub mod server;

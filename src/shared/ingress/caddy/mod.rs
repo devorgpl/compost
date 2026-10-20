@@ -194,7 +194,7 @@ impl IngressType for Caddy {
                 notes: &[
                     "caddysecurebuild: point the domains of your apps to the server and set `acme_email` in compost-server.prod.yaml.",
                     "caddysecurebuild: the first deploy builds Caddy on the server, which takes a few minutes.",
-                    "caddysecurebuild: add your own address to `whitelist`; lift a ban with `docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip <address>`.",
+                    "caddysecurebuild: add your own address to `whitelist`; lift a ban with `compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip <address>`.",
                 ],
                 requires: &[],
             };

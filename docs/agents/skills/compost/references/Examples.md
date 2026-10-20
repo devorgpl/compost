@@ -422,7 +422,7 @@ The worker connects with the two variables, e.g. in Python `await Client.connect
 compost app deploy --apply -f compost.yaml,.compost-local.yaml   # prefix: local
 compost app state orders-local
 #     workflow   jobs             temporal: namespace orders-local, retention 7 days
-docker exec compost-workflow-temporal-admin temporal workflow list -n orders-local
+compost server exec temporal --service admin -- temporal workflow list -n orders-local
 ```
 
 The workflows show in the UI at http://temporal.localhost:18080/ under namespace `orders-local`. `compost app remove orders-local --purge workflow` deletes the namespace with the app.
@@ -530,8 +530,8 @@ services:
 From an address that isn't whitelisted, a burst of failed logins gets it banned within seconds: every site then answers 403 until `ban_duration` (4 hours by default) passes. Slower attempts are cut off at 10 a minute with 429.
 
 ```sh
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
 ```
 
 ## A review copy of production

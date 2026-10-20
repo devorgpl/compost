@@ -9,6 +9,7 @@ use serde_yaml_ng::Value;
 
 use super::app::{AppConfig, link_name};
 use super::backup::{BUILTIN_TARGETS, Profile, check_target};
+use super::command::Template;
 use super::{check_name, merge};
 use crate::error::config_err;
 use crate::shared::{self, Kind, Monitored, Resolution, SharedAppConfig, SharedMonitoring};
@@ -24,6 +25,9 @@ pub struct ServerConfig {
     pub backup: Option<BackupSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notifications: Option<Notifications>,
+    /// Named commands run in shared apps' containers (`server cmd`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub commands: BTreeMap<String, Template>,
 }
 
 /// What the server reports by itself, and to which communication apps.
@@ -609,7 +613,77 @@ impl ServerConfig {
                 ));
             }
         }
+        for (name, command) in &self.commands {
+            check_name("command name", name)?;
+            self.validate_command(command)
+                .map_err(|e| config_err(format!("commands.{name}: {e:#}")))?;
+        }
         Ok(())
+    }
+
+    fn validate_command(&self, command: &Template) -> Result<()> {
+        if command.exec.is_some() || command.run.is_some() {
+            anyhow::bail!("`exec` and `run` are for commands of compost.yaml; use `shared_app`");
+        }
+        let Some(shared_app) = &command.shared_app else {
+            anyhow::bail!("`shared_app`: the shared app whose container runs the command");
+        };
+        let (kind, app) = self.find_shared(shared_app)?;
+        if app.is_external() {
+            anyhow::bail!(
+                "{kind} {} is external: compost runs no containers for it",
+                app.name
+            );
+        }
+        if shared::find_kind(kind).is_some_and(|k| !k.runs_service(app)) {
+            anyhow::bail!(
+                "{kind} {} runs only when it sends; it has no container to run a command in",
+                app.name
+            );
+        }
+        if let Some(service) = &command.service {
+            check_name("service", service)?;
+        }
+        command.validate(true)
+    }
+
+    /// A shared app by name, or `<kind>/<name>` when two kinds use the name.
+    pub fn find_shared(&self, name: &str) -> Result<(&str, &SharedAppConfig)> {
+        let (kind_filter, name) = match name.split_once('/') {
+            Some((kind, name)) => (Some(kind), name),
+            None => (None, name),
+        };
+        let matches: Vec<(&str, &SharedAppConfig)> = self
+            .shared_apps()
+            .filter(|(kind, app)| kind_filter.is_none_or(|k| k == *kind) && app.name == name)
+            .collect();
+        match matches.as_slice() {
+            [found] => Ok(*found),
+            [] => {
+                let known: Vec<&str> = self
+                    .shared_apps()
+                    .map(|(_, app)| app.name.as_str())
+                    .collect();
+                Err(config_err(format!(
+                    "no shared app `{name}` on this server (shared apps: {})",
+                    if known.is_empty() {
+                        "none".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                )))
+            }
+            _ => {
+                let names: Vec<String> = matches
+                    .iter()
+                    .map(|(kind, app)| format!("{kind}/{}", app.name))
+                    .collect();
+                Err(config_err(format!(
+                    "`{name}` is ambiguous; use {}",
+                    names.join(" or ")
+                )))
+            }
+        }
     }
 }
 
@@ -915,6 +989,41 @@ shared:
         );
         parse("shared: {database: [{name: pg, type: postgres, version: 16, external: {host: db}, configuration: {root_user: admin, root_password: x}}]}")
             .unwrap();
+    }
+
+    #[test]
+    fn commands_run_in_a_shared_app() {
+        const SHARED: &str = "shared: {database: [{name: pg, type: postgres, version: 18}, {name: ext, type: postgres, version: 18, external: {host: db}, configuration: {root_user: a, root_password: x}}], communication: [{name: chat, type: matrix, configuration: {homeserver: 'https://m.example.org', room: '!a:example.org'}}]}";
+        let config = parse(&format!(
+            "{SHARED}\ncommands: {{psql: {{shared_app: pg, env: {{PGPASSWORD: '{{secret:root_password}}'}}, command: [psql, -U, postgres]}}}}"
+        ))
+        .unwrap();
+        // Stored on the server with the config, so `server cmd` works from anywhere.
+        let stored = serde_yaml_ng::to_string(&config.without_secrets().unwrap()).unwrap();
+        assert!(stored.contains("{secret:root_password}"), "{stored}");
+        for (commands, message) in [
+            ("{x: {command: [sh]}}", "commands.x: `shared_app`"),
+            (
+                "{x: {shared_app: nope, command: [sh]}}",
+                "no shared app `nope`",
+            ),
+            ("{x: {shared_app: ext, command: [sh]}}", "is external"),
+            (
+                "{x: {shared_app: chat, command: [sh]}}",
+                "runs only when it sends",
+            ),
+            (
+                "{x: {shared_app: pg, exec: web, command: [sh]}}",
+                "use `shared_app`",
+            ),
+            (
+                "{x: {shared_app: pg, service: Bad, command: [sh]}}",
+                "invalid service `Bad`",
+            ),
+        ] {
+            let err = error(&format!("{SHARED}\ncommands: {commands}"));
+            assert!(err.contains(message), "{commands}: {err}");
+        }
     }
 
     #[test]

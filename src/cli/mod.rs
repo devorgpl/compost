@@ -99,6 +99,10 @@ pub enum ServerCommand {
     Restore(server::ServerRestoreArgs),
     /// Show the output of a shared application's containers
     Logs(server::ServerLogsArgs),
+    /// Run a command in a shared application's container, e.g. a shell
+    Exec(server::ServerExecArgs),
+    /// List the commands of compost-server.yaml, or run one by name in its shared app's container
+    Cmd(server::ServerCmdArgs),
     /// Show disk usage, then remove images no container uses (except those kept for
     /// `app rollback`), dangling images and the build cache
     Prune(server::ServerPruneArgs),
@@ -299,6 +303,8 @@ pub fn run(cli: Cli) -> Result<()> {
             server::deploy(&home, server, args, &connect)
         }
         Command::Server(ServerCommand::Logs(args)) => server::logs(&home, server, args, &connect),
+        Command::Server(ServerCommand::Exec(args)) => server::exec(&home, server, args, &connect),
+        Command::Server(ServerCommand::Cmd(args)) => server::cmd(&home, server, args, &connect),
         Command::Server(ServerCommand::Prune(args)) => server::prune(&home, server, args, &connect),
         Command::Secret(command) => secret::run(&home, server, command, &connect),
         Command::Config(command) => config::run(&home, command),

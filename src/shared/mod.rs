@@ -538,6 +538,7 @@ pub fn consumer_app(kind: &str, config: &SharedAppConfig, links: SharedLinks) ->
         services: links.services,
         app_services: links.app_services,
         backup: BackupConfig::default(),
+        commands: BTreeMap::new(),
     }
 }
 

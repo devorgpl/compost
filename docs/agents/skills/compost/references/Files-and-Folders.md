@@ -52,7 +52,7 @@ infra/
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
 ├── logs/backup.log                   output of scheduled backups and notifications
-├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
+├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target, variables of a `server cmd`
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`
@@ -150,4 +150,4 @@ docker compose -p compost-database-postgres18 exec compost-shared-postgres18 psq
 docker exec -it compost-database-postgres18 psql -U postgres
 ```
 
-From your machine, `compost app logs` and `compost server logs` show the same output without logging in to the server (see [Logs](Applications.md#logs)).
+From your machine, `compost app logs` and `compost server logs` show the same output without logging in to the server (see [Logs](Applications.md#logs)), and `compost app exec` and `compost server exec` run commands in the containers (see [Admin commands](Admin-Commands.md)).

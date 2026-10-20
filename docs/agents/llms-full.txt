@@ -56,7 +56,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | [Examples](Examples.md) | [Local development](Local-Development.md) | |
 | | [Backup and restore](Backup-and-Restore.md) | |
 | [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
-| [Facts and limits](Facts.md) | | |
+| [Facts and limits](Facts.md) | [Admin commands](Admin-Commands.md) | |
 
 ## Requirements
 
@@ -781,7 +781,7 @@ The worker connects with the two variables, e.g. in Python `await Client.connect
 compost app deploy --apply -f compost.yaml,.compost-local.yaml   # prefix: local
 compost app state orders-local
 #     workflow   jobs             temporal: namespace orders-local, retention 7 days
-docker exec compost-workflow-temporal-admin temporal workflow list -n orders-local
+compost server exec temporal --service admin -- temporal workflow list -n orders-local
 ```
 
 The workflows show in the UI at http://temporal.localhost:18080/ under namespace `orders-local`. `compost app remove orders-local --purge workflow` deletes the namespace with the app.
@@ -889,8 +889,8 @@ services:
 From an address that isn't whitelisted, a burst of failed logins gets it banned within seconds: every site then answers 403 until `ban_duration` (4 hours by default) passes. Slower attempts are cut off at 10 a minute with 429.
 
 ```sh
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
 ```
 
 ## A review copy of production
@@ -1288,7 +1288,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 - **Secrets:** in overlays you don't commit, or stored on the server so any machine or CI deploys with `compost.yaml` alone. Passwords you leave out are generated and kept ([Secrets](Secrets.md)).
 - **Backup and restore:** apps (database dumps, buckets, volumes, sources, images) and shared apps, to your machine, a folder on the server or S3; profiles with `keep`, scheduled by cron on the server, or run before each deploy. Restores also make copies of an app and move everything to a new server ([Backup and restore](Backup-and-Restore.md)).
 - **Notifications** of failed scheduled backups, apps or shared apps going down, and a full disk, to webhook, Slack, Mattermost, Discord, Matrix or email ([Notifications](Notifications.md)).
-- **Day to day:** `app state`, `app logs`, `app exec`, `app run`, `server state`, `server logs`, `connector list`, `server prune`.
+- **Day to day:** `app state`, `app logs`, `app exec`, `app run`, `app cmd`, `server state`, `server logs`, `server exec`, `server cmd`, `connector list`, `server prune`.
 - **Gradual migration** of servers set up by hand: Caddy serves existing containers, apps keep their databases and volumes, and every phase can be undone. The procedure in [Migrating to compost](Migration.md) was run on a real server.
 - **AI agents:** `llms.txt`, `llms-full.txt` and an Agent Skill, built into the binary for its own version ([AI agents](AI-Agents.md)).
 - **Several machines and people** can manage the same servers by sharing the manager key; a lock keeps two commands from changing a server at once.
@@ -1951,6 +1951,8 @@ When stdin and stdout are terminals, the command gets a terminal on the server (
 
 They change what the command changes: there is no dry run and no lock.
 
+Commands you run more than once can go under `commands` in compost.yaml, with checked arguments and a confirmation, and run by name: `compost app cmd myapp-staging migrate`. See [Admin commands](Admin-Commands.md#commands-in-apps).
+
 ## Removing
 
 ```sh
@@ -2020,6 +2022,15 @@ The output of a shared app's containers, like [`app logs`](Applications.md#logs)
 ```sh
 compost server logs caddy-main [--follow] [--tail 100] [--since 10m] [--timestamps]
 compost server logs database/postgres18     # <kind>/<name> when two kinds use the name
+```
+
+A command in a shared app's container, like [`app exec`](Applications.md#commands-in-containers), and named commands from `commands` in compost-server.yaml ([Admin commands](Admin-Commands.md)):
+
+```sh
+compost server exec postgres18 -- psql -U postgres
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server cmd                                  # lists the named commands
+compost server cmd unban 198.51.100.7
 ```
 
 ## Deploying shared apps
@@ -2176,10 +2187,12 @@ Changing `defaults` or a zone applies to every site on the next `server deploy`,
 To see and lift bans:
 
 ```sh
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
-docker exec compost-ingress-caddy-main-crowdsec cscli alerts list
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server exec caddy-main --service crowdsec -- cscli alerts list
+compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
 ```
+
+To run them by name (`compost server cmd unban 198.51.100.7`), add them to [`commands`](Admin-Commands.md#named-commands).
 
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 
@@ -2288,7 +2301,7 @@ shared:
 
 It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
 
-A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `docker exec compost-storage-<name> /garage …` and use its `url` as `endpoint`.
+A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `compost server exec <name> -- /garage …` and use its `url` as `endpoint`.
 
 **s3**: an S3 service compost doesn't run. It needs only `external`; links pin it with `instance` and give their bucket and key.
 
@@ -2404,7 +2417,7 @@ shared:
 The project runs four containers:
 - **schema** creates or updates Temporal's tables, then exits. It runs before the server on every start, and does nothing when the tables are current.
 - **server**, reached by apps on network `compost-wf-<name>` at `<name>:7233`. Its Prometheus metrics are on port 9090, not published.
-- **admin**, Temporal's admin tools, where compost runs the `temporal` CLI to create and delete namespaces. `docker exec compost-workflow-<name>-admin temporal …` gives you the same CLI.
+- **admin**, Temporal's admin tools, where compost runs the `temporal` CLI to create and delete namespaces. `compost server exec <name> --service admin -- temporal …` gives you the same CLI.
 - **ui**, with `ui`.
 
 With `oidc`, the link creates a client in the realm; the realm's users can log in to the UI and see every namespace. compost creates no users: add them in Keycloak's admin console, or name the realm of your staff with `realm`. Temporal's own API has no login: an app on `compost-wf-<name>` can reach every namespace, not only its own.
@@ -3248,6 +3261,179 @@ docker run --rm <image> describe
 
 ---
 
+<!-- Admin-Commands.md -->
+
+# Admin commands
+
+Most admin tasks on a server come down to running a tool in a container: `cscli` in CrowdSec, `psql` in Postgres, `kcadm.sh` in Keycloak, a migration in your app. compost runs them from your machine through `-s <server>`, like everything else. You don't need an SSH login with Docker rights, and you don't need to know the containers' names.
+
+| Command | What |
+|---|---|
+| `compost server exec <shared app> -- <command>` | Any command in a shared app's container, e.g. a shell |
+| `compost app exec` / `app run` | Any command in an app's container ([Commands in containers](Applications.md#commands-in-containers)) |
+| `compost server cmd <name> [args]` | A command from `commands` in compost-server.yaml |
+| `compost app cmd <instance> <name> [args]` | A command from `commands` in compost.yaml |
+
+## Commands in shared apps
+
+```sh
+compost server exec postgres18 -- psql -U postgres                     # psql on a terminal
+compost server exec postgres18 -- pg_dump -U postgres shop > shop.sql
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server exec temporal --service admin -- temporal operator namespace list
+compost server exec database/postgres18 -- sh                         # <kind>/<name> when two kinds use the name
+```
+
+The command and its arguments come after `--`. Without `--service`, it runs in the shared app's main container. `--service` picks one of its other containers by the end of its name:
+
+| Type | Other services |
+|---|---|
+| `caddysecurebuild` | `crowdsec`: the CrowdSec agent, with `cscli` |
+| `openobserve` | `collector` |
+| `temporal` | `admin`: the `temporal` CLI, with `TEMPORAL_ADDRESS` set; `ui`, if the UI is on |
+
+An unknown service exits 2 and lists the shared app's other services. External shared apps and communication apps have no containers, so `server exec` refuses them.
+
+As with `app exec`, the command gets a terminal on the server when stdin and stdout are terminals, so a shell or `psql` works and Ctrl-C goes to the command. Otherwise input and output can be piped. compost exits with the command's exit status. `server exec` changes whatever the command changes: there is no dry run and no lock.
+
+## Named commands
+
+Commands you run more than once can go under `commands` in compost-server.yaml. They are reviewed with the config they act on, and anyone with access to the server runs them by name:
+
+```yaml
+commands:
+  bans:
+    description: Addresses banned by this server's CrowdSec
+    shared_app: caddy-main
+    service: crowdsec
+    command: [cscli, decisions, list]
+
+  unban:
+    description: Lift a CrowdSec ban
+    shared_app: caddy-main
+    service: crowdsec
+    args:
+      ip: {type: ip}
+    command: [cscli, decisions, delete, --ip, "{ip}"]
+    confirm: true
+
+  sql:
+    description: One statement as root on MariaDB
+    shared_app: mariadb11
+    args:
+      statement: {description: e.g. "show processlist"}
+      database: {pattern: "[a-z0-9_]+", default: ""}
+    env:
+      MYSQL_PWD: "{secret:root_password}"
+    command: [mariadb, -u, root, -e, "{statement}", "{database}"]
+
+  kc-sessions:
+    description: Active sessions per client in a realm
+    shared_app: keycloak
+    args:
+      realm: {pattern: "[a-z0-9-]+"}
+    command:
+      - bash
+      - -c
+      - |
+        kcadm.sh() { /opt/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm-cmd.config; }
+        kcadm.sh config credentials --server http://localhost:8080 --realm master \
+          --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null
+        kcadm.sh get "realms/$1/client-session-stats"
+      - _
+      - "{realm}"
+```
+
+`server deploy` stores them with the rest of the config on the server. So `server cmd` uses the commands of the last deploy, and works from any machine, CI included, without the local files.
+
+```sh
+compost -s prod server cmd                          # lists them
+#   bans                        Addresses banned by this server's CrowdSec  (caddy-main/crowdsec)
+#   kc-sessions <realm>         Active sessions per client in a realm       (keycloak)
+#   sql <statement> [database]  One statement as root on MariaDB            (mariadb11)
+#   unban <ip>                  Lift a CrowdSec ban                         (caddy-main/crowdsec, asks)
+compost -s prod server cmd bans
+compost -s prod server cmd unban 198.51.100.7       # asks first; --yes doesn't
+compost -s prod server cmd sql "show tables" shop
+compost -s prod server cmd sql --database shop "show tables"
+compost -s prod server cmd unban --help             # its arguments and what it runs
+compost -s prod server cmd unban 198.51.100.7 --dry-run
+```
+
+Values go in the order of `args`, or by name as `--<arg> <value>` or `--<arg>=<value>`. `--yes`, `--dry-run` and `--help` come after the command's name too. compost's own options, such as `-s` and `-v`, go before `cmd`. A wrong or missing value exits 2 before anything runs, with the command's usage.
+
+`--dry-run` shows the container, the command with its values and the names of its environment variables, never their values. It runs nothing.
+
+### Keys
+
+| Key | Default | Meaning |
+|---|---|---|
+| `description` | – | Shown by the list and by `--help` |
+| `shared_app` | required | The shared app whose container runs it: a name, or `<kind>/<name>` |
+| `service` | its main container | Another of its services, as for `server exec --service` |
+| `args` | – | The values it takes, in order (see below) |
+| `env` | – | Environment variables of the command; values may use `{<arg>}` and `{secret:<key>}` |
+| `command` | required | The program and its arguments, as a list. `{<arg>}` is replaced by the argument's value |
+| `confirm` | `false` | Ask before running, unless `--yes`. Set it for commands that change something |
+
+`commands` keys are names like shared apps' names: lowercase letters, digits and `-`.
+
+### Arguments
+
+| Key | Default | Meaning |
+|---|---|---|
+| `type` | `string` | `string`, `int`, `ip` (IPv4 or IPv6), `cidr` (e.g. `203.0.113.0/24`), `duration` (e.g. `30s`, `4h`), `email` or `enum` |
+| `pattern` | – | `string` only: a regular expression the whole value must match |
+| `values` | – | `enum` only, required: the allowed values |
+| `default` | – | Makes the argument optional. `""` leaves out a word of `command` that is only this placeholder |
+| `description` | – | Shown by `--help` |
+
+Arguments with a default come after those without. Every argument must be used in `command` or `env`. Argument names are lowercase letters, digits and `-`. `yes`, `dry-run` and `help` are taken.
+
+A `string` without a `pattern` can't start with `-`, so it can't become an option of the tool it's passed to. No value can contain line breaks or other control characters.
+
+### How values are passed
+
+- **`command` is a list, never a shell string.** Each item is one argument of the program, whatever the values in it hold: `unban "1.2.3.4; rm -rf /data"` passes one (invalid) address to `cscli`. A command that needs a shell writes `[sh, -c, '… "$1" …', _, "{arg}"]`, so values reach the script as positional parameters, as `kc-sessions` does above.
+- **Placeholders** are `{<arg>}` for an argument and `{secret:<key>}` for a secret. Other text in braces stays as it is, e.g. `{print $1}` in an `awk` program.
+- **Secrets only go through `env`.** `{secret:<key>}` is a value of the shared app's `connectors/<kind>/<name>/root-connector.yaml` on the server, where compost keeps its administrator's credentials, including generated ones: `root_password` for postgres, mariadb and mysql, `admin_password` for keycloak, `root_password` for openobserve. compost writes the variables to a file only the server user can read. The script on the server reads that file and deletes it, then runs `docker compose exec -e <NAME>`. The values never appear in the script, in `-v` output or in the process list. A secret in `command` exits 2 when you deploy.
+- Many containers already hold their credentials in their own environment, e.g. Keycloak's `KC_BOOTSTRAP_ADMIN_PASSWORD`, and Postgres lets `postgres` in over its local socket. Commands there don't need a secret.
+
+### Checks
+
+`server deploy` (also with `--dry-run`) checks every command: `shared_app` exists, runs containers and isn't external; `command` is a list; placeholders and arguments match; `{secret:…}` appears only in `env`. Whether `service` exists, and which keys `root-connector.yaml` has, are checked when the command runs.
+
+## Commands in apps
+
+An app's `compost.yaml` can have `commands` too, run in one of its compose services:
+
+```yaml
+commands:
+  migrate:
+    description: Apply database migrations
+    run: backend                       # a new one-off container, like `app run`
+    command: [python, manage.py, migrate]
+    confirm: true
+  create-admin:
+    exec: backend                      # the running container, like `app exec`
+    args:
+      email: {type: email}
+    command: [python, manage.py, createsuperuser, --noinput, --email, "{email}"]
+```
+
+```sh
+compost app cmd myapp-staging                       # lists them
+compost app cmd myapp-staging migrate --yes
+compost app cmd myapp-staging create-admin admin@example.com
+compost app cmd -f compost.yaml,.compost-staging.yaml create-admin admin@example.com   # instance from files
+```
+
+The keys are those of [named commands](#keys), with `exec: <service>` or `run: <service>` in place of `shared_app` and `service`. The commands are those of the deployed instance: `app deploy` stores them with its config. Without `-f`, `--app` or `--prefix`, the first word is the instance, as `app list` shows it.
+
+App commands can't use `{secret:…}`: their containers already get the app's secrets and link variables (`DATABASE_URL`, …) from its environment. A `run` command starts the services the service `depends_on`, like `app run` without `--no-deps`.
+
+---
+
 <!-- Configuration.md -->
 
 # Configuration
@@ -3315,7 +3501,11 @@ backup:
   profiles:                            # changes to the server's profiles, `false` to opt out, or the app's own
     daily: false
     anonymized: {include: [volumes], volumes: [anon-dumps], before_backup: [ … ]}
+commands:                              # run by name with `app cmd`
+  migrate: {run: backend, command: [python, manage.py, migrate], confirm: true}
 ```
+
+`commands`: [Commands in apps](Admin-Commands.md#commands-in-apps).
 
 ### `backup`
 
@@ -3493,6 +3683,19 @@ notifications:
 
 See [Notifications](Notifications.md#what-is-sent).
 
+```yaml
+commands:                              # run by name with `server cmd`
+  unban:
+    description: Lift a CrowdSec ban
+    shared_app: caddy-main
+    service: crowdsec
+    args: {ip: {type: ip}}
+    command: [cscli, decisions, delete, --ip, "{ip}"]
+    confirm: true
+```
+
+See [Named commands](Admin-Commands.md#keys) for every key, the argument types and how secrets are passed.
+
 `targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
 Each type's keys: [Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types) (communication types: [Notifications](Notifications.md#channels)), and [External databases](Servers-and-Shared-Apps.md#external-databases) for `external`. At most one ingress per server: `caddy`, or `caddysecurebuild` for Caddy with CrowdSec bans, AppSec and rate limits (its `configuration.security`: [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)).
@@ -3614,7 +3817,7 @@ infra/
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
 ├── logs/backup.log                   output of scheduled backups and notifications
-├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target
+├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target, variables of a `server cmd`
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`
@@ -3712,7 +3915,7 @@ docker compose -p compost-database-postgres18 exec compost-shared-postgres18 psq
 docker exec -it compost-database-postgres18 psql -U postgres
 ```
 
-From your machine, `compost app logs` and `compost server logs` show the same output without logging in to the server (see [Logs](Applications.md#logs)).
+From your machine, `compost app logs` and `compost server logs` show the same output without logging in to the server (see [Logs](Applications.md#logs)), and `compost app exec` and `compost server exec` run commands in the containers (see [Admin commands](Admin-Commands.md)).
 
 ---
 
@@ -3788,6 +3991,8 @@ Commands:
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
   logs      Show the output of a shared application's containers
+  exec      Run a command in a shared application's container, e.g. a shell
+  cmd       List the commands of compost-server.yaml, or run one by name in its shared app's container
   prune     Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
   help      Print this message or the help of the given subcommand(s)
 
@@ -3952,6 +4157,42 @@ Options:
   -h, --help                 Print help
 ```
 
+## `compost server exec`
+
+```text
+Run a command in a shared application's container, e.g. a shell
+
+Usage: compost server exec [OPTIONS] <NAME> -- <COMMAND>...
+
+Arguments:
+  <NAME>        Shared app, as in compost-server.yaml, e.g. `postgres18` (`<kind>/<name>` if two kinds use the name)
+  <COMMAND>...  The command and its arguments, after `--`, e.g. `-- sh` or `-- psql -U postgres`
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --service <SERVICE>    Another service of the shared app, e.g. `crowdsec` of a caddysecurebuild ingress (default: its main container)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost server cmd`
+
+```text
+List the commands of compost-server.yaml, or run one by name in its shared app's container
+
+Usage: compost server cmd [OPTIONS] [COMMAND] [ARGS]...
+
+Arguments:
+  [COMMAND] [ARGS]...  Command from `commands` of compost-server.yaml, then its arguments, in order or as `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
 ## `compost server prune`
 
 ```text
@@ -4015,6 +4256,7 @@ Commands:
   logs      Show the output of an application instance's containers
   exec      Run a command in a service's running container, e.g. a shell
   run       Run a command in a new one-off container of a service, e.g. a migration
+  cmd       List the commands of the instance's compost.yaml, or run one by name
   remove    Remove an application instance
   backup    Back up an application instance (or all of them)
   restore   Restore an application instance from a compost backup
@@ -4174,6 +4416,26 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --service <SERVICE>    Compose service whose container runs the command
       --no-deps              Don't start the services it depends on (`depends_on`)
+  -h, --help                 Print help
+```
+
+## `compost app cmd`
+
+```text
+List the commands of the instance's compost.yaml, or run one by name
+
+Usage: compost app cmd [OPTIONS] [INSTANCE] [COMMAND] [ARGS]...
+
+Arguments:
+  [INSTANCE] [COMMAND] [ARGS]...  Instance as shown by `app list`, then the command's name and its arguments; with -f, --app or --prefix, the instance is left out. Without a command, lists them. Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`) come after its name
+
+Options:
+  -f, --file <FILES>         Config files merged in order, to select the instance (repeatable or comma-separated); the commands are those of the deployed instance
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --app <APP>            Application name (instead of config files)
+  -v, --verbose              Print every command run on the server
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

@@ -20,42 +20,8 @@ pub fn logs(
     logs::check(options)?;
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let config = instance::server_config(&ctx)?;
-    let (kind_filter, name) = match name.split_once('/') {
-        Some((kind, name)) => (Some(kind), name),
-        None => (None, name),
-    };
-    let matches: Vec<(&String, &shared::SharedAppConfig)> = config
-        .shared
-        .iter()
-        .filter(|(kind, _)| kind_filter.is_none_or(|k| k == kind.as_str()))
-        .flat_map(|(kind, apps)| apps.iter().map(move |app| (kind, app)))
-        .filter(|(_, app)| app.name == name)
-        .collect();
-    let (kind, app) = match matches.as_slice() {
-        [found] => *found,
-        [] => {
-            let known: Vec<String> = config
-                .shared
-                .values()
-                .flatten()
-                .map(|app| app.name.clone())
-                .collect();
-            return Err(config_err(format!(
-                "no shared app `{name}` on this server (shared apps: {})",
-                known.join(", ")
-            )));
-        }
-        _ => {
-            let names: Vec<String> = matches
-                .iter()
-                .map(|(kind, app)| format!("{kind}/{}", app.name))
-                .collect();
-            return Err(config_err(format!(
-                "`{name}` is ambiguous; use {}",
-                names.join(" or ")
-            )));
-        }
-    };
+    let (kind, app) = config.find_shared(name)?;
+    let name = app.name.as_str();
     if app.is_external() {
         return Err(config_err(format!(
             "{kind} {name} is external: compost runs no containers for it"

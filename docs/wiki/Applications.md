@@ -603,6 +603,8 @@ When stdin and stdout are terminals, the command gets a terminal on the server (
 
 They change what the command changes: there is no dry run and no lock.
 
+Commands you run more than once can go under `commands` in compost.yaml, with checked arguments and a confirmation, and run by name: `compost app cmd myapp-staging migrate`. See [Admin commands](Admin-Commands.md#commands-in-apps).
+
 ## Removing
 
 ```sh

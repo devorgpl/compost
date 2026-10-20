@@ -36,6 +36,8 @@ pub enum AppCommand {
     Exec(AppExecArgs),
     /// Run a command in a new one-off container of a service, e.g. a migration
     Run(AppRunArgs),
+    /// List the commands of the instance's compost.yaml, or run one by name
+    Cmd(AppCmdArgs),
     /// Remove an application instance
     Remove(RemoveArgs),
     /// Back up an application instance (or all of them)
@@ -181,6 +183,35 @@ pub struct AppLogsArgs {
     pub service: Vec<String>,
     #[command(flatten)]
     pub logs: super::LogsArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct AppCmdArgs {
+    /// Instance as shown by `app list`, then the command's name and its arguments;
+    /// with -f, --app or --prefix, the instance is left out. Without a command, lists them.
+    /// Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`)
+    /// come after its name
+    #[arg(
+        value_name = "INSTANCE] [COMMAND] [ARGS",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    pub words: Vec<String>,
+    /// Config files merged in order, to select the instance (repeatable or comma-separated);
+    /// the commands are those of the deployed instance
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_delimiter = ',',
+        conflicts_with = "app"
+    )]
+    pub files: Vec<PathBuf>,
+    /// Application name (instead of config files)
+    #[arg(long, requires = "prefix")]
+    pub app: Option<String>,
+    /// Instance prefix (overrides the one from the config files)
+    #[arg(long)]
+    pub prefix: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -370,6 +401,31 @@ pub fn run(
                 args.exec,
                 mode,
                 connect,
+            )
+        }
+        AppCommand::Cmd(args) => {
+            let mut words = args.words.into_iter();
+            let by_name = !args.files.is_empty() || args.app.is_some() || args.prefix.is_some();
+            let instance = if by_name { None } else { words.next() };
+            let selector = selector(&InstanceArgs {
+                instance,
+                files: args.files,
+                app: args.app,
+                prefix: args.prefix,
+            })?;
+            let name = words.next();
+            if let Some(name) = &name {
+                check_name("command name", name)?;
+            }
+            let words: Vec<String> = words.collect();
+            let connector = connector::open(&server, home, connect)?;
+            exec::template(
+                connector.as_ref(),
+                server.server_home(),
+                &manager.manager_key,
+                &selector,
+                name.as_deref(),
+                &words,
             )
         }
         AppCommand::Releases(args) => {

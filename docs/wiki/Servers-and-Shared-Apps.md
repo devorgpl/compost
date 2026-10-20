@@ -53,6 +53,15 @@ compost server logs caddy-main [--follow] [--tail 100] [--since 10m] [--timestam
 compost server logs database/postgres18     # <kind>/<name> when two kinds use the name
 ```
 
+A command in a shared app's container, like [`app exec`](Applications.md#commands-in-containers), and named commands from `commands` in compost-server.yaml ([Admin commands](Admin-Commands.md)):
+
+```sh
+compost server exec postgres18 -- psql -U postgres
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server cmd                                  # lists the named commands
+compost server cmd unban 198.51.100.7
+```
+
 ## Deploying shared apps
 
 ```sh
@@ -207,10 +216,12 @@ Changing `defaults` or a zone applies to every site on the next `server deploy`,
 To see and lift bans:
 
 ```sh
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions list
-docker exec compost-ingress-caddy-main-crowdsec cscli alerts list
-docker exec compost-ingress-caddy-main-crowdsec cscli decisions delete --ip 198.51.100.7
+compost server exec caddy-main --service crowdsec -- cscli decisions list
+compost server exec caddy-main --service crowdsec -- cscli alerts list
+compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
 ```
+
+To run them by name (`compost server cmd unban 198.51.100.7`), add them to [`commands`](Admin-Commands.md#named-commands).
 
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 
@@ -319,7 +330,7 @@ shared:
 
 It runs as the server user, keeps its metadata and objects in `meta/` and `data/`, and is reached on `compost-storage-<name>` at `http://<name>:3900`. The first link applies a one-node layout. Garage covers what apps usually need (buckets, multipart uploads, presigned URLs) but not everything AWS has: no versioning, object lock or bucket policies. A server backup stops Garage briefly and copies its folders.
 
-A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `docker exec compost-storage-<name> /garage …` and use its `url` as `endpoint`.
+A Garage on one server can also be the [S3 backup target](Backup-and-Restore.md#s3-targets) of another: create a bucket and key for it with `compost server exec <name> -- /garage …` and use its `url` as `endpoint`.
 
 **s3**: an S3 service compost doesn't run. It needs only `external`; links pin it with `instance` and give their bucket and key.
 
@@ -435,7 +446,7 @@ shared:
 The project runs four containers:
 - **schema** creates or updates Temporal's tables, then exits. It runs before the server on every start, and does nothing when the tables are current.
 - **server**, reached by apps on network `compost-wf-<name>` at `<name>:7233`. Its Prometheus metrics are on port 9090, not published.
-- **admin**, Temporal's admin tools, where compost runs the `temporal` CLI to create and delete namespaces. `docker exec compost-workflow-<name>-admin temporal …` gives you the same CLI.
+- **admin**, Temporal's admin tools, where compost runs the `temporal` CLI to create and delete namespaces. `compost server exec <name> --service admin -- temporal …` gives you the same CLI.
 - **ui**, with `ui`.
 
 With `oidc`, the link creates a client in the realm; the realm's users can log in to the UI and see every namespace. compost creates no users: add them in Keycloak's admin console, or name the realm of your staff with `realm`. Temporal's own API has no login: an app on `compost-wf-<name>` can reach every namespace, not only its own.

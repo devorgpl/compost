@@ -21,6 +21,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Local development](Local-Development.md): `compost dev up` on this machine (adds missing shared apps, reuses existing ones), several projects, `dev up --host` and `dev env` for apps run outside Docker, `dev reset`, `dev stop`, `dev down`
 - [Secrets](Secrets.md): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](Backup-and-Restore.md): app and server backups, targets, formats, restoring, copies, moving to a new server
+- [Admin commands](Admin-Commands.md): `server exec`, named commands in compost-server.yaml and compost.yaml (`server cmd`, `app cmd`): typed arguments, secrets through `env`, confirmation, dry run
 - [Notifications](Notifications.md): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
 
 ## Reference

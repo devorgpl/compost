@@ -63,7 +63,11 @@ backup:
   profiles:                            # changes to the server's profiles, `false` to opt out, or the app's own
     daily: false
     anonymized: {include: [volumes], volumes: [anon-dumps], before_backup: [ … ]}
+commands:                              # run by name with `app cmd`
+  migrate: {run: backend, command: [python, manage.py, migrate], confirm: true}
 ```
+
+`commands`: [Commands in apps](Admin-Commands.md#commands-in-apps).
 
 ### `backup`
 
@@ -240,6 +244,19 @@ notifications:
 ```
 
 See [Notifications](Notifications.md#what-is-sent).
+
+```yaml
+commands:                              # run by name with `server cmd`
+  unban:
+    description: Lift a CrowdSec ban
+    shared_app: caddy-main
+    service: crowdsec
+    args: {ip: {type: ip}}
+    command: [cscli, decisions, delete, --ip, "{ip}"]
+    confirm: true
+```
+
+See [Named commands](Admin-Commands.md#keys) for every key, the argument types and how secrets are passed.
 
 `targets` keys: [S3 targets](Backup-and-Restore.md#s3-targets). `profiles` keys: `include`, `links`, `format`, `target`, `keep`, `schedule` (a cron expression: [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) and `server` (whether `backup run` and the schedule also back up the shared apps, default `true`). See [Profiles](Backup-and-Restore.md#profiles).
 
