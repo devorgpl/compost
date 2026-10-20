@@ -189,6 +189,32 @@ services:
 
 Longer paths win, `/` comes last, and paths no route matches get a 404. A domain can be used by only one instance on a server.
 
+An entry can also limit request bodies, change response headers, redirect, and set headers for a service:
+
+```yaml
+services:
+  ingress:
+    - name: site
+      max_body_size: 20MB        # larger requests get 413; KB, MB, GB, KiB, MiB, GiB or bytes
+      headers:                   # response headers of every route
+        remove: [Server]
+        set: {X-Frame-Options: DENY}
+      routes:
+        - name: home
+          path: /
+          exact: true            # only `/` itself, not the paths below it
+          redirect: {to: /web/, status: 302}   # status default 302; also 301, 303, 307, 308
+        - name: api
+          target: api
+          port: 5000
+          path: /backend
+          strip_prefix: true
+          header_up: {X-Real-IP: "{remote_host}"}   # request headers for the service
+        - {name: web, target: web, port: 80, path: /web}
+```
+
+A route has either `target` and `port`, `link`, or `redirect`. `redirect.to` is a path or an `http(s)://` URL; Caddy placeholders work there and in header values, e.g. `https://example.com{uri}`. A redirect on `/` without `exact` catches every path no other route matches. Of two routes with the same path, the `exact` one wins on that path. Header values can't contain quotes, backslashes or line breaks.
+
 A route can also serve another link of the app instead of a service, with `link: <kind>/<entry>`. This is how a Keycloak realm gets its own domain; see [OIDC links](#oidc-links).
 
 ### Request filtering

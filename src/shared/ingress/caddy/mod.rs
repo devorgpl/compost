@@ -12,7 +12,7 @@ use minijinja::context;
 use serde::Deserialize;
 
 use self::security::ServerSecurity;
-use super::base::{self, IngressLink};
+use super::base::{self, IngressLink, RouteRecord};
 use super::security::LinkSecurity;
 use super::{IngressType, KIND};
 use crate::config::check_name;
@@ -107,10 +107,24 @@ impl Caddy {
         let caddy: CaddyConfig = ctx.shared.configuration()?;
         let mut routes = base::routes(ctx, link)?;
         // The `/` route becomes the fallback for everything not matched before.
-        let fallback = routes
+        let fallback = match routes.iter().position(|r| r.path == "/" && !r.exact) {
+            Some(i) => handler_lines(&routes.remove(i)),
+            None => vec!["respond 404".to_string()],
+        };
+        let routes: Vec<_> = routes
             .iter()
-            .position(|r| r.path == "/")
-            .map(|i| routes.remove(i).upstream);
+            .map(|r| {
+                let paths = if r.exact {
+                    r.path.clone()
+                } else {
+                    format!("{0} {0}/*", r.path)
+                };
+                context! { name => r.name.as_str(), paths, lines => handler_lines(r) }
+            })
+            .collect();
+        let mut site_lines =
+            self.site_lines(&caddy, link.security.as_ref(), &ctx.link_id(&link.name));
+        site_lines.extend(response_lines(link));
         let scheme = if caddy.tls == Tls::Off { "http://" } else { "" };
         let addresses: Vec<String> = link
             .domains
@@ -123,8 +137,8 @@ impl Caddy {
                 instance => ctx.app.instance(),
                 entry => link.name.as_str(),
                 addresses => addresses.join(", "),
-                site_lines => self.site_lines(&caddy, link.security.as_ref(), &ctx.link_id(&link.name)),
-                routes => minijinja::value::Serde(&routes),
+                site_lines,
+                routes,
                 fallback,
             },
         )
@@ -650,6 +664,55 @@ impl Caddy {
     }
 }
 
+/// The inside of a route's `handle` block.
+fn handler_lines(route: &RouteRecord) -> Vec<String> {
+    if let Some(redirect) = &route.redirect {
+        // `*`: a first argument starting with `/` would be a path matcher.
+        return vec![format!("redir * {} {}", redirect.to, redirect.status)];
+    }
+    let mut lines = Vec::new();
+    if let Some(strip) = &route.strip_path {
+        lines.push(format!("uri strip_prefix {strip}"));
+    } else if route.strip_prefix {
+        lines.push(format!("uri strip_prefix {}", route.path));
+    }
+    if route.header_up.is_empty() {
+        lines.push(format!("reverse_proxy {}", route.upstream));
+    } else {
+        lines.push(format!("reverse_proxy {} {{", route.upstream));
+        for (name, value) in &route.header_up {
+            lines.push(format!("\theader_up {name} \"{value}\""));
+        }
+        lines.push("}".to_string());
+    }
+    lines
+}
+
+/// Site directives of an ingress link: the request body limit and response headers.
+fn response_lines(link: &IngressLink) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(size) = &link.max_body_size {
+        lines.extend([
+            "request_body {".to_string(),
+            format!("\tmax_size {size}"),
+            "}".to_string(),
+        ]);
+    }
+    let headers = &link.headers;
+    if !headers.is_empty() {
+        lines.push("header {".to_string());
+        lines.extend(headers.remove.iter().map(|name| format!("\t-{name}")));
+        lines.extend(
+            headers
+                .set
+                .iter()
+                .map(|(name, value)| format!("\t{name} \"{value}\"")),
+        );
+        lines.push("}".to_string());
+    }
+    lines
+}
+
 /// Compose service of the CrowdSec agent; unique, since Caddy also sits on
 /// the ingress network.
 fn crowdsec_service(name: &str) -> String {
@@ -947,6 +1010,67 @@ mod tests {
         let no_metrics = caddyfile("{name: c, type: caddy, monitoring: {metrics: false}}");
         assert!(!no_metrics.contains("metrics"), "{no_metrics}");
         assert!(!monitored.contains("tracing"), "{monitored}");
+    }
+
+    #[test]
+    fn renders_redirects_headers_and_body_size() {
+        let app: crate::config::app::AppConfig = serde_yaml_ng::from_str(
+            "{name: esr, prefix: dev, app_services: [{name: api, service: api}, {name: web, service: web}]}",
+        )
+        .unwrap();
+        let connector = crate::connector::local::Local { verbose: false };
+        let server = ServerCtx {
+            connector: &connector,
+            home: "/nonexistent".into(),
+        };
+        let shared: SharedAppConfig =
+            serde_yaml_ng::from_str("{name: caddy-main, type: caddy}").unwrap();
+        let ctx = AppCtx {
+            server: &server,
+            app: &app,
+            shared: &shared,
+            peers: &[],
+        };
+        let site = |text: &str| {
+            let link: IngressLink = serde_yaml_ng::from_str(text).unwrap();
+            CADDY.site_text(&ctx, &link).unwrap()
+        };
+
+        let text = site(
+            "{name: esr, domains: [dev1.example.eu], max_body_size: 20MB, headers: {remove: [Server], set: {X-Frame-Options: DENY}}, routes: [
+              {name: home, path: /, exact: true, redirect: {to: /esr-web/}},
+              {name: api, target: api, port: 5000, path: /esr-backend, strip_prefix: true, header_up: {X-Real-IP: '{remote_host}'}},
+              {name: web, target: web, port: 80, path: /esr-web}]}",
+        );
+        assert!(
+            text.contains(concat!(
+                "\timport compost_site\n",
+                "\trequest_body {\n\t\tmax_size 20MB\n\t}\n",
+                "\theader {\n\t\t-Server\n\t\tX-Frame-Options \"DENY\"\n\t}\n",
+                "\t@api path /esr-backend /esr-backend/*\n",
+                "\thandle @api {\n\t\turi strip_prefix /esr-backend\n",
+                "\t\treverse_proxy esr-dev-api:5000 {\n\t\t\theader_up X-Real-IP \"{remote_host}\"\n\t\t}\n\t}\n",
+                "\t@web path /esr-web /esr-web/*\n",
+                "\thandle @web {\n\t\treverse_proxy esr-dev-web:80\n\t}\n",
+                "\t@home path /\n",
+                "\thandle @home {\n\t\tredir * /esr-web/ 302\n\t}\n",
+                "\thandle {\n\t\trespond 404\n\t}\n",
+            )),
+            "{text}"
+        );
+
+        // A redirect on `/` catches every path no other route matches.
+        let text = site(
+            "{name: esr, domains: [a.example.eu], routes: [{name: web, target: web, port: 80, path: /web}, {name: home, redirect: {to: /web/, status: 301}}]}",
+        );
+        assert!(
+            text.contains("\thandle {\n\t\tredir * /web/ 301\n\t}\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("request_body") && !text.contains("header"),
+            "{text}"
+        );
     }
 
     #[test]

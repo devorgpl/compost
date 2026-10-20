@@ -196,6 +196,8 @@ services:
     - {name: site, domains: [shop.example.com, www.shop.example.com]}
 ```
 
+Directives of a hand-written site have keys in the ingress entry: `request_body { max_size … }` is `max_body_size`, `header` lines are `headers`, `redir` is a route with `redirect`, `header_up` goes on a route ([Ingress links](Applications.md#ingress-links)).
+
 compost passes the variables named in `environment` (here `DATABASE_URL`) to the services, built from the external database's host and these credentials. It adds the database's network to them too. Variables in the app's own compose file with the same name are overridden.
 
 The app's compose file often also runs its database and a proxy, and the new deployment must not start them again. Its volumes must be the existing ones. `compose_overrides` changes that without editing the file:

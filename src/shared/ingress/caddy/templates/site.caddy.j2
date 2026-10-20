@@ -4,21 +4,16 @@
 	{{ line }}
 {%- endfor %}
 {%- for route in routes %}
-	@{{ route.name }} path {{ route.path }} {{ route.path }}/*
+	@{{ route.name }} path {{ route.paths }}
 	handle @{{ route.name }} {
-{%- if route.strip_path is defined %}
-		uri strip_prefix {{ route.strip_path }}
-{%- elif route.strip_prefix %}
-		uri strip_prefix {{ route.path }}
-{%- endif %}
-		reverse_proxy {{ route.upstream }}
+{%- for line in route.lines %}
+		{{ line }}
+{%- endfor %}
 	}
 {%- endfor %}
 	handle {
-{%- if fallback %}
-		reverse_proxy {{ fallback }}
-{%- else %}
-		respond 404
-{%- endif %}
+{%- for line in fallback %}
+		{{ line }}
+{%- endfor %}
 	}
 }

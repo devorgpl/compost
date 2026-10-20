@@ -95,6 +95,12 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `routes[].path` | `/` | |
 | `routes[].strip_prefix` | `false` | Forward `/ui/x` as `/x` |
 | `routes[].link` | – | `<kind>/<entry>` of another link instead of `target`/`port`, e.g. `oidc/login` |
+| `routes[].exact` | `false` | Match only `path`, not the paths below it |
+| `routes[].redirect` | – | `{to, status}` instead of `target`/`port`: redirect to a path or URL; `status` 301, 302 (default), 303, 307 or 308 |
+| `routes[].header_up` | `{}` | Request headers set for the service, e.g. `{X-Real-IP: "{remote_host}"}` |
+| `max_body_size` | – | Largest request body, e.g. `20MB`; larger requests get 413 |
+| `headers.set` | `{}` | Response headers set on every route |
+| `headers.remove` | `[]` | Response headers removed, e.g. `[Server]` |
 | `security.bans` | server default | Block addresses CrowdSec banned. Needs a `caddysecurebuild` ingress, like every `security` key |
 | `security.appsec` | server default | Check requests with CrowdSec AppSec |
 | `security.rate_limits` | server default | Rate-limit zones of the server, by name; `[]` for none |

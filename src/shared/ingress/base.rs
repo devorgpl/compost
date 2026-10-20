@@ -1,6 +1,6 @@
 //! Generic ingress behavior, used by every ingress type unless it overrides it.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,42 @@ pub struct IngressLink {
     /// Request filtering; only ingress types that filter requests accept it.
     #[serde(default)]
     pub security: Option<LinkSecurity>,
+    /// Largest request body accepted, e.g. `20MB`; larger requests get 413.
+    #[serde(default)]
+    pub max_body_size: Option<String>,
+    /// Response headers of every route.
+    #[serde(default)]
+    pub headers: Headers,
+}
+
+/// Headers to change: `set` replaces a header (or adds it), `remove` deletes it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Headers {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub set: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove: Vec<String>,
+}
+
+impl Headers {
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty() && self.remove.is_empty()
+    }
+}
+
+/// A route that answers with a redirect instead of proxying.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Redirect {
+    /// A path (`/web/`) or a URL (`https://example.com/`).
+    pub to: String,
+    #[serde(default = "redirect_status")]
+    pub status: u16,
+}
+
+fn redirect_status() -> u16 {
+    302
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +88,15 @@ pub struct Route {
     pub path: String,
     #[serde(default)]
     pub strip_prefix: bool,
+    /// Match `path` only, not the paths below it.
+    #[serde(default)]
+    pub exact: bool,
+    /// Answer with a redirect, instead of `target`/`port` or `link`.
+    #[serde(default)]
+    pub redirect: Option<Redirect>,
+    /// Request headers set for the service, e.g. `X-Real-IP: "{remote_host}"`.
+    #[serde(default)]
+    pub header_up: BTreeMap<String, String>,
 }
 
 /// A route with its upstream resolved; stored in the link record.
@@ -59,9 +104,16 @@ pub struct Route {
 pub struct RouteRecord {
     pub name: String,
     pub path: String,
-    /// `<alias>:<port>` on the ingress network.
+    /// `<alias>:<port>` on the ingress network; empty for a redirect.
+    #[serde(default)]
     pub upstream: String,
     pub strip_prefix: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect: Option<Redirect>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub header_up: BTreeMap<String, String>,
     /// Removed from the start of the request path before proxying, when that
     /// is only part of the route's path (e.g. `/auth` of `/auth/realms/myapp`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +130,10 @@ pub struct IngressRecord {
     pub routes: Vec<RouteRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security: Option<LinkSecurity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_body_size: Option<String>,
+    #[serde(default, skip_serializing_if = "Headers::is_empty")]
+    pub headers: Headers,
 }
 
 impl IngressRecord {
@@ -91,13 +147,15 @@ impl IngressRecord {
 enum Target<'a> {
     Service { target: &'a str, port: u16 },
     Link { kind: &'a str, entry: &'a str },
+    Redirect(&'a Redirect),
 }
 
 impl Route {
     fn target(&self) -> Result<Target<'_>> {
-        match (&self.target, self.port, &self.link) {
-            (Some(target), Some(port), None) => Ok(Target::Service { target, port }),
-            (None, None, Some(link)) => {
+        match (&self.target, self.port, &self.link, &self.redirect) {
+            (Some(target), Some(port), None, None) => Ok(Target::Service { target, port }),
+            (None, None, None, Some(redirect)) => Ok(Target::Redirect(redirect)),
+            (None, None, Some(link), None) => {
                 let Some((kind, entry)) = link.split_once('/') else {
                     bail!(
                         "route `{}`: link `{link}` must be `<kind>/<entry>`, e.g. oidc/login",
@@ -107,7 +165,7 @@ impl Route {
                 Ok(Target::Link { kind, entry })
             }
             _ => bail!(
-                "route `{}`: give either `target` and `port`, or `link`",
+                "route `{}`: give either `target` and `port`, `link`, or `redirect`",
                 self.name
             ),
         }
@@ -138,6 +196,19 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
     if let Some(security) = &link.security {
         security.validate()?;
     }
+    if let Some(size) = &link.max_body_size {
+        ensure!(
+            is_size(size),
+            "max_body_size: `{size}` is not a size like 20MB, 512KB or 1GiB"
+        );
+    }
+    check_headers("headers.set", &link.headers.set)?;
+    for name in &link.headers.remove {
+        ensure!(
+            is_header_name(name),
+            "headers.remove: `{name}` is not a header name"
+        );
+    }
     let mut names = HashSet::new();
     let mut paths = HashSet::new();
     for route in &link.routes {
@@ -147,6 +218,10 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
             "route `{}` is defined twice",
             route.name
         );
+        check_headers(
+            &format!("route `{}`: header_up", route.name),
+            &route.header_up,
+        )?;
         let (kind, entry) = match route.target()? {
             Target::Service { target, .. } => {
                 ensure!(
@@ -154,10 +229,14 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
                     "route `{}`: target `{target}` is not in app_services",
                     route.name
                 );
+                (None, None)
+            }
+            Target::Redirect(redirect) => {
+                check_redirect(redirect).with_context(|| format!("route `{}`", route.name))?;
                 ensure!(
-                    paths.insert(&route.path),
-                    "path `{}` is used by two routes",
-                    route.path
+                    !route.strip_prefix && route.header_up.is_empty(),
+                    "route `{}`: `strip_prefix` and `header_up` are not used with `redirect`",
+                    route.name
                 );
                 (None, None)
             }
@@ -166,8 +245,13 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
         if let (Some(kind_name), Some(entry)) = (kind, entry) {
             // The linked entry decides the paths.
             ensure!(
-                route.path == "/" && !route.strip_prefix,
-                "route `{}`: `path` and `strip_prefix` are not used with `link`",
+                route.path == "/" && !route.strip_prefix && !route.exact,
+                "route `{}`: `path`, `exact` and `strip_prefix` are not used with `link`",
+                route.name
+            );
+            ensure!(
+                route.header_up.is_empty(),
+                "route `{}`: `header_up` is not used with `link`",
                 route.name
             );
             let kind = shared::find_kind(kind_name).filter(|k| k.exposes_routes());
@@ -189,6 +273,10 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
         }
         let path = &route.path;
         ensure!(
+            paths.insert((path, route.exact)),
+            "path `{path}` is used by two routes"
+        );
+        ensure!(
             is_route_path(path),
             "route `{}`: path `{path}` must start with `/`, not end with `/`, and use only letters, digits and `/-_.~`",
             route.name
@@ -198,7 +286,68 @@ pub fn validate_link(link: &IngressLink, app: &AppConfig) -> Result<()> {
             "route `{}`: strip_prefix has no effect on path `/`",
             route.name
         );
+        ensure!(
+            !(route.strip_prefix && route.exact),
+            "route `{}`: strip_prefix is not used with `exact`",
+            route.name
+        );
     }
+    Ok(())
+}
+
+/// A size Caddy reads, e.g. `20MB`, `512KB`, `1GiB` or `1000000`.
+fn is_size(size: &str) -> bool {
+    let digits = size.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let unit = &size[digits.len()..];
+    !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+        && ["", "B", "KB", "MB", "GB", "KiB", "MiB", "GiB"].contains(&unit)
+}
+
+/// An HTTP header name (RFC 9110 token).
+fn is_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
+}
+
+/// Header values go in quotes into the ingress config: no quotes,
+/// backslashes or line breaks. Caddy placeholders like `{remote_host}` work.
+fn is_header_value(value: &str) -> bool {
+    !value
+        .chars()
+        .any(|c| c == '"' || c == '\\' || c.is_control())
+}
+
+fn check_headers(path: &str, headers: &BTreeMap<String, String>) -> Result<()> {
+    for (name, value) in headers {
+        ensure!(
+            is_header_name(name),
+            "{path}: `{name}` is not a header name"
+        );
+        ensure!(
+            is_header_value(value),
+            "{path}: the value of {name} must not contain quotes, backslashes or line breaks"
+        );
+    }
+    Ok(())
+}
+
+fn check_redirect(redirect: &Redirect) -> Result<()> {
+    let to = &redirect.to;
+    ensure!(
+        (to.starts_with('/') || to.starts_with("https://") || to.starts_with("http://"))
+            && !to
+                .chars()
+                .any(|c| c.is_whitespace() || c == '"' || c == '\\'),
+        "redirect: `{to}` must be a path starting with `/` or an http(s) URL, without spaces or quotes"
+    );
+    ensure!(
+        [301, 302, 303, 307, 308].contains(&redirect.status),
+        "redirect: status {} is not one of 301, 302, 303, 307, 308",
+        redirect.status
+    );
     Ok(())
 }
 
@@ -240,9 +389,22 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
                     path: route.path.clone(),
                     upstream: format!("{}:{port}", ctx.service_alias(service)),
                     strip_prefix: route.strip_prefix,
+                    exact: route.exact,
+                    redirect: None,
+                    header_up: route.header_up.clone(),
                     strip_path: None,
                 });
             }
+            Target::Redirect(redirect) => routes.push(RouteRecord {
+                name: route.name.clone(),
+                path: route.path.clone(),
+                upstream: String::new(),
+                strip_prefix: false,
+                exact: route.exact,
+                redirect: Some(redirect.clone()),
+                header_up: BTreeMap::new(),
+                strip_path: None,
+            }),
             Target::Link { kind, entry } => {
                 let (peer, peer_ctx) = ctx.peer(kind, entry).with_context(|| {
                     format!(
@@ -267,19 +429,31 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
                         path: exposed.path,
                         upstream: exposed.upstream,
                         strip_prefix: false,
+                        exact: false,
+                        redirect: None,
+                        header_up: BTreeMap::new(),
                         strip_path: exposed.strip_path,
                     });
                 }
             }
         }
     }
-    routes.sort_by(|a, b| b.path.len().cmp(&a.path.len()).then(a.path.cmp(&b.path)));
+    // Of the same path, the exact route goes first.
+    routes.sort_by(|a, b| {
+        b.path
+            .len()
+            .cmp(&a.path.len())
+            .then(a.path.cmp(&b.path))
+            .then(b.exact.cmp(&a.exact))
+    });
     // The same path twice: fine when it goes to the same place, e.g. shared
     // static files of two realms.
-    routes.dedup_by(|b, a| a.path == b.path && a.upstream == b.upstream);
+    routes.dedup_by(|b, a| {
+        a.path == b.path && a.exact == b.exact && a.redirect.is_none() && a.upstream == b.upstream
+    });
     for pair in routes.windows(2) {
         ensure!(
-            pair[0].path != pair[1].path,
+            (&pair[0].path, pair[0].exact) != (&pair[1].path, pair[1].exact),
             "path `{}` is used by routes `{}` and `{}`",
             pair[0].path,
             pair[0].name,
@@ -308,6 +482,8 @@ pub fn prepare_application(ctx: &AppCtx, link: &IngressLink, out: &mut Contribut
         domains: link.domains.clone(),
         routes,
         security: link.security.clone(),
+        max_body_size: link.max_body_size.clone(),
+        headers: link.headers.clone(),
     };
     let text = serde_yaml_ng::to_string(&record)?;
     ctx.server
@@ -339,7 +515,10 @@ pub fn describe_link(ctx: &AppCtx, entry: &str) -> Result<String> {
     let routes: Vec<String> = record
         .routes
         .iter()
-        .map(|r| format!("{} → {}", r.path, r.upstream))
+        .map(|r| match &r.redirect {
+            Some(redirect) => format!("{} → redirect {} {}", r.path, redirect.to, redirect.status),
+            None => format!("{} → {}", r.path, r.upstream),
+        })
         .collect();
     Ok(format!(
         "{}  {}",
@@ -485,6 +664,65 @@ mod tests {
     }
 
     #[test]
+    fn redirects_headers_and_body_size() {
+        validate(
+            "{name: ui, domains: [a.com], max_body_size: 20MB, headers: {remove: [Server], set: {X-Frame-Options: DENY}}, routes: [
+              {name: home, path: /, exact: true, redirect: {to: /web/}},
+              {name: web, target: web, port: 80, header_up: {X-Real-IP: '{remote_host}'}},
+              {name: old, path: /old, redirect: {to: 'https://b.example.com/', status: 301}}]}",
+        )
+        .unwrap();
+        let bad = [
+            ("max_body_size: 20 MB", "not a size"),
+            ("max_body_size: 20XB", "not a size"),
+            (
+                "headers: {remove: ['X A']}",
+                "headers.remove: `X A` is not a header name",
+            ),
+            ("headers: {set: {X-A: 'a\"b'}}", "must not contain quotes"),
+            (
+                "routes: [{name: r, redirect: {to: web}}]",
+                "must be a path starting with `/` or an http(s) URL",
+            ),
+            (
+                "routes: [{name: r, redirect: {to: /web, status: 200}}]",
+                "status 200 is not one of",
+            ),
+            (
+                "routes: [{name: r, target: web, port: 80, redirect: {to: /web}}]",
+                "either `target` and `port`, `link`, or `redirect`",
+            ),
+            (
+                "routes: [{name: r, path: /a, strip_prefix: true, redirect: {to: /web}}]",
+                "not used with `redirect`",
+            ),
+            (
+                "routes: [{name: r, target: web, port: 80, path: /a, exact: true, strip_prefix: true}]",
+                "strip_prefix is not used with `exact`",
+            ),
+            (
+                "routes: [{name: r, target: web, port: 80, header_up: {X-A: \"a\\\\b\"}}]",
+                "route `r`: header_up: the value of X-A must not contain",
+            ),
+            (
+                "routes: [{name: r, path: /, exact: true, redirect: {to: /web}}, {name: s, target: web, port: 80, exact: true}]",
+                "path `/` is used by two routes",
+            ),
+        ];
+        for (fields, expected) in bad {
+            let text = if fields.starts_with("routes:") {
+                format!("{{name: ui, domains: [a.com], {fields}}}")
+            } else {
+                format!(
+                    "{{name: ui, domains: [a.com], {fields}, routes: [{{name: r, target: web, port: 80}}]}}"
+                )
+            };
+            let err = format!("{:#}", validate(&text).unwrap_err());
+            assert!(err.contains(expected), "{text}: {err}");
+        }
+    }
+
+    #[test]
     fn routes_can_target_links() {
         let app: AppConfig = serde_yaml_ng::from_str(
             "{name: a, services: {oidc: [{name: login}], database: [{name: db}]}, app_services: [{name: web, service: web}]}",
@@ -501,16 +739,24 @@ mod tests {
         for (routes, expected) in [
             (
                 "[{name: r, link: oidc/login, port: 80}]",
-                "either `target` and `port`, or `link`",
+                "either `target` and `port`, `link`, or `redirect`",
             ),
             (
                 "[{name: r, target: web}]",
-                "either `target` and `port`, or `link`",
+                "either `target` and `port`, `link`, or `redirect`",
             ),
             ("[{name: r, link: login}]", "must be `<kind>/<entry>`"),
             (
                 "[{name: r, link: oidc/login, path: /x}]",
                 "not used with `link`",
+            ),
+            (
+                "[{name: r, link: oidc/login, exact: true}]",
+                "not used with `link`",
+            ),
+            (
+                "[{name: r, link: oidc/login, header_up: {X-A: b}}]",
+                "`header_up` is not used with `link`",
             ),
             (
                 "[{name: r, link: oidc/other}]",
@@ -624,14 +870,14 @@ mod tests {
             peers: &[],
         };
         let link: IngressLink = serde_yaml_ng::from_str(
-            "{name: ui, domains: [a.com], routes: [{name: root, target: web, port: 80}, {name: api, target: web, port: 5000, path: /api/v1}, {name: ui, target: web, port: 80, path: /ui}]}",
+            "{name: ui, domains: [a.com], routes: [{name: root, target: web, port: 80}, {name: api, target: web, port: 5000, path: /api/v1}, {name: ui, target: web, port: 80, path: /ui}, {name: home, path: /, exact: true, redirect: {to: /ui/}}]}",
         )
         .unwrap();
         let paths: Vec<_> = routes(&ctx, &link)
             .unwrap()
             .into_iter()
-            .map(|r| r.path)
+            .map(|r| r.name)
             .collect();
-        assert_eq!(paths, ["/api/v1", "/ui", "/"]);
+        assert_eq!(paths, ["api", "ui", "home", "root"]);
     }
 }
