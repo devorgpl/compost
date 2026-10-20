@@ -385,10 +385,11 @@ services:
     - name: login
       type: keycloak
       version: ">=26"
+      optional: false                  # true: skip (with a notice) when the server runs no keycloak
       realm: myapp                     # default <app>-<prefix>; created if missing
       client_id: web                   # default <app>-<prefix>-<entry>
       public_client: false             # true: no client secret, e.g. for a single-page app
-      redirect_uris: ["https://staging.example.com/*"]   # required, usually in the overlay
+      redirect_uris: ["https://staging.example.com/*"]   # required (if optional: when deployed), usually in the overlay
       web_origins: []
       client_secret: …                 # secret; generated on the first deploy, then kept
       users:                           # secret; created if missing, passwords set on every deploy (unless temporary)
@@ -411,6 +412,34 @@ services:
 | `oidc_realm` | `myapp` |
 | `oidc_client_id` | `web` |
 | `oidc_client_secret` | empty for public clients |
+
+**Optional links.** When only some servers run Keycloak, e.g. development and test, while staging and production log in through another provider (such as AWS Cognito), mark the link `optional: true`. On a server with no provider of the link's `type`, the deploy skips it with a notice: its `environment` isn't set, so the services take those variables from `app_services` in the overlay, and ingress routes with `link: oidc/<entry>` are skipped too (an ingress entry with no other routes fails; make it `optional` and leave out its domains on those servers). A server that runs Keycloak of another version, or not the pinned `instance`, is still an error. `redirect_uris` are needed only where the link is deployed, so they can stay in the overlays of the servers with Keycloak:
+
+```yaml
+# compost.yaml
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      optional: true
+      realm: myapp
+      public_client: true
+      targets: [api]
+      environment:
+        OIDC_ISSUER_URL: oidc_issuer
+        OIDC_CLIENT_ID: oidc_client_id
+```
+
+```yaml
+# .compost-prod.yaml: no Keycloak on this server
+app_services:
+  - name: api
+    environment:
+      OIDC_ISSUER_URL: https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_AbCdEf123
+      OIDC_CLIENT_ID: 1example23456789
+```
+
+`compost dev up` adds Keycloak only for a link that isn't `optional`: to have it locally, set `optional: false` for the link in `.compost-local.yaml`, along with its `redirect_uris`.
 
 **Client settings** are set on every deploy, so changes made in the admin console don't last:
 

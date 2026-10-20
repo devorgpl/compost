@@ -523,7 +523,7 @@ mod tests {
     fn optional_links_add_nothing() {
         let (_, added) = plan_of(
             &ServerConfig::default(),
-            &app("  monitoring:\n    - {name: telemetry, optional: true}\n  ingress:\n    - {name: site}\n"),
+            &app("  monitoring:\n    - {name: telemetry, optional: true}\n  ingress:\n    - {name: site}\n  oidc:\n    - {name: login, type: keycloak, optional: true}\n"),
         )
         .unwrap();
         assert!(added.is_empty());

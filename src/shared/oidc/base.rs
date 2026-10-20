@@ -46,6 +46,10 @@ pub struct OidcLink {
     /// Use this shared app, instead of picking one by type and version.
     #[serde(default)]
     pub instance: Option<String>,
+    /// Skip the link when the server runs no provider of its type, e.g. on
+    /// production, where the app logs in through another provider.
+    #[serde(default)]
+    pub optional: bool,
     /// Default `<app>-<prefix>`.
     #[serde(default)]
     pub realm: Option<String>,
@@ -346,10 +350,10 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
     if let Some(url) = &link.public_url {
         split_public_url(url).context("public_url")?;
     }
-    ensure!(
-        !link.redirect_uris.is_empty(),
-        "redirect_uris: at least one is required (set them in the deployment overlay)"
-    );
+    // An optional link may be skipped, so it needs them only when deployed.
+    if !link.optional {
+        check_redirect_uris(link)?;
+    }
     let post_logout = link.post_logout_redirect_uris.iter().flatten();
     for uri in link
         .redirect_uris
@@ -469,6 +473,14 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
     Ok(())
 }
 
+fn check_redirect_uris(link: &OidcLink) -> Result<()> {
+    ensure!(
+        !link.redirect_uris.is_empty(),
+        "redirect_uris: at least one is required (set them in the deployment overlay)"
+    );
+    Ok(())
+}
+
 /// `^[a-z0-9][a-z0-9_-]{0,63}$`: safe in URLs and in single-quoted shell words.
 pub fn is_identifier(value: &str) -> bool {
     let mut chars = value.chars();
@@ -525,8 +537,16 @@ pub fn names(app: &AppConfig, link: &OidcLink) -> (String, String) {
     )
 }
 
-/// A provider of the requested type whose major version matches.
+/// A provider of the requested type whose major version matches. An optional
+/// link is skipped when no provider of its type runs; one that runs and
+/// doesn't match is still an error.
 pub fn resolve<'s>(link: &OidcLink, available: &'s [SharedAppConfig]) -> Result<Resolution<'s>> {
+    if link.optional && !available.iter().any(|app| app.type_name == link.type_name) {
+        return Ok(Resolution::Skip(format!(
+            "optional and no {} is running",
+            link.type_name
+        )));
+    }
     resolve_versioned(
         "oidc provider",
         &link.type_name,
@@ -650,6 +670,7 @@ pub fn prepare_application(
     endpoint: &Endpoint,
     out: &mut Contribution,
 ) -> Result<()> {
+    check_redirect_uris(link)?;
     let record = record(ctx, link)?;
     check_public_url(ctx, &record)?;
     let public_url = record.public_url.as_deref().unwrap_or(&endpoint.public_url);
@@ -949,5 +970,23 @@ mod tests {
         assert_eq!(pick(", instance: kc25"), "kc25");
         assert!(pick("").contains("several oidc providers match (kc25, kc26)"));
         assert!(pick(", version: '27'").contains("no running keycloak oidc provider"));
+        // Optional: skipped only when no keycloak runs at all.
+        assert!(
+            pick(", optional: true, version: '27'").contains("no running keycloak oidc provider")
+        );
+        assert_eq!(pick(", optional: true, instance: kc25"), "kc25");
+        let skipped = match resolve(&link(&format!("{{{BASE}, optional: true}}")), &[]) {
+            Ok(Resolution::Skip(reason)) => reason,
+            _ => panic!("not skipped"),
+        };
+        assert_eq!(skipped, "optional and no keycloak is running");
+    }
+
+    #[test]
+    fn optional_links_need_redirect_uris_only_when_deployed() {
+        let text = "{name: login, type: keycloak, targets: [backend], optional: true}";
+        validate_link(&link(text), &app()).unwrap();
+        let err = check_redirect_uris(&link(text)).unwrap_err();
+        assert!(err.to_string().contains("redirect_uris"), "{err}");
     }
 }

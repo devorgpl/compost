@@ -406,12 +406,16 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
                 strip_path: None,
             }),
             Target::Link { kind, entry } => {
-                let (peer, peer_ctx) = ctx.peer(kind, entry).with_context(|| {
-                    format!(
+                let Some((peer, peer_ctx)) = ctx.peer(kind, entry) else {
+                    // A route to an optional link that was skipped is skipped too.
+                    if is_optional_link(ctx.app, kind, entry) {
+                        continue;
+                    }
+                    bail!(
                         "route `{}`: services.{kind}[{entry}] is not deployed with this app",
                         route.name
-                    )
-                })?;
+                    );
+                };
                 let exposed = peer
                     .kind
                     .exposed_routes(&peer_ctx, peer.entry)
@@ -438,6 +442,10 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
             }
         }
     }
+    ensure!(
+        !routes.is_empty(),
+        "every route goes to a skipped optional link; mark this entry `optional: true` and leave out its domains where those links are skipped"
+    );
     // Of the same path, the exact route goes first.
     routes.sort_by(|a, b| {
         b.path
@@ -461,6 +469,18 @@ pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
         );
     }
     Ok(routes)
+}
+
+/// `services.<kind>[<entry>]` of the app has `optional: true`.
+fn is_optional_link(app: &AppConfig, kind: &str, entry: &str) -> bool {
+    app.services
+        .get(kind)
+        .into_iter()
+        .flatten()
+        .find(|link| link_name(link) == Some(entry))
+        .and_then(|link| link.get("optional"))
+        .and_then(serde_yaml_ng::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Attach route targets to the ingress network and write the link record.
@@ -851,6 +871,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("path `/resources` is used by routes"), "{err}");
+    }
+
+    #[test]
+    fn routes_to_a_skipped_optional_link_are_skipped() {
+        let app: AppConfig = serde_yaml_ng::from_str(
+            "{name: a, services: {oidc: [{name: login, optional: true}, {name: other}]}, app_services: [{name: web, service: web}]}",
+        )
+        .unwrap();
+        let connector = crate::connector::local::Local { verbose: false };
+        let server = crate::shared::ServerCtx {
+            connector: &connector,
+            home: "/x".into(),
+        };
+        let caddy: SharedAppConfig =
+            serde_yaml_ng::from_str("{name: caddy-main, type: caddy}").unwrap();
+        // Neither link resolved.
+        let ctx = AppCtx {
+            server: &server,
+            app: &app,
+            shared: &caddy,
+            peers: &[],
+        };
+        let routes_of = |list: &str| {
+            let link: IngressLink =
+                serde_yaml_ng::from_str(&format!("{{name: l, domains: [a.com], routes: {list}}}"))
+                    .unwrap();
+            routes(&ctx, &link).map_err(|e| format!("{e:#}"))
+        };
+        let names: Vec<_> =
+            routes_of("[{name: r, link: oidc/login}, {name: s, target: web, port: 80}]")
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect();
+        assert_eq!(names, ["s"]);
+        let err = routes_of("[{name: r, link: oidc/other}]").unwrap_err();
+        assert!(
+            err.contains("services.oidc[other] is not deployed"),
+            "{err}"
+        );
+        let err = routes_of("[{name: r, link: oidc/login}]").unwrap_err();
+        assert!(
+            err.contains("every route goes to a skipped optional link"),
+            "{err}"
+        );
     }
 
     #[test]

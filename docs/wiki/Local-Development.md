@@ -37,7 +37,7 @@ For every link of the app ([Applications](Applications.md#database-links)), `dev
 | `database`, `keyvalue` | The link's `type`. Its version is the starter's (e.g. Postgres 18) if the link's `version` allows it, else the lowest major version the link allows, e.g. `postgres15` for `version: "^15"` |
 | `storage` | Garage, named `storage` |
 | `ingress` with domains | Caddy on port 18080, plain HTTP |
-| `oidc` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
+| `oidc` that isn't `optional` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
 | `workflow` | Temporal, with what it needs |
 | `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
 | `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080` |
