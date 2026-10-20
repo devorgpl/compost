@@ -12,6 +12,10 @@ bans:
   description: Addresses CrowdSec bans now
   service: crowdsec
   command: [cscli, decisions, list]
+bans-all:
+  description: Bans by this server and the community blocklist (long)
+  service: crowdsec
+  command: [cscli, decisions, list, -a]
 alerts:
   description: What CrowdSec detected, newest first
   service: crowdsec
@@ -42,6 +46,13 @@ unban:
   args:
     ip: {type: ip}
   command: [cscli, decisions, delete, --ip, "{ip}"]
+  confirm: true
+unban-scenario:
+  description: Lift every ban one scenario made, e.g. after a false positive
+  service: crowdsec
+  args:
+    scenario: {pattern: "[a-z0-9_-]+/[a-z0-9_.-]+", description: "e.g. crowdsecurity/http-probing"}
+  command: [cscli, decisions, delete, --scenario, "{scenario}"]
   confirm: true
 "#;
 

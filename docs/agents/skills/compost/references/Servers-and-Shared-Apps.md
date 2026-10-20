@@ -222,6 +222,7 @@ compost server cmd caddy-main.check 198.51.100.7
 compost server cmd caddy-main.alert 12                   # the requests behind alert 12
 compost server cmd caddy-main.unban 198.51.100.7          # asks first
 compost server cmd caddy-main.ban 198.51.100.7 30m       # 4h without a duration
+compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing   # every ban it made
 ```
 
 These are [built into compost](Admin-Commands.md#built-in-commands). Other `cscli` commands run with `compost server exec caddy-main --service crowdsec -- cscli …`.

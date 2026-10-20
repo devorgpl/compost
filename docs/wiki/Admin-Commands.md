@@ -46,7 +46,7 @@ compost -s prod server cmd database/main.activity           # <kind>/<name> when
 
 | Type | Commands |
 |---|---|
-| `caddysecurebuild` | `bans`, `alerts`, `check <ip>` (its bans), `alert <id>` (the requests behind it), `ban <ip> [duration]` (`4h` by default; `30m`, `168h`, …), `unban <ip>`; `ban` and `unban` ask first |
+| `caddysecurebuild` | `bans`, `bans-all` (with the community blocklist), `alerts`, `check <ip>` (its bans), `alert <id>` (the requests behind it), `ban <ip> [duration]` (`4h` by default; `30m`, `168h`, …), `unban <ip>`, `unban-scenario <scenario>` (every ban it made); `ban` and the unbans ask first |
 | `postgres` | `psql [database]` (as `postgres`; `postgres` by default), `activity` (`pg_stat_activity`) |
 | `mariadb`, `mysql` | `sql [database]` (the client as `root`), `activity` (`show full processlist`) |
 | `valkey`, `redis` | `cli`, `info` |
