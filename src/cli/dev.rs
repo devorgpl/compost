@@ -644,6 +644,17 @@ fn shared_apps(
             added.for_link
         );
     }
+    for configured in &plan.configured {
+        let value = serde_yaml_ng::to_string(&configured.value)?;
+        out!(
+            "  setting {}: {} on {} {} for {}",
+            configured.key,
+            value.trim_end(),
+            configured.kind,
+            configured.name,
+            configured.for_link
+        );
+    }
     for published in &plan.published {
         let recreated = if published.existing {
             "; recreates its container, data is kept"

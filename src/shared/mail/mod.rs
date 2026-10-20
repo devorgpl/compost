@@ -99,6 +99,10 @@ struct MailLink {
     /// where the app sends through the real provider.
     #[serde(default)]
     optional: bool,
+    /// `aws_region` of this link; default: the mail app's `region`. The
+    /// mocks accept any region.
+    #[serde(default)]
+    region: Option<String>,
     /// `app_services` that receive the variables and join the mail network.
     #[serde(default)]
     targets: Vec<String>,
@@ -165,11 +169,7 @@ impl Kind for MailKind {
             );
         }
         ensure!(
-            !mail.region.is_empty()
-                && mail
-                    .region
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            is_region(&mail.region),
             "region `{}` is not an AWS region like eu-west-1",
             mail.region
         );
@@ -288,7 +288,23 @@ impl Kind for MailKind {
             );
             ensure!(seen.insert(target), "target `{target}` is listed twice");
         }
+        if let Some(region) = &link.region {
+            ensure!(
+                is_region(region),
+                "region `{region}` is not an AWS region like eu-west-1"
+            );
+        }
         check_link_environment(&link.environment, &LINK_VALUES)
+    }
+
+    /// moto, for a link that maps `aws_endpoint`.
+    fn dev_configuration(&self, link: &Value) -> Result<Vec<(&'static str, Value)>> {
+        let link: MailLink = parse_link(link)?;
+        Ok(if uses_aws_endpoint(&link) {
+            vec![("moto", Value::Bool(true))]
+        } else {
+            Vec::new()
+        })
     }
 
     fn resolve<'s>(
@@ -352,7 +368,10 @@ impl Kind for MailKind {
             ("smtp_port", smtp.1.to_string()),
             ("smtp_url", format!("smtp://{}:{}", smtp.0, smtp.1)),
             ("ses_endpoint", format!("http://{ses}")),
-            ("aws_region", mail.region.clone()),
+            (
+                "aws_region",
+                link.region.clone().unwrap_or_else(|| mail.region.clone()),
+            ),
             ("aws_access_key_id", ACCESS_KEY.to_string()),
             ("aws_secret_access_key", ACCESS_KEY.to_string()),
             (
@@ -362,11 +381,7 @@ impl Kind for MailKind {
         ]);
         if mail.moto {
             values.insert("aws_endpoint", format!("http://{aws}"));
-        } else if link
-            .environment
-            .values()
-            .any(|v| v.contains("aws_endpoint"))
-        {
+        } else if uses_aws_endpoint(&link) {
             bail!("aws_endpoint needs `moto: true` in the configuration of {name}");
         }
         let network = network_name(name);
@@ -416,6 +431,22 @@ impl Kind for MailKind {
         ctx.server.connector.exec(&format!("rm -f -- {path}"))?;
         Ok(())
     }
+}
+
+/// The link maps `aws_endpoint`, alone or in a template.
+fn uses_aws_endpoint(link: &MailLink) -> bool {
+    link.environment
+        .values()
+        .any(|v| v.contains("aws_endpoint"))
+}
+
+/// e.g. `eu-central-1`: lowercase letters, digits and `-`.
+fn is_region(region: &str) -> bool {
+    !region.is_empty()
+        && region.len() <= 32
+        && region
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 fn check_type(type_name: &str) -> Result<()> {
@@ -532,10 +563,27 @@ mod tests {
                 "{name: out, targets: [api], environment: {X: db_url}}",
                 "unknown value `db_url`",
             ),
+            (
+                "{name: out, targets: [api], region: EU}",
+                "region `EU` is not an AWS region",
+            ),
         ] {
             let err = validate(text).unwrap_err();
             assert!(err.contains(expected), "{text}: {err}");
         }
+    }
+
+    #[test]
+    fn links_that_map_aws_endpoint_need_moto() {
+        let needs = |text: &str| {
+            let link: Value = serde_yaml_ng::from_str(text).unwrap();
+            MailKind.dev_configuration(&link).unwrap()
+        };
+        assert_eq!(
+            needs("{name: out, targets: [api], environment: {A: '{aws_endpoint}/x'}}"),
+            [("moto", Value::Bool(true))]
+        );
+        assert!(needs("{name: out, targets: [api], environment: {S: ses_endpoint}}").is_empty());
     }
 
     #[test]

@@ -887,7 +887,7 @@ compost -s test app deploy --apply -f compost.yaml,.compost-test.yaml
 grep password ~/.compost-server/connectors/mail/mail/root-connector.yaml   # on the test server: the inbox's password for `admin`
 ```
 
-The app's SES client sends to the mock, which hands the mail to Mailpit; open https://mail.test.example.com and log in as `admin`. Locally, `compost dev up` adds the mail app with its inbox on http://mail.localhost:18080; with `--host`, `compost dev env` gives the SES API and SMTP on 127.0.0.1. For other AWS APIs the app uses in production, such as Cognito or SNS, add `moto: true` to the mail app and map `AWS_ENDPOINT_URL: aws_endpoint`.
+The app's SES client sends to the mock, which hands the mail to Mailpit; open https://mail.test.example.com and log in as `admin`. Locally, `compost dev up` adds the mail app with its inbox on http://mail.localhost:18080; with `--host`, `compost dev env` gives the SES API and SMTP on 127.0.0.1. For other AWS APIs the app uses in production, such as Cognito or SNS, add `moto: true` to the mail app and map `AWS_ENDPOINT_URL: aws_endpoint`; `compost dev up` turns moto on by itself. `region` on the link gives the app production's region (`aws_region`) when the mail app has another.
 
 ## Block brute-force logins
 
@@ -2007,6 +2007,7 @@ services:
     - name: outbox
       optional: true                   # skip (with a notice) when the server runs no mail app
       instance: mail                   # optional: this shared app, when there are several
+      region: eu-central-1             # aws_region of this link; default: the mail app's region
       targets: [api]
       environment:
         AWS_ENDPOINT_URL_SES: ses_endpoint
@@ -2023,13 +2024,13 @@ services:
 | `smtp_host`, `smtp_port` | `mail`, `1025` |
 | `smtp_url` | `smtp://mail:1025` |
 | `aws_endpoint` | `http://mail-aws:5000`: moto, for other AWS APIs. Needs `moto: true` on the mail app |
-| `aws_region` | `us-east-1`, the mail app's `region` |
+| `aws_region` | `eu-central-1`: the link's `region`, else the mail app's (default `us-east-1`). The mocks accept any region, so set the one production uses |
 | `aws_access_key_id`, `aws_secret_access_key` | `test`: the mocks accept any |
 | `inbox_url` | `https://mail.test.example.com`, empty without `url` |
 
 AWS SDKs read `AWS_ENDPOINT_URL_<SERVICE>` for one service and `AWS_ENDPOINT_URL` for all, so the same code sends through real SES where these variables are unset. The services in `targets` join the mail app's network. Removing the link deletes only its record: the mail in the inbox belongs to all apps.
 
-`compost dev up` adds a mail app for a link that isn't `optional`. To keep the link optional on servers and have it locally, set `optional: false` for it in `.compost-local.yaml`.
+`compost dev up` adds a mail app for a link that isn't `optional`. To keep the link optional on servers and have it locally, set `optional: false` for it in `.compost-local.yaml`. When a link maps `aws_endpoint`, `dev up` sets `moto: true` on the mail app it uses, whether it adds it or it exists (`setting moto: true on mail mail for services.mail[aws]`). On other servers, set `moto: true` in their `compost-server.yaml`.
 
 ## Deploying
 
@@ -2682,8 +2683,8 @@ shared:
 | `image` | `axllent/mailpit:vX.Y.Z` for 1 | Required for other versions |
 | `configuration.url` | – | Public URL of the inbox, `https://<domain>` or `http://<domain>[:port]`, no path. compost routes its domain through the ingress. Without it, the inbox is not reachable |
 | `configuration.password` | generated | Secret. Password of the inbox's user `admin`; at least 8 characters, without `:` |
-| `configuration.region` | `us-east-1` | The region links give apps (`aws_region`) |
-| `configuration.moto` | `false` | Also run moto for other AWS APIs |
+| `configuration.region` | `us-east-1` | The region links give apps (`aws_region`), unless a link sets its own `region` |
+| `configuration.moto` | `false` | Also run moto for other AWS APIs. `dev up` turns it on for a link that maps `aws_endpoint` |
 | `configuration.host_port` | – | For apps outside Docker ([`dev up --host`](Local-Development.md#running-the-app-outside-docker)): the SES API on this port of 127.0.0.1, SMTP on the next one, moto on the one after |
 | `configuration.ses_image` | `ghcr.io/domdomegg/aws-ses-v2-local:X.Y.Z` | |
 | `configuration.moto_image` | `motoserver/moto:X.Y.Z` | |
@@ -2907,9 +2908,9 @@ For every link of the app ([Applications](Applications.md#database-links)), `dev
 | `oidc` that isn't `optional` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
 | `workflow` | Temporal, with what it needs |
 | `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
-| `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080` |
+| `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080`; with `moto: true` when a mail link maps `aws_endpoint` |
 
-A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
+A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds and moto, which a mail link that maps `aws_endpoint` turns on. Shared apps that are configured but not running are started.
 
 ```text
 Shared apps on local (local)
@@ -4037,6 +4038,7 @@ At least one of `targets` and `metrics` is required.
 | `name` | required | Entry name |
 | `instance` | – | Pin a mail app by name; required when the server has several |
 | `optional` | `false` | Skip the entry when the server runs no mail app |
+| `region` | the mail app's `region` | `aws_region` of this link |
 | `targets` | required | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `smtp_host`, `smtp_port`, `smtp_url`, `ses_endpoint`, `aws_endpoint` (with `moto: true`), `aws_region`, `aws_access_key_id`, `aws_secret_access_key`, `inbox_url` |
 

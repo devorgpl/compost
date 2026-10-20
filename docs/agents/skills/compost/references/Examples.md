@@ -528,7 +528,7 @@ compost -s test app deploy --apply -f compost.yaml,.compost-test.yaml
 grep password ~/.compost-server/connectors/mail/mail/root-connector.yaml   # on the test server: the inbox's password for `admin`
 ```
 
-The app's SES client sends to the mock, which hands the mail to Mailpit; open https://mail.test.example.com and log in as `admin`. Locally, `compost dev up` adds the mail app with its inbox on http://mail.localhost:18080; with `--host`, `compost dev env` gives the SES API and SMTP on 127.0.0.1. For other AWS APIs the app uses in production, such as Cognito or SNS, add `moto: true` to the mail app and map `AWS_ENDPOINT_URL: aws_endpoint`.
+The app's SES client sends to the mock, which hands the mail to Mailpit; open https://mail.test.example.com and log in as `admin`. Locally, `compost dev up` adds the mail app with its inbox on http://mail.localhost:18080; with `--host`, `compost dev env` gives the SES API and SMTP on 127.0.0.1. For other AWS APIs the app uses in production, such as Cognito or SNS, add `moto: true` to the mail app and map `AWS_ENDPOINT_URL: aws_endpoint`; `compost dev up` turns moto on by itself. `region` on the link gives the app production's region (`aws_region`) when the mail app has another.
 
 ## Block brute-force logins
 

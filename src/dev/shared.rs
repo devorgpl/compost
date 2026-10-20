@@ -136,6 +136,17 @@ pub struct Published {
     pub existing: bool,
 }
 
+/// A setting `dev up` gives a shared app so that it serves a link.
+#[derive(Debug)]
+pub struct Configured {
+    pub kind: &'static str,
+    pub name: String,
+    pub key: &'static str,
+    pub value: Value,
+    /// The link that needs it, e.g. `services.mail[aws]`.
+    pub for_link: String,
+}
+
 /// Port a type publishes on first with `dev up --host`, unless taken, and
 /// how many ports from there it uses.
 const HOST_PORTS: &[(&str, u16, u16)] = &[
@@ -156,19 +167,21 @@ pub struct Plan {
     /// Links pointed at another shared app than the one they pin.
     pub repins: Vec<Repin>,
     pub added: Vec<Added>,
+    pub configured: Vec<Configured>,
     pub published: Vec<Published>,
 }
 
 impl Plan {
     pub fn changes(&self) -> bool {
-        !self.added.is_empty() || !self.published.is_empty()
+        !self.added.is_empty() || !self.configured.is_empty() || !self.published.is_empty()
     }
 }
 
 /// `server` with the shared apps that the links of `app` need and it lacks.
 /// A link that pins a shared app this server doesn't have uses the one that
 /// matches it otherwise, if there is exactly one (see [`repins`]). Shared apps
-/// that added ones link to (e.g. Keycloak's Postgres) are added too. With
+/// that added ones link to (e.g. Keycloak's Postgres) are added too. Shared
+/// apps get the settings the links need (see [`Kind::dev_configuration`]). With
 /// `host` (which tells whether a port is free), the shared apps the app's
 /// links use get a `host_port`. Nothing else of existing shared apps changes.
 pub fn plan(
@@ -183,8 +196,10 @@ pub fn plan(
         config,
         repins,
         added,
+        configured: Vec::new(),
         published: Vec::new(),
     };
+    configure(&mut plan, &app)?;
     if let Some(free) = host {
         publish(&mut plan, &app, free)?;
     }
@@ -194,6 +209,56 @@ pub fn plan(
         plan.config = ServerConfig::parse(&text)?;
     }
     Ok(plan)
+}
+
+/// Set the configuration keys that the app's links need and their shared apps
+/// lack or set otherwise.
+fn configure(plan: &mut Plan, app: &AppConfig) -> Result<()> {
+    for (kind_name, entry) in app.links() {
+        let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
+        let apps = plan
+            .config
+            .shared
+            .get(kind_name)
+            .map_or(&[][..], Vec::as_slice);
+        let Ok(shared::Resolution::Use(found)) = kind.resolve(entry, apps) else {
+            continue;
+        };
+        let name = found.name.clone();
+        let missing: Vec<_> = kind
+            .dev_configuration(entry)?
+            .into_iter()
+            .filter(|(key, value)| found.configuration.get(key) != Some(value))
+            .collect();
+        if missing.is_empty() || found.is_external() {
+            continue;
+        }
+        let shared_app = plan
+            .config
+            .shared
+            .get_mut(kind_name)
+            .and_then(|apps| apps.iter_mut().find(|a| a.name == name))
+            .context("resolved shared apps are configured")?;
+        if !shared_app.configuration.is_mapping() {
+            shared_app.configuration = Value::Mapping(serde_yaml_ng::Mapping::new());
+        }
+        for (key, value) in missing {
+            if let Value::Mapping(map) = &mut shared_app.configuration {
+                map.insert(key.into(), value.clone());
+            }
+            plan.configured.push(Configured {
+                kind: kind.name(),
+                name: name.clone(),
+                key,
+                value,
+                for_link: format!(
+                    "services.{kind_name}[{}]",
+                    link_name(entry).unwrap_or_default()
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Give the shared apps that the app's links use a `host_port`, if their type
@@ -507,6 +572,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.published[0].port, 18007);
+    }
+
+    #[test]
+    fn a_link_that_maps_aws_endpoint_turns_moto_on() {
+        let links =
+            "  mail:\n    - {name: aws, targets: [], environment: {COGNITO: aws_endpoint}}\n";
+        let planned = plan(&ServerConfig::default(), &app(links), None).unwrap();
+        assert_eq!(
+            names(&planned.added),
+            ["mail/mail/1", "ingress/caddy-main/2"]
+        );
+        let mail = &planned.config.shared["mail"][0];
+        assert_eq!(mail.configuration["moto"], Value::Bool(true));
+
+        // An existing mail app without moto gets it; one with it is left alone.
+        let config = server(
+            "shared:\n  mail:\n    - {name: mail, type: mailpit, version: 1, configuration: {region: eu-central-1}}\n",
+        );
+        let planned = plan(&config, &app(links), None).unwrap();
+        let configured: Vec<String> = planned
+            .configured
+            .iter()
+            .map(|c| {
+                format!(
+                    "{}/{} {}: {:?} for {}",
+                    c.kind, c.name, c.key, c.value, c.for_link
+                )
+            })
+            .collect();
+        assert_eq!(
+            configured,
+            ["mail/mail moto: Bool(true) for services.mail[aws]"]
+        );
+        assert!(planned.added.is_empty());
+        let mail = &planned.config.shared["mail"][0];
+        assert_eq!(mail.configuration["region"].as_str(), Some("eu-central-1"));
+        assert!(!plan(&planned.config, &app(links), None).unwrap().changes());
     }
 
     #[test]

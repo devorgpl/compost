@@ -416,6 +416,13 @@ pub trait Kind: Sync {
     fn resolve<'s>(&self, link: &Value, available: &'s [SharedAppConfig])
     -> Result<Resolution<'s>>;
 
+    /// Keys of `configuration` the shared app that `link` resolves to needs to
+    /// serve it, with their values. `dev up` sets those that differ, e.g.
+    /// moto for a mail link that maps `aws_endpoint`. Default: none.
+    fn dev_configuration(&self, _link: &Value) -> Result<Vec<(&'static str, Value)>> {
+        Ok(Vec::new())
+    }
+
     /// Render phase: add networks and variables, write link records.
     fn prepare_application(&self, ctx: &AppCtx, link: &Value, out: &mut Contribution)
     -> Result<()>;

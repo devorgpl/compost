@@ -40,9 +40,9 @@ For every link of the app ([Applications](Applications.md#database-links)), `dev
 | `oidc` that isn't `optional` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
 | `workflow` | Temporal, with what it needs |
 | `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
-| `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080` |
+| `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080`; with `moto: true` when a mail link maps `aws_endpoint` |
 
-A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
+A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds and moto, which a mail link that maps `aws_endpoint` turns on. Shared apps that are configured but not running are started.
 
 ```text
 Shared apps on local (local)

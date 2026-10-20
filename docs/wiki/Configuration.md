@@ -200,6 +200,7 @@ At least one of `targets` and `metrics` is required.
 | `name` | required | Entry name |
 | `instance` | – | Pin a mail app by name; required when the server has several |
 | `optional` | `false` | Skip the entry when the server runs no mail app |
+| `region` | the mail app's `region` | `aws_region` of this link |
 | `targets` | required | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `smtp_host`, `smtp_port`, `smtp_url`, `ses_endpoint`, `aws_endpoint` (with `moto: true`), `aws_region`, `aws_access_key_id`, `aws_secret_access_key`, `inbox_url` |
 

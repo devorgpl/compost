@@ -520,8 +520,8 @@ shared:
 | `image` | `axllent/mailpit:vX.Y.Z` for 1 | Required for other versions |
 | `configuration.url` | – | Public URL of the inbox, `https://<domain>` or `http://<domain>[:port]`, no path. compost routes its domain through the ingress. Without it, the inbox is not reachable |
 | `configuration.password` | generated | Secret. Password of the inbox's user `admin`; at least 8 characters, without `:` |
-| `configuration.region` | `us-east-1` | The region links give apps (`aws_region`) |
-| `configuration.moto` | `false` | Also run moto for other AWS APIs |
+| `configuration.region` | `us-east-1` | The region links give apps (`aws_region`), unless a link sets its own `region` |
+| `configuration.moto` | `false` | Also run moto for other AWS APIs. `dev up` turns it on for a link that maps `aws_endpoint` |
 | `configuration.host_port` | – | For apps outside Docker ([`dev up --host`](Local-Development.md#running-the-app-outside-docker)): the SES API on this port of 127.0.0.1, SMTP on the next one, moto on the one after |
 | `configuration.ses_image` | `ghcr.io/domdomegg/aws-ses-v2-local:X.Y.Z` | |
 | `configuration.moto_image` | `motoserver/moto:X.Y.Z` | |
