@@ -2,6 +2,8 @@
 //! failed scheduled backups, shared apps and instances that are down, and low
 //! disk space. The cron tick checks every few minutes; a notification goes out
 //! when something breaks and when it is fine again, never on every check.
+//! Besides, CrowdSec's new bans, and a daily summary of them (see
+//! [`report_bans`]).
 
 use std::time::Duration;
 
@@ -12,10 +14,11 @@ use super::prune;
 use super::state::{self as server_state, Status};
 use super::state_file::{AlertRecord, BackupStatus, StateFile};
 use crate::app::{instance, state as app_state};
-use crate::config::server::Event;
+use crate::config::server::{Event, Notifications, ServerConfig};
 use crate::notify::{self, Notification, Severity};
 use crate::server::state_file::DeployStatus;
-use crate::shared::ServerCtx;
+use crate::shared::ingress::{self, crowdsec};
+use crate::shared::{ServerCtx, project_name};
 
 /// Free disk space must rise this many points above the threshold before
 /// `disk` is fine again, so that it doesn't flap around the threshold.
@@ -176,20 +179,157 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
         } else {
             detail
         };
-        notify::send_event(
+        send(
             ctx,
             notifications,
+            server_name,
             event,
-            &Notification {
-                event: event.name().to_string(),
-                severity,
-                title,
-                body,
-                server: server_name.to_string(),
-            },
+            severity,
+            title,
+            body,
+        );
+    }
+    if let Err(err) = report_bans(ctx, server_name, &config, notifications) {
+        eprintln!("error: bans notifications: {err:#}");
+    }
+    Ok(())
+}
+
+fn send(
+    ctx: &ServerCtx,
+    notifications: &Notifications,
+    server_name: &str,
+    event: Event,
+    severity: Severity,
+    title: String,
+    body: String,
+) {
+    notify::send_event(
+        ctx,
+        notifications,
+        event,
+        &Notification {
+            event: event.name().to_string(),
+            severity,
+            title,
+            body,
+            server: server_name.to_string(),
+        },
+    );
+}
+
+/// `bans`: the alerts CrowdSec raised since the last check that banned an
+/// address, or would have. `bans_daily`: a summary of the last 24 hours, at
+/// `daily_at`. Only recipients that ask for them get them.
+fn report_bans(
+    ctx: &ServerCtx,
+    server_name: &str,
+    config: &ServerConfig,
+    notifications: &Notifications,
+) -> Result<()> {
+    let per_check = notifications.wants(Event::Bans);
+    let daily = notifications.wants(Event::BansDaily);
+    if !per_check && !daily {
+        return Ok(());
+    }
+    let Some(ingress) = config.shared.get(ingress::KIND).and_then(|apps| {
+        apps.iter()
+            .find(|app| app.type_name == "caddysecurebuild" && !app.is_external())
+    }) else {
+        return Ok(());
+    };
+    let name = &ingress.name;
+    if !server_state::is_project_running(ctx.connector, &project_name(ingress::KIND, name))? {
+        return Ok(());
+    }
+
+    let record = StateFile::load(ctx)?.bans.unwrap_or_default();
+    let mut updated = record.clone();
+    let mut outgoing = Vec::new();
+    if per_check {
+        // An hour back covers the checks missed while the server was down.
+        let mut alerts = crowdsec::alerts(ctx, name, "1h")?;
+        alerts.sort_by_key(|alert| alert.id);
+        let newest = alerts.last().map(|alert| alert.id);
+        updated.last_alert = Some(match (record.last_alert, newest) {
+            // The first check: what happened before isn't news.
+            (None, newest) => newest.unwrap_or(0),
+            (Some(last), newest) => {
+                // Lower ids than reported before: CrowdSec's database was reset.
+                let last = if newest.is_some_and(|n| n < last) {
+                    0
+                } else {
+                    last
+                };
+                let new: Vec<_> = alerts
+                    .iter()
+                    .filter(|alert| alert.id > last && alert.is_ban())
+                    .collect();
+                if let Some(message) = crowdsec::bans_message(&new, name) {
+                    let severity = if message.banned {
+                        Severity::Warning
+                    } else {
+                        Severity::Info
+                    };
+                    outgoing.push((Event::Bans, severity, message));
+                }
+                newest.unwrap_or(last).max(last)
+            }
+        });
+    }
+    if daily {
+        if let Some(due) = daily_due(notifications, record.last_daily.as_deref()) {
+            let alerts = crowdsec::alerts(ctx, name, "24h")?;
+            let bans = crowdsec::active_bans(ctx, name)?;
+            let message = crowdsec::daily_message(&alerts, &bans, name);
+            outgoing.push((Event::BansDaily, Severity::Info, message));
+            updated.last_daily = Some(due);
+        }
+    }
+
+    if updated != record {
+        let _lock = lock(ctx)?;
+        let mut state = StateFile::load(ctx)?;
+        state.bans = Some(updated);
+        state.save(ctx)?;
+    }
+    for (event, severity, message) in outgoing {
+        send(
+            ctx,
+            notifications,
+            server_name,
+            event,
+            severity,
+            message.title,
+            message.body,
         );
     }
     Ok(())
+}
+
+/// The date of the last `daily_at` that passed, if its summary wasn't sent:
+/// today's once the time has come, else yesterday's (a check can come just
+/// after midnight for `23:58`).
+fn daily_due(notifications: &Notifications, last: Option<&str>) -> Option<String> {
+    daily_slot(
+        notifications.daily_time()?,
+        chrono::Local::now().naive_local(),
+        last,
+    )
+}
+
+fn daily_slot(
+    at: chrono::NaiveTime,
+    now: chrono::NaiveDateTime,
+    last: Option<&str>,
+) -> Option<String> {
+    let date = if now.time() >= at {
+        now.date()
+    } else {
+        now.date().pred_opt()?
+    };
+    let slot = date.format("%Y-%m-%d").to_string();
+    (last != Some(slot.as_str())).then_some(slot)
 }
 
 /// The last result of every scheduled backup that ran.
@@ -394,5 +534,39 @@ mod tests {
         assert_eq!(same.since, "t1");
         let (fixed, _) = step(Some(&same), &check(false, false, 1), "t3");
         assert_eq!(fixed.since, "t3");
+    }
+
+    #[test]
+    fn daily_summary_is_due_once_per_slot() {
+        let at = chrono::NaiveTime::from_hms_opt(8, 0, 0).unwrap();
+        let time =
+            |text: &str| chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M").unwrap();
+        // Before 08:00, the slot is yesterday's.
+        assert_eq!(
+            daily_slot(at, time("2026-05-04 07:55"), None).as_deref(),
+            Some("2026-05-03")
+        );
+        assert_eq!(
+            daily_slot(at, time("2026-05-04 07:55"), Some("2026-05-03")),
+            None
+        );
+        assert_eq!(
+            daily_slot(at, time("2026-05-04 08:00"), Some("2026-05-03")).as_deref(),
+            Some("2026-05-04")
+        );
+        assert_eq!(
+            daily_slot(at, time("2026-05-04 23:00"), Some("2026-05-04")),
+            None
+        );
+        // 23:58 with checks every 5 minutes: sent just after midnight.
+        let late = chrono::NaiveTime::from_hms_opt(23, 58, 0).unwrap();
+        assert_eq!(
+            daily_slot(late, time("2026-05-05 00:00"), Some("2026-05-03")).as_deref(),
+            Some("2026-05-04")
+        );
+        assert_eq!(
+            daily_slot(late, time("2026-05-05 00:05"), Some("2026-05-04")),
+            None
+        );
     }
 }

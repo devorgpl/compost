@@ -27,6 +27,9 @@ pub struct StateFile {
     /// What the server reported last, so that it reports changes only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alerts: Vec<AlertRecord>,
+    /// How far the `bans` notifications got.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bans: Option<BansRecord>,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -65,6 +68,17 @@ pub struct AlertRecord {
     pub since: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+/// The CrowdSec alerts the `bans` notifications covered.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BansRecord {
+    /// The newest alert reported (or seen, before the first report).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_alert: Option<u64>,
+    /// When `bans_daily` was last sent (`YYYY-MM-DD`, the server's date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_daily: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -166,6 +180,7 @@ impl Default for StateFile {
             compost_version: String::new(),
             backups: Vec::new(),
             alerts: Vec::new(),
+            bans: None,
             other: Mapping::new(),
         }
     }

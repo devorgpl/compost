@@ -4,6 +4,8 @@ mod base;
 mod caddy;
 pub mod security;
 
+pub use caddy::crowdsec;
+
 use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
@@ -33,6 +35,11 @@ pub trait IngressType: Sync {
 
     fn validate_config(&self, config: &SharedAppConfig) -> Result<()> {
         base::validate_config(config)
+    }
+
+    /// More lines for `server state`. Default: none.
+    fn state_lines(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Vec<String> {
+        Vec::new()
     }
 
     fn prepare_application(
@@ -160,6 +167,10 @@ impl Kind for IngressKind {
 
     fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
         find_type(&config.type_name)?.reload_shared(ctx, config)
+    }
+
+    fn state_lines(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Vec<String> {
+        find_type(&config.type_name).map_or_else(|_| Vec::new(), |t| t.state_lines(ctx, config))
     }
 
     fn reloads(&self, config: &SharedAppConfig) -> bool {

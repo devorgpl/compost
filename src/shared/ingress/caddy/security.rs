@@ -77,12 +77,66 @@ impl Default for Crowdsec {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Appsec {
     /// Also check requests against the OWASP Core Rule Set, out of band:
     /// matches don't block the request, repeated matches ban the address.
     pub crs: bool,
+    /// How much of a request body AppSec checks; 0: all of it. The bouncer
+    /// holds that much of every request in memory.
+    pub max_body: ByteSize,
+}
+
+impl Default for Appsec {
+    fn default() -> Self {
+        Self {
+            crs: false,
+            max_body: ByteSize(1_000_000),
+        }
+    }
+}
+
+/// A number of bytes, written as `1MB`, `512KiB` or plain `1000000`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {
+    pub fn parse(text: &str) -> Option<ByteSize> {
+        let text = text.trim();
+        let split = text
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(text.len());
+        let (number, unit) = text.split_at(split);
+        let number: u64 = number.parse().ok()?;
+        let factor: u64 = match unit.trim_start() {
+            "" | "B" => 1,
+            "kB" | "KB" => 1000,
+            "MB" => 1000 * 1000,
+            "GB" => 1000 * 1000 * 1000,
+            "KiB" => 1 << 10,
+            "MiB" => 1 << 20,
+            "GiB" => 1 << 30,
+            _ => return None,
+        };
+        number.checked_mul(factor).map(ByteSize)
+    }
+}
+
+impl<'de> Deserialize<'de> for ByteSize {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let text = match serde_yaml_ng::Value::deserialize(deserializer)? {
+            serde_yaml_ng::Value::String(text) => text,
+            serde_yaml_ng::Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        };
+        ByteSize::parse(&text).ok_or_else(|| {
+            D::Error::custom(format!(
+                "`{text}` is not a size like 1MB, 512KiB or 0 (no limit)"
+            ))
+        })
+    }
 }
 
 /// What a site gets for the fields its `security` leaves out.
@@ -194,7 +248,7 @@ impl ServerSecurity {
     /// the agent is down or starting, requests pass unchecked (bans fail
     /// open by default, AppSec with `appsec_fail_open`).
     pub fn options(&self, crowdsec_host: &str) -> Vec<String> {
-        [
+        let mut lines = vec![
             "order crowdsec first".to_string(),
             "order appsec after crowdsec".to_string(),
             "order rate_limit after appsec".to_string(),
@@ -203,10 +257,17 @@ impl ServerSecurity {
             "\tapi_key {env.CROWDSEC_API_KEY}".to_string(),
             format!("\tappsec_url http://{crowdsec_host}:{APPSEC_PORT}"),
             "\tappsec_fail_open".to_string(),
-            "\tticker_interval 15s".to_string(),
-            "}".to_string(),
-        ]
-        .into()
+        ];
+        // Without a limit the bouncer reads whole uploads into memory.
+        if self.appsec.max_body.0 > 0 {
+            lines.push(format!(
+                "\tappsec_max_body_bytes {}",
+                self.appsec.max_body.0
+            ));
+        }
+        lines.push("\tticker_interval 15s".to_string());
+        lines.push("}".to_string());
+        lines
     }
 
     /// The snippets sites import, in the Caddyfile after `compost_site`.
@@ -584,6 +645,36 @@ mod tests {
             let err = security(text).validate().unwrap_err().to_string();
             assert!(err.contains(expected), "{text}: {err}");
         }
+    }
+
+    #[test]
+    fn appsec_reads_at_most_max_body() {
+        let limit = |text: &str| {
+            security(text)
+                .options("crowdsec")
+                .into_iter()
+                .find(|line| line.contains("appsec_max_body_bytes"))
+        };
+        assert_eq!(limit("{}").unwrap(), "\tappsec_max_body_bytes 1000000");
+        assert_eq!(
+            limit("{appsec: {max_body: 512KiB}}").unwrap(),
+            "\tappsec_max_body_bytes 524288"
+        );
+        assert_eq!(
+            limit("{appsec: {max_body: 2000}}").unwrap(),
+            "\tappsec_max_body_bytes 2000"
+        );
+        assert_eq!(limit("{appsec: {max_body: 0}}"), None);
+        for (text, size) in [("10 MB", 10_000_000), ("1GiB", 1 << 30), ("5kB", 5000)] {
+            assert_eq!(ByteSize::parse(text), Some(ByteSize(size)), "{text}");
+        }
+        for bad in ["", "MB", "1 TB", "1.5MB", "-1"] {
+            assert_eq!(ByteSize::parse(bad), None, "{bad}");
+        }
+        let err = serde_yaml_ng::from_str::<ServerSecurity>("{appsec: {max_body: 1mb}}")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`1mb` is not a size like 1MB"), "{err}");
     }
 
     #[test]

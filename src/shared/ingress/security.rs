@@ -32,9 +32,9 @@ pub struct LinkSecurity {
 }
 
 /// Requests CrowdSec doesn't count towards a ban: those matching all the
-/// rule's keys. A key left out matches every request.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// rule's keys. A key left out matches every request. In config, a preset's
+/// name stands for its rule (see [`PRESETS`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct IgnoreRule {
     /// Request paths; `*` matches any characters, `/` included.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -44,6 +44,90 @@ pub struct IgnoreRule {
     /// Response statuses, e.g. 404.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub statuses: Vec<u16>,
+}
+
+/// Ignore rules for apps whose own clients get many 4xx answers by design.
+pub struct Preset {
+    pub name: &'static str,
+    paths: &'static [&'static str],
+    methods: &'static [&'static str],
+    statuses: &'static [u16],
+}
+
+pub const PRESETS: [Preset; 3] = [
+    // Element and other clients ask for the presence and profile fields of
+    // every room member; the homeserver answers 404 for those that have none.
+    Preset {
+        name: "matrix",
+        paths: &[
+            "/_matrix/client/*/presence/*",
+            "/_matrix/client/*/profile/*",
+        ],
+        methods: &["GET"],
+        statuses: &[404],
+    },
+    // Docker clients look for blobs and manifests before pushing them.
+    Preset {
+        name: "registry",
+        paths: &["/v2/*"],
+        methods: &["HEAD", "GET"],
+        statuses: &[404],
+    },
+    // S3 clients check for keys that don't exist yet.
+    Preset {
+        name: "s3",
+        paths: &[],
+        methods: &["HEAD"],
+        statuses: &[404],
+    },
+];
+
+impl IgnoreRule {
+    /// The rule of a preset.
+    pub fn preset(name: &str) -> Result<IgnoreRule> {
+        let preset = PRESETS.iter().find(|p| p.name == name).ok_or_else(|| {
+            let names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
+            anyhow::anyhow!(
+                "unknown ignore preset `{name}` (known: {})",
+                names.join(", ")
+            )
+        })?;
+        Ok(IgnoreRule {
+            paths: preset.paths.iter().map(|p| p.to_string()).collect(),
+            methods: preset.methods.iter().map(|m| m.to_string()).collect(),
+            statuses: preset.statuses.to_vec(),
+        })
+    }
+}
+
+// By hand, so that a preset's name can stand for its rule, and mistakes are
+// reported as such, not as "no variant matched".
+impl<'de> Deserialize<'de> for IgnoreRule {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Rule {
+            #[serde(default)]
+            paths: Vec<String>,
+            #[serde(default)]
+            methods: Vec<String>,
+            #[serde(default)]
+            statuses: Vec<u16>,
+        }
+        match serde_yaml_ng::Value::deserialize(deserializer)? {
+            serde_yaml_ng::Value::String(name) => {
+                IgnoreRule::preset(&name).map_err(D::Error::custom)
+            }
+            value => serde_yaml_ng::from_value::<Rule>(value)
+                .map(|r| IgnoreRule {
+                    paths: r.paths,
+                    methods: r.methods,
+                    statuses: r.statuses,
+                })
+                .map_err(D::Error::custom),
+        }
+    }
 }
 
 /// Prefix of the access-log fields that mark a request for the CrowdSec
@@ -288,6 +372,42 @@ mod tests {
         assert!(err.contains("listed twice"), "{err}");
         let err = serde_yaml_ng::from_str::<LinkSecurity>("{waf: true}").unwrap_err();
         assert!(err.to_string().contains("unknown field `waf`"), "{err}");
+    }
+
+    #[test]
+    fn presets_stand_for_their_rules() {
+        let security: LinkSecurity =
+            serde_yaml_ng::from_str("{ignore: [matrix, {paths: [/a/*], statuses: [404]}, s3]}")
+                .unwrap();
+        security.validate().unwrap();
+        assert_eq!(security.ignore[0], IgnoreRule::preset("matrix").unwrap());
+        assert_eq!(security.ignore[0].methods, ["GET"]);
+        assert_eq!(security.ignore[1].paths, ["/a/*"]);
+        assert_eq!(security.ignore[2].methods, ["HEAD"]);
+        // Saved expanded, so a deployed record reads back the same.
+        let saved = serde_yaml_ng::to_string(&security).unwrap();
+        assert!(saved.contains("/_matrix/client/*/presence/*"), "{saved}");
+        assert_eq!(
+            serde_yaml_ng::from_str::<LinkSecurity>(&saved).unwrap(),
+            security
+        );
+        // Every preset is a valid rule, even where a rule needs a key.
+        for preset in PRESETS {
+            let rule = IgnoreRule::preset(preset.name).unwrap();
+            validate_ignore("ignore", &[rule], false).unwrap();
+        }
+        for (text, expected) in [
+            (
+                "{ignore: [matrx]}",
+                "unknown ignore preset `matrx` (known: matrix, registry, s3)",
+            ),
+            ("{ignore: [{path: [/a]}]}", "unknown field `path`"),
+        ] {
+            let err = serde_yaml_ng::from_str::<LinkSecurity>(text)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "{text}: {err}");
+        }
     }
 
     #[test]

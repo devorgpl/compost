@@ -291,6 +291,7 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
         &manager.manager_key,
     )?;
     let external = state::check_external(connector.as_ref(), &mut report)?;
+    state::details(connector.as_ref(), &mut report)?;
 
     let summary = format!(
         "{} ({}): {}",
@@ -333,6 +334,9 @@ pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions)
             app.name,
             app.type_name
         );
+        for line in &app.details {
+            out!("  {:<10} {:<16} {line}", "", "");
+        }
     }
 
     if let (Some(server_home), false) = (&report.home, report.status == Status::Uninitialized) {

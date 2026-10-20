@@ -177,6 +177,7 @@ shared:
             simulated_scenarios: []       # scenarios that only raise alerts, never ban
           appsec:
             crs: false
+            max_body: 1MB                 # how much of a request body AppSec checks
           defaults:                       # what a site gets unless its own `security` says otherwise
             bans: true
             appsec: true
@@ -197,12 +198,13 @@ shared:
 | `security.crowdsec.ban_duration` | `4h` | How long a ban lasts, e.g. `30m`, `1h30m` |
 | `security.crowdsec.collections` | `[]` | Hub collections installed besides `crowdsecurity/caddy`, `crowdsecurity/base-http-scenarios`, `crowdsecurity/appsec-virtual-patching` and `crowdsecurity/appsec-generic-rules`, e.g. `crowdsecurity/wordpress` |
 | `security.crowdsec.scenarios` | `[]` | Hub scenarios installed besides those of the collections |
-| `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban (see [False positives](#false-positives)) |
+| `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban: a rule, or a [preset](#false-positives) name such as `matrix` |
 | `security.crowdsec.ignore[].paths` | every path | Request paths; `*` matches any characters, `/` included |
 | `security.crowdsec.ignore[].methods` | every method | e.g. `[GET]` |
 | `security.crowdsec.ignore[].statuses` | every status | Response statuses, e.g. `[404]` |
 | `security.crowdsec.simulated_scenarios` | `[]` | Scenarios in CrowdSec's simulation mode: their alerts show up in `alerts`, but they never ban |
 | `security.appsec.crs` | `false` | Also check the OWASP Core Rule Set (`crowdsecurity/appsec-crs`), out of band |
+| `security.appsec.max_body` | `1MB` | How much of a request body AppSec checks: `1MB`, `512KiB`, a number of bytes, or `0` for all of it (see [AppSec and request bodies](#appsec-and-request-bodies)) |
 | `security.defaults.bans` | `true` | Sites enforce bans |
 | `security.defaults.appsec` | `true` | Sites check requests with AppSec |
 | `security.defaults.rate_limits` | all zones | Zones sites use, by name |
@@ -235,6 +237,16 @@ compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing   # ever
 
 These are [built into compost](Admin-Commands.md#built-in-commands). Other `cscli` commands run with `compost server exec caddy-main --service crowdsec -- cscli …`.
 
+`compost server state` sums up what the agent did, under the ingress's line:
+
+```
+  ingress    caddy-main       caddysecurebuild 2  running
+                              bans: 3 by this server's scenarios (crowdsecurity/http-probing 2, crowdsecurity/http-bad-user-agent 1), 14210 from blocklists
+                              last 24h: 9 alerts, 4 simulated (crowdsecurity/http-crawl-non_statics 4)
+```
+
+To hear about bans without looking, add the [notification events](Notifications.md#what-is-sent) `bans` (each new ban, within 5 minutes) or `bans_daily` (a summary once a day).
+
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 
 #### False positives
@@ -258,14 +270,40 @@ services:
       routes: [ … ]
       security:
         ignore:
+          - matrix                        # a preset, the same as:
           - paths: [/_matrix/client/*/presence/*, /_matrix/client/*/profile/*]
             methods: [GET]
             statuses: [404]
 ```
 
+Presets are rules for apps that are known to do this; mix them with your own rules:
+
+| Preset | Rule | For |
+|---|---|---|
+| `matrix` | `paths: [/_matrix/client/*/presence/*, /_matrix/client/*/profile/*]`, `methods: [GET]`, `statuses: [404]` | Matrix homeservers (Synapse, Conduit, tuwunel) and their clients |
+| `registry` | `paths: [/v2/*]`, `methods: [HEAD, GET]`, `statuses: [404]` | Docker registries: clients look for blobs and manifests before pushing them |
+| `s3` | `methods: [HEAD]`, `statuses: [404]` | S3 storage such as [Garage](#garage-and-s3-storage): clients check for keys that don't exist yet |
+
 Other requests to the same site are still checked, and so are the same paths with another method or status. A rule of `security.crowdsec.ignore` in compost-server.yaml applies to every site and needs at least one key. An entry's `ignore: [{}]` leaves all of its requests out. Bans, AppSec and rate limits stay as they are; compost marks the requests in Caddy's access log and a CrowdSec whitelist (`compost/ignore`) drops them before any scenario counts them. Then lift the bans the false positive made: `compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing`.
 
-`simulated_scenarios` is the blunter tool: those scenarios still raise alerts, which `caddy-main.alerts` shows, but never ban anyone. It also lets you watch a scenario for a while before letting it ban. Taking a scenario off the list makes it ban again on the next `server deploy`.
+`simulated_scenarios` is the blunter tool: those scenarios still raise alerts, which `caddy-main.alerts` shows, but never ban anyone. Taking a scenario off the list makes it ban again on the next `server deploy`.
+
+#### Watching before banning
+
+When you switch an existing server to this type, its users' normal traffic may look like an attack for reasons you can't foresee. To find out before anyone is locked out:
+
+1. Put the scenarios that ban by request patterns in `simulated_scenarios`, e.g. `crowdsecurity/http-probing`, `crowdsecurity/http-crawl-non_statics` and `crowdsecurity/http-sensitive-files`, and deploy.
+2. Subscribe to `bans` or `bans_daily` (see [Notifications](Notifications.md#what-is-sent)): simulated alerts are in them, marked as such. `server state` counts them too.
+3. For each address that shouldn't be there, find the requests (`caddy-main.alert <id>`) and add `ignore` rules or presets.
+4. When a few days pass without false positives, empty `simulated_scenarios` and deploy.
+
+`defaults.bans: false` is no substitute: CrowdSec still bans, and the addresses are blocked as soon as you turn bans back on, for what's left of `ban_duration`.
+
+#### AppSec and request bodies
+
+AppSec checks the method, URL and headers of every request on a site with `appsec`, and the first `max_body` of its body (1 MB by default). Caddy holds that part of every request in memory while AppSec checks it, which is why there is a limit. With `0` it would read whole uploads, e.g. images pushed to a registry. A bigger body is checked by its beginning only, and the rest is passed on unchecked.
+
+Bodies sent without a length, which browsers and clients do for streamed uploads over HTTP/2 and HTTP/3, aren't checked at all: AppSec gets the request without its body, and Caddy logs `dropping request body from AppSec check as it can't be buffered`. That warning is expected, not a fault.
 
 ### postgres (`database`)
 

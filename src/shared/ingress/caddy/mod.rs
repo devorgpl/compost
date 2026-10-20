@@ -1,6 +1,7 @@
 //! Caddy ingress types (spec §5.3, §9.2): `caddy`, and `caddysecurebuild`,
 //! Caddy built on the server with request filtering (see [`security`]).
 
+pub mod crowdsec;
 mod security;
 
 use std::collections::HashSet;
@@ -480,6 +481,14 @@ impl IngressType for Caddy {
 
     fn reloads(&self) -> bool {
         true
+    }
+
+    fn state_lines(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Vec<String> {
+        if self.secure {
+            crowdsec::state_lines(ctx, &config.name)
+        } else {
+            Vec::new()
+        }
     }
 
     /// Validate the configuration files, then reload them without a restart.

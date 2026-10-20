@@ -146,6 +146,8 @@ fn ssh_key_file_is_checked_before_connecting() {
 /// `FAKE_DOCKER_MISSING_TAGS=1` makes pinned release images missing.
 /// `build: local`: `FAKE_DOCKER_STALE=1` makes every image look different on
 /// the server, `FAKE_DOCKER_BUILD_FAIL=1` fails `compose build`.
+/// `FAKE_CSCLI_ALERTS` and `FAKE_CSCLI_DECISIONS` are files with what
+/// CrowdSec's `cscli alerts list -o json` and `cscli decisions list -o raw` print.
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 echo "docker $*" >> "$FAKE_DOCKER_LOG"
 [ -n "$FAKE_DOCKER_DOWN" ] && { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
@@ -181,6 +183,11 @@ case "$*" in
   "compose "*" exec "*"/garage node id -q"*) echo "abc123def456@127.0.0.1:3901" ;;
   "compose "*" exec "*"/garage bucket info "*|"compose "*" exec "*"/garage key info "*) exit 1 ;;
   "compose "*" exec "*"/garage json-api ImportKey -"*) echo "import: $(cat)" >> "$FAKE_DOCKER_LOG" ;;
+  "compose "*" exec "*" cscli alerts list "*)
+    if [ -n "$FAKE_CSCLI_ALERTS" ]; then cat "$FAKE_CSCLI_ALERTS"; else echo null; fi ;;
+  "compose "*" exec "*" cscli decisions list "*)
+    echo id,source,ip,reason,action,country,as,events_count,expiration,simulated,alert_id
+    [ -z "$FAKE_CSCLI_DECISIONS" ] || cat "$FAKE_CSCLI_DECISIONS" ;;
   "compose "*" exec "*) cat >> "$FAKE_DOCKER_LOG" ;;
   "compose "*" up "*) if [ -n "$FAKE_DOCKER_SLOW_UP" ]; then sleep 10; fi ;;
   "compose "*" logs "*) echo "fake log line" ;;
@@ -3153,6 +3160,125 @@ fn communication_apps_are_built_on_the_server_and_send_tests() {
         .failure()
         .stdout(contains("ops-chat: failed: HTTP 403: forbidden"))
         .stderr(contains("1 of 1 channels failed"));
+}
+
+#[test]
+fn bans_are_reported_to_who_asks() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:
+  ingress:
+    - {name: caddy-main, type: caddysecurebuild}
+  communication:
+    - {name: hook, type: webhook}
+    - {name: security, type: webhook}
+notifications:
+  send_to: [hook, {to: security, events: [bans, bans_daily]}]
+  daily_at: '00:00'
+",
+    );
+    server.write_work_file(
+        "secrets.yaml",
+        "shared: {communication: [{name: hook, configuration: {url: 'https://hooks.example.com/x'}}, {name: security, configuration: {url: 'https://hooks.example.com/y'}}]}",
+    );
+    let alerts = server.env.work.path().join("alerts.json");
+    let decisions = server.env.work.path().join("decisions.csv");
+    fs::write(
+        &alerts,
+        include_str!("../src/shared/ingress/caddy/testdata/alerts.json"),
+    )
+    .unwrap();
+    fs::write(
+        &decisions,
+        "1,crowdsec,Ip:198.51.100.7,crowdsecurity/http-probing,ban,,,11,3h58m57s,false,1\n\
+         9,CAPI,Ip:203.0.113.1,crowdsecurity/ssh-bf,ban,,,0,160h,false,7\n",
+    )
+    .unwrap();
+    let env = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_CSCLI_ALERTS", alerts.to_str().unwrap()),
+        ("FAKE_CSCLI_DECISIONS", decisions.to_str().unwrap()),
+    ];
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &env,
+        )
+        .success()
+        .stdout(contains("installed the crontab line"));
+    let home = server.server_home.display().to_string();
+    let tick = [
+        "backup",
+        "tick",
+        "--server-home",
+        home.as_str(),
+        "--server-name",
+        "dev",
+    ];
+    let sent = |log: &str| -> Vec<String> {
+        log.lines()
+            .filter(|l| l.contains(" send --severity "))
+            .map(|l| {
+                let to = if l.contains("communication/security/") {
+                    "security"
+                } else {
+                    "hook"
+                };
+                format!("{to}: {}", l.split(" send ").nth(1).unwrap())
+            })
+            .collect()
+    };
+
+    // The first check: the summary is due, older alerts aren't news.
+    server.take_docker_log();
+    server.run(&tick, &env).success();
+    let log = server.take_docker_log();
+    assert_eq!(
+        sent(&log),
+        [
+            "security: --severity info --title Bans in the last 24h: 2 (1 simulated) --server dev --event bans_daily"
+        ]
+    );
+    assert!(
+        log.contains("Bans in force: 1 by this server's scenarios (crowdsecurity/http-probing 1), 1 from blocklists"),
+        "{log}"
+    );
+    server.run(&tick, &env).success();
+    assert!(sent(&server.take_docker_log()).is_empty(), "no repeat");
+
+    // A new ban.
+    fs::write(
+        &alerts,
+        r#"[{"id": 5, "kind": "crowdsec", "scenario": "crowdsecurity/http-probing",
+             "source": {"value": "203.0.113.9"}, "decisions": [{"type": "ban"}], "events": null}]"#,
+    )
+    .unwrap();
+    server.run(&tick, &env).success();
+    let log = server.take_docker_log();
+    assert_eq!(
+        sent(&log),
+        ["security: --severity warning --title 1 address banned --server dev --event bans"]
+    );
+    assert!(
+        log.contains("203.0.113.9  crowdsecurity/http-probing  alert 5"),
+        "{log}"
+    );
+    server.run(&tick, &env).success();
+    assert!(sent(&server.take_docker_log()).is_empty(), "reported once");
+    assert!(
+        fs::read_to_string(server.server_home.join("state.yaml"))
+            .unwrap()
+            .contains("last_alert: 5")
+    );
+
+    server
+        .state(&env)
+        .success()
+        .stdout(contains(
+            "bans: 1 by this server's scenarios (crowdsecurity/http-probing 1), 1 from blocklists",
+        ))
+        .stdout(contains("last 24h: 1 alert\n"));
 }
 
 #[test]

@@ -39,15 +39,34 @@ pub struct Notifications {
     /// Percent of free disk space below which `disk` is sent.
     #[serde(default = "default_disk_free_below")]
     pub disk_free_below: u8,
+    /// When `bans_daily` is sent, `HH:MM` in the server's time zone.
+    #[serde(default = "default_daily_at")]
+    pub daily_at: String,
 }
 
 fn default_disk_free_below() -> u8 {
     10
 }
 
+fn default_daily_at() -> String {
+    "08:00".to_string()
+}
+
+impl Notifications {
+    /// `daily_at` as a time of day; validation checks it.
+    pub fn daily_time(&self) -> Option<chrono::NaiveTime> {
+        chrono::NaiveTime::parse_from_str(&self.daily_at, "%H:%M").ok()
+    }
+
+    /// Whether a recipient wants `event`.
+    pub fn wants(&self, event: Event) -> bool {
+        self.send_to.iter().any(|r| r.wants(event))
+    }
+}
+
 /// Events the server reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Event {
     /// A scheduled backup failed, or works again.
     Backup,
@@ -55,6 +74,10 @@ pub enum Event {
     Health,
     /// Free disk space is low, or enough again.
     Disk,
+    /// CrowdSec banned addresses, or would have (simulated scenarios).
+    Bans,
+    /// A summary of the bans of the last 24 hours.
+    BansDaily,
 }
 
 impl Event {
@@ -63,7 +86,15 @@ impl Event {
             Event::Backup => "backup",
             Event::Health => "health",
             Event::Disk => "disk",
+            Event::Bans => "bans",
+            Event::BansDaily => "bans_daily",
         }
+    }
+
+    /// Sent only to recipients that list it: a server facing the internet
+    /// bans scanners many times a day.
+    pub fn opt_in(self) -> bool {
+        matches!(self, Event::Bans | Event::BansDaily)
     }
 }
 
@@ -107,7 +138,7 @@ impl Recipient {
 
     pub fn wants(&self, event: Event) -> bool {
         match self {
-            Recipient::All(_) => true,
+            Recipient::All(_) => !event.opt_in(),
             Recipient::Some { events, .. } => events.contains(&event),
         }
     }
@@ -612,6 +643,28 @@ impl ServerConfig {
                     "notifications.disk_free_below: a percentage from 1 to 99",
                 ));
             }
+            if notifications.daily_time().is_none() {
+                return Err(config_err(format!(
+                    "notifications.daily_at: `{}` is not a time like 08:00",
+                    notifications.daily_at
+                )));
+            }
+            let bans = [Event::Bans, Event::BansDaily]
+                .into_iter()
+                .find(|&event| notifications.wants(event));
+            let secure = self
+                .shared
+                .get(crate::shared::ingress::KIND)
+                .is_some_and(|apps| {
+                    apps.iter()
+                        .any(|a| a.type_name == "caddysecurebuild" && !a.is_external())
+                });
+            if let (Some(event), false) = (bans, secure) {
+                return Err(config_err(format!(
+                    "notifications.send_to: `{}` needs a caddysecurebuild ingress, whose CrowdSec bans addresses",
+                    event.name()
+                )));
+            }
         }
         for (name, command) in &self.commands {
             check_name("command name", name)?;
@@ -819,6 +872,38 @@ shared:
         );
         assert!(
             error(&format!("{chat}notifications: {{disk_free_below: 0}}")).contains("from 1 to 99")
+        );
+    }
+
+    #[test]
+    fn ban_notifications_are_opt_in() {
+        let shared = "shared: {communication: [{name: chat, type: slack}], ingress: [{name: caddy-main, type: caddysecurebuild}]}\n";
+        let config = parse(&format!(
+            "{shared}notifications: {{send_to: [chat, {{to: chat, events: [bans, bans_daily]}}], daily_at: '07:30'}}"
+        ))
+        .unwrap();
+        let notifications = config.notifications.unwrap();
+        assert!(!notifications.send_to[0].wants(Event::Bans));
+        assert!(!notifications.send_to[0].wants(Event::BansDaily));
+        assert!(notifications.send_to[1].wants(Event::Bans));
+        assert!(notifications.send_to[1].wants(Event::BansDaily));
+        assert_eq!(
+            notifications.daily_time(),
+            chrono::NaiveTime::from_hms_opt(7, 30, 0)
+        );
+        let default = parse(&format!("{shared}notifications: {{send_to: [chat]}}")).unwrap();
+        assert_eq!(default.notifications.unwrap().daily_at, "08:00");
+
+        assert!(
+            error(&format!("{shared}notifications: {{daily_at: '25:00'}}"))
+                .contains("`25:00` is not a time like 08:00")
+        );
+        let plain = "shared: {communication: [{name: chat, type: slack}], ingress: [{name: caddy-main, type: caddy}]}\n";
+        assert!(
+            error(&format!(
+                "{plain}notifications: {{send_to: [{{to: chat, events: [bans_daily]}}]}}"
+            ))
+            .contains("`bans_daily` needs a caddysecurebuild ingress")
         );
     }
 

@@ -99,7 +99,7 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `security.appsec` | server default | Check requests with CrowdSec AppSec |
 | `security.rate_limits` | server default | Rate-limit zones of the server, by name; `[]` for none |
 | `security.own_rate_limits[]` | `[]` | Zones of this entry: `name`, `paths`, `methods`, `events`, `window` (see [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)) |
-| `security.ignore[]` | `[]` | Requests of this entry CrowdSec never counts towards a ban: `paths`, `methods`, `statuses` (see [False positives](Servers-and-Shared-Apps.md#false-positives)) |
+| `security.ignore[]` | `[]` | Requests of this entry CrowdSec never counts towards a ban: rules of `paths`, `methods`, `statuses`, or presets `matrix`, `registry`, `s3` (see [False positives](Servers-and-Shared-Apps.md#false-positives)) |
 
 ### `services.database[]`
 
@@ -240,8 +240,9 @@ backup:
 
 ```yaml
 notifications:
-  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk
+  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk, bans, bans_daily
   disk_free_below: 10                                           # percent
+  daily_at: "08:00"                                             # when bans_daily is sent
 ```
 
 See [Notifications](Notifications.md#what-is-sent).

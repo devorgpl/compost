@@ -56,6 +56,8 @@ pub struct SharedAppState {
     pub external: bool,
     /// Runs no containers, only when needed (a communication app).
     pub on_demand: bool,
+    /// What the shared app says about itself (see [`details`]).
+    pub details: Vec<String>,
 }
 
 impl Report {
@@ -138,6 +140,7 @@ pub fn check(connector: &dyn Connector, server_home: &str, manager_key: &str) ->
                 running,
                 external: app.is_external(),
                 on_demand,
+                details: Vec::new(),
             });
         }
     }
@@ -180,6 +183,34 @@ pub fn check_external(
         results.push((kind_name.to_string(), app.name.clone(), result));
     }
     Ok(results)
+}
+
+/// Ask each running shared app for its [`Kind::state_lines`], e.g. what
+/// CrowdSec banned.
+///
+/// [`Kind::state_lines`]: crate::shared::Kind::state_lines
+pub fn details(connector: &dyn Connector, report: &mut Report) -> Result<()> {
+    let Some(home) = report.home.clone() else {
+        return Ok(());
+    };
+    let Some(text) = connector.read_file(&format!("{home}/{SERVER_CONFIG_FILE}"))? else {
+        return Ok(());
+    };
+    let config = ServerConfig::parse(&text)?;
+    let ctx = ServerCtx { connector, home };
+    for state in report
+        .shared
+        .iter_mut()
+        .filter(|s| s.running && !s.external && !s.on_demand)
+    {
+        let found = config
+            .shared_apps()
+            .find(|(kind, app)| *kind == state.kind && app.name == state.name);
+        if let (Some((_, app)), Some(kind)) = (found, find_kind(&state.kind)) {
+            state.details = kind.state_lines(&ctx, app);
+        }
+    }
+    Ok(())
 }
 
 pub fn is_project_running(connector: &dyn Connector, project: &str) -> Result<bool> {

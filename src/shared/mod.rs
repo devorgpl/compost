@@ -339,6 +339,12 @@ pub trait Kind: Sync {
         bail!("{} servers cannot be external", self.name())
     }
 
+    /// More lines for `server state` about a running shared app, e.g. what
+    /// its CrowdSec banned. Default: none.
+    fn state_lines(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Validate all shared apps of this kind together. Default: no rules.
     fn validate_instances(&self, _configs: &[SharedAppConfig]) -> Result<()> {
         Ok(())

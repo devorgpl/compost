@@ -893,7 +893,7 @@ compost server cmd caddy-main.bans
 compost server cmd caddy-main.unban 198.51.100.7
 ```
 
-If your users get banned for using an app normally (a Matrix client is the common case), add `ignore` rules for the requests behind the ban: see [False positives](Servers-and-Shared-Apps.md#false-positives).
+If your users get banned for using an app normally (a Matrix client is the common case), add `ignore` rules for the requests behind the ban, or a preset such as `ignore: [matrix]`: see [False positives](Servers-and-Shared-Apps.md#false-positives).
 
 ## A review copy of production
 
@@ -1561,9 +1561,10 @@ services:
             window: 10s
         ignore:                  # requests CrowdSec never counts towards a ban
           - {paths: [/api/v1/items/*], methods: [GET], statuses: [404]}
+          - matrix               # a preset: matrix, registry or s3
 ```
 
-`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429. `ignore` is for apps whose own clients get many 4xx answers, which CrowdSec would take for a scan and ban, e.g. Matrix clients; see [False positives](Servers-and-Shared-Apps.md#false-positives).
+`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429. `ignore` is for apps whose own clients get many 4xx answers, which CrowdSec would take for a scan and ban, e.g. Matrix clients, registries and S3 storage, which have presets; see [False positives](Servers-and-Shared-Apps.md#false-positives).
 
 ## Database links
 
@@ -2152,6 +2153,7 @@ shared:
             simulated_scenarios: []       # scenarios that only raise alerts, never ban
           appsec:
             crs: false
+            max_body: 1MB                 # how much of a request body AppSec checks
           defaults:                       # what a site gets unless its own `security` says otherwise
             bans: true
             appsec: true
@@ -2172,12 +2174,13 @@ shared:
 | `security.crowdsec.ban_duration` | `4h` | How long a ban lasts, e.g. `30m`, `1h30m` |
 | `security.crowdsec.collections` | `[]` | Hub collections installed besides `crowdsecurity/caddy`, `crowdsecurity/base-http-scenarios`, `crowdsecurity/appsec-virtual-patching` and `crowdsecurity/appsec-generic-rules`, e.g. `crowdsecurity/wordpress` |
 | `security.crowdsec.scenarios` | `[]` | Hub scenarios installed besides those of the collections |
-| `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban (see [False positives](#false-positives)) |
+| `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban: a rule, or a [preset](#false-positives) name such as `matrix` |
 | `security.crowdsec.ignore[].paths` | every path | Request paths; `*` matches any characters, `/` included |
 | `security.crowdsec.ignore[].methods` | every method | e.g. `[GET]` |
 | `security.crowdsec.ignore[].statuses` | every status | Response statuses, e.g. `[404]` |
 | `security.crowdsec.simulated_scenarios` | `[]` | Scenarios in CrowdSec's simulation mode: their alerts show up in `alerts`, but they never ban |
 | `security.appsec.crs` | `false` | Also check the OWASP Core Rule Set (`crowdsecurity/appsec-crs`), out of band |
+| `security.appsec.max_body` | `1MB` | How much of a request body AppSec checks: `1MB`, `512KiB`, a number of bytes, or `0` for all of it (see [AppSec and request bodies](#appsec-and-request-bodies)) |
 | `security.defaults.bans` | `true` | Sites enforce bans |
 | `security.defaults.appsec` | `true` | Sites check requests with AppSec |
 | `security.defaults.rate_limits` | all zones | Zones sites use, by name |
@@ -2210,6 +2213,16 @@ compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing   # ever
 
 These are [built into compost](Admin-Commands.md#built-in-commands). Other `cscli` commands run with `compost server exec caddy-main --service crowdsec -- cscli …`.
 
+`compost server state` sums up what the agent did, under the ingress's line:
+
+```
+  ingress    caddy-main       caddysecurebuild 2  running
+                              bans: 3 by this server's scenarios (crowdsecurity/http-probing 2, crowdsecurity/http-bad-user-agent 1), 14210 from blocklists
+                              last 24h: 9 alerts, 4 simulated (crowdsecurity/http-crawl-non_statics 4)
+```
+
+To hear about bans without looking, add the [notification events](Notifications.md#what-is-sent) `bans` (each new ban, within 5 minutes) or `bans_daily` (a summary once a day).
+
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 
 #### False positives
@@ -2233,14 +2246,40 @@ services:
       routes: [ … ]
       security:
         ignore:
+          - matrix                        # a preset, the same as:
           - paths: [/_matrix/client/*/presence/*, /_matrix/client/*/profile/*]
             methods: [GET]
             statuses: [404]
 ```
 
+Presets are rules for apps that are known to do this; mix them with your own rules:
+
+| Preset | Rule | For |
+|---|---|---|
+| `matrix` | `paths: [/_matrix/client/*/presence/*, /_matrix/client/*/profile/*]`, `methods: [GET]`, `statuses: [404]` | Matrix homeservers (Synapse, Conduit, tuwunel) and their clients |
+| `registry` | `paths: [/v2/*]`, `methods: [HEAD, GET]`, `statuses: [404]` | Docker registries: clients look for blobs and manifests before pushing them |
+| `s3` | `methods: [HEAD]`, `statuses: [404]` | S3 storage such as [Garage](#garage-and-s3-storage): clients check for keys that don't exist yet |
+
 Other requests to the same site are still checked, and so are the same paths with another method or status. A rule of `security.crowdsec.ignore` in compost-server.yaml applies to every site and needs at least one key. An entry's `ignore: [{}]` leaves all of its requests out. Bans, AppSec and rate limits stay as they are; compost marks the requests in Caddy's access log and a CrowdSec whitelist (`compost/ignore`) drops them before any scenario counts them. Then lift the bans the false positive made: `compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing`.
 
-`simulated_scenarios` is the blunter tool: those scenarios still raise alerts, which `caddy-main.alerts` shows, but never ban anyone. It also lets you watch a scenario for a while before letting it ban. Taking a scenario off the list makes it ban again on the next `server deploy`.
+`simulated_scenarios` is the blunter tool: those scenarios still raise alerts, which `caddy-main.alerts` shows, but never ban anyone. Taking a scenario off the list makes it ban again on the next `server deploy`.
+
+#### Watching before banning
+
+When you switch an existing server to this type, its users' normal traffic may look like an attack for reasons you can't foresee. To find out before anyone is locked out:
+
+1. Put the scenarios that ban by request patterns in `simulated_scenarios`, e.g. `crowdsecurity/http-probing`, `crowdsecurity/http-crawl-non_statics` and `crowdsecurity/http-sensitive-files`, and deploy.
+2. Subscribe to `bans` or `bans_daily` (see [Notifications](Notifications.md#what-is-sent)): simulated alerts are in them, marked as such. `server state` counts them too.
+3. For each address that shouldn't be there, find the requests (`caddy-main.alert <id>`) and add `ignore` rules or presets.
+4. When a few days pass without false positives, empty `simulated_scenarios` and deploy.
+
+`defaults.bans: false` is no substitute: CrowdSec still bans, and the addresses are blocked as soon as you turn bans back on, for what's left of `ban_duration`.
+
+#### AppSec and request bodies
+
+AppSec checks the method, URL and headers of every request on a site with `appsec`, and the first `max_body` of its body (1 MB by default). Caddy holds that part of every request in memory while AppSec checks it, which is why there is a limit. With `0` it would read whole uploads, e.g. images pushed to a registry. A bigger body is checked by its beginning only, and the rest is passed on unchecked.
+
+Bodies sent without a length, which browsers and clients do for streamed uploads over HTTP/2 and HTTP/3, aren't checked at all: AppSec gets the request without its body, and Caddy logs `dropping request body from AppSec check as it can't be buffered`. That warning is expected, not a fault.
 
 ### postgres (`database`)
 
@@ -3196,7 +3235,7 @@ The server dump already holds the apps' databases and their link records keep th
 
 # Notifications
 
-The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
+The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. On request, it also reports the addresses CrowdSec bans. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
 
 ```sh
 compost server generate --with matrix    # or webhook, slack, mattermost, discord, email
@@ -3211,9 +3250,11 @@ compost notify test                      # a test message to every channel
 # compost-server.yaml
 notifications:
   send_to:
-    - ops-chat                                  # every event
+    - ops-chat                                  # every event but bans and bans_daily
     - {to: ops-mail, events: [backup, disk]}    # only these
+    - {to: security, events: [bans_daily]}      # bans only go to who lists them
   disk_free_below: 10                           # percent, default 10
+  daily_at: "08:00"                             # when bans_daily is sent, default 08:00
 ```
 
 | Event | Sent when | Severity |
@@ -3221,8 +3262,12 @@ notifications:
 | `backup` | A [scheduled backup](Backup-and-Restore.md#scheduled-backups) failed (with its error), and when that profile's next run works | `error`, then `ok` |
 | `health` | A shared app isn't running, or an instance has a container that isn't healthy (as `server state` and `app state` judge it), at two checks in a row; and when it's fine again | `error`, then `ok` |
 | `disk` | Free space on the disk with `~/.compost-server` is below `disk_free_below` percent; and when it is 2 points above it again | `warning`, then `ok` |
+| `bans` | The [CrowdSec](Servers-and-Shared-Apps.md#caddysecurebuild-ingress) agent banned addresses since the last check, or would have with a simulated scenario: one message per check, listing each address with its scenario, sites and alert id | `warning`, or `info` when all were simulated |
+| `bans_daily` | Every day at `daily_at` (the server's time zone): the bans of the last 24 hours by scenario, the addresses with the most alerts, and how many bans are in force | `info`, also on a day without bans |
 
-Each is sent once when it changes, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
+`bans` and `bans_daily` need a `caddysecurebuild` ingress, and only go to channels that list them in `events`: a server facing the internet bans scanners many times a day. Bans you add yourself (`caddy-main.ban`) and the community blocklist's aren't reported, only those of the server's own scenarios. The first check after you subscribe to `bans` only notes where CrowdSec's alerts are, so older bans aren't sent; the first `bans_daily` comes at the first check after `daily_at`, which can be right away.
+
+`backup`, `health` and `disk` are sent once when they change, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
 
 A channel that can't be reached is logged as a warning in `~/.compost-server/logs/backup.log`, and that message isn't sent again; check channels with `compost notify test`.
 
@@ -3301,7 +3346,7 @@ docker run --rm <image> describe
 
 - `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
 - `describe` prints JSON with at least `"api": 1`; deploys fail without it.
-- `--event` is `backup`, `health` or `disk` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
+- `--event` is `backup`, `health`, `disk`, `bans` or `bans_daily` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
 - The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
 - Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.
 
@@ -3623,7 +3668,7 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `security.appsec` | server default | Check requests with CrowdSec AppSec |
 | `security.rate_limits` | server default | Rate-limit zones of the server, by name; `[]` for none |
 | `security.own_rate_limits[]` | `[]` | Zones of this entry: `name`, `paths`, `methods`, `events`, `window` (see [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)) |
-| `security.ignore[]` | `[]` | Requests of this entry CrowdSec never counts towards a ban: `paths`, `methods`, `statuses` (see [False positives](Servers-and-Shared-Apps.md#false-positives)) |
+| `security.ignore[]` | `[]` | Requests of this entry CrowdSec never counts towards a ban: rules of `paths`, `methods`, `statuses`, or presets `matrix`, `registry`, `s3` (see [False positives](Servers-and-Shared-Apps.md#false-positives)) |
 
 ### `services.database[]`
 
@@ -3764,8 +3809,9 @@ backup:
 
 ```yaml
 notifications:
-  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk
+  send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk, bans, bans_daily
   disk_free_below: 10                                           # percent
+  daily_at: "08:00"                                             # when bans_daily is sent
 ```
 
 See [Notifications](Notifications.md#what-is-sent).

@@ -534,7 +534,7 @@ compost server cmd caddy-main.bans
 compost server cmd caddy-main.unban 198.51.100.7
 ```
 
-If your users get banned for using an app normally (a Matrix client is the common case), add `ignore` rules for the requests behind the ban: see [False positives](Servers-and-Shared-Apps.md#false-positives).
+If your users get banned for using an app normally (a Matrix client is the common case), add `ignore` rules for the requests behind the ban, or a preset such as `ignore: [matrix]`: see [False positives](Servers-and-Shared-Apps.md#false-positives).
 
 ## A review copy of production
 

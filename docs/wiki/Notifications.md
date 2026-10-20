@@ -1,6 +1,6 @@
 # Notifications
 
-The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
+The server tells you when a scheduled backup fails, when a shared app or an instance goes down, and when its disk fills up, and again when each is fine. On request, it also reports the addresses CrowdSec bans. It sends through **communication apps**: shared apps of the kind `communication`, one per channel. A communication app runs nothing by itself. compost runs its image when it has something to send, with the channel's settings and credentials in a file only the server user can read.
 
 ```sh
 compost server generate --with matrix    # or webhook, slack, mattermost, discord, email
@@ -15,9 +15,11 @@ compost notify test                      # a test message to every channel
 # compost-server.yaml
 notifications:
   send_to:
-    - ops-chat                                  # every event
+    - ops-chat                                  # every event but bans and bans_daily
     - {to: ops-mail, events: [backup, disk]}    # only these
+    - {to: security, events: [bans_daily]}      # bans only go to who lists them
   disk_free_below: 10                           # percent, default 10
+  daily_at: "08:00"                             # when bans_daily is sent, default 08:00
 ```
 
 | Event | Sent when | Severity |
@@ -25,8 +27,12 @@ notifications:
 | `backup` | A [scheduled backup](Backup-and-Restore.md#scheduled-backups) failed (with its error), and when that profile's next run works | `error`, then `ok` |
 | `health` | A shared app isn't running, or an instance has a container that isn't healthy (as `server state` and `app state` judge it), at two checks in a row; and when it's fine again | `error`, then `ok` |
 | `disk` | Free space on the disk with `~/.compost-server` is below `disk_free_below` percent; and when it is 2 points above it again | `warning`, then `ok` |
+| `bans` | The [CrowdSec](Servers-and-Shared-Apps.md#caddysecurebuild-ingress) agent banned addresses since the last check, or would have with a simulated scenario: one message per check, listing each address with its scenario, sites and alert id | `warning`, or `info` when all were simulated |
+| `bans_daily` | Every day at `daily_at` (the server's time zone): the bans of the last 24 hours by scenario, the addresses with the most alerts, and how many bans are in force | `info`, also on a day without bans |
 
-Each is sent once when it changes, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
+`bans` and `bans_daily` need a `caddysecurebuild` ingress, and only go to channels that list them in `events`: a server facing the internet bans scanners many times a day. Bans you add yourself (`caddy-main.ban`) and the community blocklist's aren't reported, only those of the server's own scenarios. The first check after you subscribe to `bans` only notes where CrowdSec's alerts are, so older bans aren't sent; the first `bans_daily` comes at the first check after `daily_at`, which can be right away.
+
+`backup`, `health` and `disk` are sent once when they change, not on every check. The checks run on the server, from the same crontab line as scheduled backups: `server deploy` installs it (and compost itself, see [Scheduled backups](Backup-and-Restore.md#scheduled-backups)) when `send_to` names a channel, and it runs every five minutes. While a deploy holds the server's lock, health isn't checked, so a deploy restarting containers sends nothing. Instances count once deployed with `--apply`. `server state` lists what is currently reported under `alerts (notified)`, and the last state of each check is kept in `state.yaml`.
 
 A channel that can't be reached is logged as a warning in `~/.compost-server/logs/backup.log`, and that message isn't sent again; check channels with `compost notify test`.
 
@@ -105,6 +111,6 @@ docker run --rm <image> describe
 
 - `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
 - `describe` prints JSON with at least `"api": 1`; deploys fail without it.
-- `--event` is `backup`, `health` or `disk` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
+- `--event` is `backup`, `health`, `disk`, `bans` or `bans_daily` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
 - The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
 - Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.

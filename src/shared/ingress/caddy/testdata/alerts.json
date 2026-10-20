@@ -1,0 +1,329 @@
+[
+ {
+  "capacity": 10,
+  "created_at": "2026-05-04T17:18:53Z",
+  "decisions": [
+   {
+    "duration": "3h59m17s",
+    "id": 1,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/http-probing",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "198.51.100.7"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "ASNNumber",
+      "value": "0"
+     },
+     {
+      "key": "IsInEU",
+      "value": "false"
+     },
+     {
+      "key": "datasource_path",
+      "value": "/logs/caddy.log"
+     },
+     {
+      "key": "datasource_type",
+      "value": "file"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/probe0"
+     },
+     {
+      "key": "http_status",
+      "value": "404"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "test"
+     },
+     {
+      "key": "http_verb",
+      "value": "GET"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "198.51.100.7"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "app.example.com"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-10-20T17:18:53Z"
+     }
+    ],
+    "timestamp": "2026-10-20 17:18:53 +0000 UTC"
+   }
+  ],
+  "events_count": 11,
+  "id": 1,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "10s",
+  "machine_id": "localhost",
+  "message": "Ip 198.51.100.7 performed 'crowdsecurity/http-probing' (11 events over 16.46943ms) at 2026-10-20 17:18:53.835424028 +0000 UTC",
+  "meta": [
+   {
+    "key": "target_uri",
+    "value": "[\"/probe0\",\"/probe1\",\"/probe2\",\"/probe3\",\"/probe4\",\"/probe5\",\"/probe6\",\"/probe7\",\"/probe8\",\"/probe9\",\"/probe10\"]"
+   },
+   {
+    "key": "user_agent",
+    "value": "[\"test\"]"
+   },
+   {
+    "key": "method",
+    "value": "[\"GET\"]"
+   },
+   {
+    "key": "status",
+    "value": "[\"404\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/http-probing",
+  "scenario_hash": "4b16f896af400e006c28b1476bf5989c748186f2b3756ed9ad7d1559480d278c",
+  "scenario_version": "0.4",
+  "simulated": false,
+  "source": {
+   "as_number": "0",
+   "ip": "198.51.100.7",
+   "scope": "Ip",
+   "value": "198.51.100.7"
+  },
+  "start_at": "2026-10-20T17:18:53Z",
+  "stop_at": "2026-10-20T17:18:53Z",
+  "uuid": "8512e16a-c3d2-4993-90b1-4e1a2ee02787"
+ },
+ {
+  "capacity": 40,
+  "created_at": "2026-05-04T17:18:54Z",
+  "decisions": [
+   {
+    "duration": "3h59m17s",
+    "id": 2,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/http-crawl-non_statics",
+    "scope": "Ip",
+    "simulated": true,
+    "type": "ban",
+    "value": "198.51.100.8"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "ASNNumber",
+      "value": "0"
+     },
+     {
+      "key": "IsInEU",
+      "value": "false"
+     },
+     {
+      "key": "datasource_path",
+      "value": "/logs/caddy.log"
+     },
+     {
+      "key": "datasource_type",
+      "value": "file"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/page35"
+     },
+     {
+      "key": "http_status",
+      "value": "200"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "test"
+     },
+     {
+      "key": "http_verb",
+      "value": "GET"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "198.51.100.8"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "app.example.com"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-10-20T17:18:55Z"
+     }
+    ],
+    "timestamp": "2026-10-20 17:18:55 +0000 UTC"
+   }
+  ],
+  "events_count": 41,
+  "id": 2,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "500ms",
+  "machine_id": "localhost",
+  "message": "Ip 198.51.100.8 performed 'crowdsecurity/http-crawl-non_statics' (41 events over 43.53216ms) at 2026-10-20 17:18:53.889817864 +0000 UTC",
+  "meta": [
+   {
+    "key": "target_uri",
+    "value": "[\"/page35\",\"/page36\",\"/page37\",\"/page38\",\"/page39\",\"/page40\"]"
+   },
+   {
+    "key": "user_agent",
+    "value": "[\"test\"]"
+   },
+   {
+    "key": "method",
+    "value": "[\"GET\"]"
+   },
+   {
+    "key": "status",
+    "value": "[\"200\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/http-crawl-non_statics",
+  "scenario_hash": "9f235ae2116031a2b7a64da1e3ff5356b5f4fb91078de1c78bc30e0edb734dfb",
+  "scenario_version": "0.7",
+  "simulated": true,
+  "source": {
+   "as_number": "0",
+   "ip": "198.51.100.8",
+   "scope": "Ip",
+   "value": "198.51.100.8"
+  },
+  "start_at": "2026-10-20T17:18:53Z",
+  "stop_at": "2026-10-20T17:18:53Z",
+  "uuid": "1676ccaf-453a-46b5-aabf-939ba66b7e58"
+ },
+ {
+  "capacity": 0,
+  "created_at": "2026-05-04T17:19:29Z",
+  "decisions": [
+   {
+    "duration": "4m52s",
+    "id": 3,
+    "origin": "cscli",
+    "scenario": "manual 'ban' from 'localhost'",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "192.0.2.1"
+   }
+  ],
+  "events": [],
+  "events_count": 1,
+  "id": 3,
+  "kind": "cscli",
+  "labels": null,
+  "leakspeed": "0",
+  "machine_id": "localhost",
+  "message": "manual 'ban' from 'localhost'",
+  "remediation": true,
+  "scenario": "manual 'ban' from 'localhost'",
+  "scenario_hash": "",
+  "scenario_version": "",
+  "simulated": false,
+  "source": {
+   "ip": "192.0.2.1",
+   "scope": "Ip",
+   "value": "192.0.2.1"
+  },
+  "start_at": "2026-10-20T17:19:29Z",
+  "stop_at": "2026-10-20T17:19:29Z",
+  "uuid": "6ebbc798-2a9b-4db8-88a0-ba0ecf4996e4"
+ },
+ {
+  "capacity": 1,
+  "created_at": "2026-05-04T17:29:09Z",
+  "decisions": null,
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "data"
+     },
+     {
+      "key": "http_path",
+      "value": "/.env"
+     },
+     {
+      "key": "http_verb",
+      "value": "GET"
+     },
+     {
+      "key": "log_type",
+      "value": "appsec-block"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "app.example.com"
+     }
+    ],
+    "timestamp": "2026-05-04T17:29:09Z"
+   }
+  ],
+  "events_count": 1,
+  "id": 4,
+  "kind": "waf",
+  "labels": null,
+  "leakspeed": "",
+  "machine_id": "localhost",
+  "message": "WAF block: crowdsecurity/vpatch-env-access from 203.0.113.50",
+  "meta": [
+   {
+    "key": "name",
+    "value": "[\"crowdsecurity/vpatch-env-access\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/vpatch-env-access",
+  "simulated": false,
+  "source": {
+   "ip": "203.0.113.50",
+   "scope": "Ip",
+   "value": "203.0.113.50"
+  },
+  "start_at": "2026-05-04T17:29:09Z",
+  "stop_at": "2026-05-04T17:29:09Z"
+ }
+]
