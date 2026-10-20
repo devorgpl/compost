@@ -3283,7 +3283,12 @@ notifications:
 
 #[test]
 fn notifications_report_changes_from_the_tick() {
+    use chrono::Timelike;
     use std::os::unix::fs::PermissionsExt;
+
+    // Daily, 12 hours from now: due only when due_again moves the last run
+    // back. Once a minute, a check crossing into the next minute ran it again.
+    let hour = (chrono::Local::now().hour() + 12) % 24;
 
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     let server = LocalServer::new();
@@ -3295,7 +3300,7 @@ fn notifications_report_changes_from_the_tick() {
 backup:
   target: server
   profiles:
-    nightly: {{include: [links], schedule: '* * * * *'}}
+    nightly: {{include: [links], schedule: '0 {hour} * * *'}}
 notifications:
   send_to: [hook]
 "
