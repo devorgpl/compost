@@ -3,6 +3,7 @@
 mod base;
 mod openobserve;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
@@ -175,8 +176,9 @@ impl Kind for MonitoringKind {
         base::describe_link(ctx, entry)
     }
 
-    fn needs_app_containers(&self) -> bool {
-        true
+    /// Logs and metrics come from the app's containers.
+    fn without_app_containers<'v>(&self, _link: &'v Value) -> Result<Option<Cow<'v, Value>>> {
+        Ok(None)
     }
 
     /// Collected data stays until the backend's retention deletes it.

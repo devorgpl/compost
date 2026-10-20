@@ -1,5 +1,6 @@
 //! `compost app deploy` (spec §10.8).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -95,7 +96,8 @@ fn pre_deploy_backup(
 struct Link<'a> {
     kind: &'static dyn Kind,
     name: &'a str,
-    entry: &'a Value,
+    /// As configured, or as deployed without the app's containers.
+    entry: Cow<'a, Value>,
     shared: SharedAppConfig,
 }
 
@@ -114,7 +116,7 @@ impl Link<'_> {
         Peer {
             kind: self.kind,
             name: self.name,
-            entry: self.entry,
+            entry: &self.entry,
             shared: &self.shared,
         }
     }
@@ -404,7 +406,7 @@ fn contribute(
         };
         // Fails on server-side conflicts, e.g. a domain used by another instance.
         link.kind
-            .prepare_application(&link_ctx, link.entry, contribution)
+            .prepare_application(&link_ctx, &link.entry, contribution)
             .map_err(|e| not_ready(&format!("{}: {e:#}", link.path())))?;
     }
     Ok(())
@@ -454,7 +456,7 @@ fn dry_run(
             };
             previews.extend(
                 link.kind
-                    .preview_application(&link_ctx, link.entry)
+                    .preview_application(&link_ctx, &link.entry)
                     .with_context(|| link.path())?,
             );
         }
@@ -559,8 +561,9 @@ struct Dropped<'a> {
 }
 
 /// Pick a shared app for every link; links skipped by their kind are left
-/// out, and with `links_only` those that need the app's containers. Returns
-/// lines about the skipped links too.
+/// out. With `links_only`, links take the entry their kind deploys without
+/// the app's containers (see [`shared::Kind::without_app_containers`]), and
+/// are left out when there is none. Returns lines about the skipped links too.
 fn resolve_links<'a>(
     ctx: &ServerCtx,
     loaded: &'a LoadedApp,
@@ -578,12 +581,19 @@ fn resolve_links<'a>(
     for (kind_name, entry) in loaded.config.links() {
         let kind = shared::find_kind(kind_name).context("kinds are checked on load")?;
         let name = link_name(entry).context("link names are checked on load")?;
-        if links_only && kind.needs_app_containers() {
-            skipped.push(format!(
-                "services.{kind_name}[{name}]: skipped (the app runs outside Docker)"
-            ));
-            continue;
-        }
+        let entry = if links_only {
+            match kind.without_app_containers(entry)? {
+                Some(entry) => entry,
+                None => {
+                    skipped.push(format!(
+                        "services.{kind_name}[{name}]: skipped (the app runs outside Docker)"
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            Cow::Borrowed(entry)
+        };
         // Only shared apps that are deployed and running can be linked.
         let available: Vec<SharedAppConfig> = server_config
             .shared
@@ -605,7 +615,7 @@ fn resolve_links<'a>(
 
         let path = format!("services.{kind_name}[{name}]");
         let resolution = kind
-            .resolve(entry, &available)
+            .resolve(&entry, &available)
             .map_err(|e| not_ready(&format!("{path}: {e:#}")))?;
         match resolution {
             Resolution::Use(shared) => links.push(Link {
@@ -645,7 +655,7 @@ fn apply(
             peers: &peers,
         };
         link.kind
-            .before_apply_application(&link_ctx, link.entry)
+            .before_apply_application(&link_ctx, &link.entry)
             .with_context(|| link.path())?;
         if let Some(plan) = restore {
             plan.restore_link(&link_ctx, link.kind, link.name)
@@ -658,8 +668,11 @@ fn apply(
     if options.links_only {
         // Containers of an earlier deploy would compete with the app run outside Docker.
         ctx.connector.exec(&format!("{compose} stop"))?;
+        let kept = super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true)?;
+        // e.g. ingress routes to other links, such as a realm on its own domain.
+        after_apply(ctx, app, links, &peers)?;
         out!("  links of {project} are ready; its services run outside Docker");
-        return super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true);
+        return Ok(kept);
     }
     let images_restored = match (restore, options.pinned) {
         (Some(plan), _) => plan.load_images(ctx, app)?,
@@ -700,18 +713,23 @@ fn apply(
     wait_until_ready(ctx.connector, &project)?;
 
     let kept = super::remove::remove_links(ctx, app, dropped.links, dropped.purge, true)?;
+    after_apply(ctx, app, links, &peers)?;
+    Ok(kept)
+}
+
+fn after_apply(ctx: &ServerCtx, app: &AppConfig, links: &[Link], peers: &[Peer]) -> Result<()> {
     for link in links {
         let link_ctx = AppCtx {
             server: ctx,
             app,
             shared: &link.shared,
-            peers: &peers,
+            peers,
         };
         link.kind
-            .after_apply_application(&link_ctx, link.entry)
+            .after_apply_application(&link_ctx, &link.entry)
             .with_context(|| link.path())?;
     }
-    Ok(kept)
+    Ok(())
 }
 
 fn not_ready(message: &str) -> anyhow::Error {

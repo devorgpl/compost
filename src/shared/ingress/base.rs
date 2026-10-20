@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use serde_yaml_ng::Value;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
@@ -376,6 +378,17 @@ pub fn resolve<'s>(link: &IngressLink, available: &'s [SharedAppConfig]) -> Resu
     }
 }
 
+/// The entry without its routes to the app's services (with `target`), or
+/// `None` when no route is left.
+pub fn without_app_containers(link: &Value) -> Option<Value> {
+    let mut entry = link.clone();
+    let Some(Value::Sequence(routes)) = entry.get_mut("routes") else {
+        return None;
+    };
+    routes.retain(|route| route.get("target").is_none());
+    (!routes.is_empty()).then_some(entry)
+}
+
 /// Routes with upstreams, longest path first so specific routes win. Routes
 /// to another link get their paths from that link.
 pub fn routes(ctx: &AppCtx, link: &IngressLink) -> Result<Vec<RouteRecord>> {
@@ -479,7 +492,7 @@ fn is_optional_link(app: &AppConfig, kind: &str, entry: &str) -> bool {
         .flatten()
         .find(|link| link_name(link) == Some(entry))
         .and_then(|link| link.get("optional"))
-        .and_then(serde_yaml_ng::Value::as_bool)
+        .and_then(Value::as_bool)
         .unwrap_or(false)
 }
 
@@ -871,6 +884,31 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("path `/resources` is used by routes"), "{err}");
+    }
+
+    #[test]
+    fn without_app_containers_keeps_routes_to_links_and_redirects() {
+        let routes = |text: &str| {
+            let link: Value = serde_yaml_ng::from_str(text).unwrap();
+            without_app_containers(&link).map(|entry| {
+                entry["routes"]
+                    .as_sequence()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r["name"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(
+            routes(
+                "{name: l, routes: [{name: a, target: web, port: 80}, {name: b, link: oidc/login}, {name: c, redirect: {to: /}}]}"
+            ),
+            Some(vec!["b".to_string(), "c".to_string()])
+        );
+        assert_eq!(
+            routes("{name: l, routes: [{name: a, target: web, port: 80}]}"),
+            None
+        );
     }
 
     #[test]

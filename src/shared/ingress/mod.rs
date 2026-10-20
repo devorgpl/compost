@@ -6,6 +6,8 @@ pub mod security;
 
 pub use caddy::crowdsec;
 
+use std::borrow::Cow;
+
 use anyhow::{Result, bail};
 use serde_yaml_ng::Value;
 
@@ -220,8 +222,10 @@ impl Kind for IngressKind {
         base::describe_link(ctx, entry)
     }
 
-    fn needs_app_containers(&self) -> bool {
-        true
+    /// Routes to other links and redirects; `None` when every route goes to
+    /// the app's services.
+    fn without_app_containers<'v>(&self, link: &'v Value) -> Result<Option<Cow<'v, Value>>> {
+        Ok(base::without_app_containers(link).map(Cow::Owned))
     }
 
     /// Routing has no data to purge; `--purge ingress` is rejected before this runs.

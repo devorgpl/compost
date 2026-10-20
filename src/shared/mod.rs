@@ -15,6 +15,7 @@ pub mod oidc;
 pub mod storage;
 pub mod workflow;
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -442,10 +443,11 @@ pub trait Kind: Sync {
     /// One line about a deployed link, for `app state`.
     fn describe_link(&self, ctx: &AppCtx, entry: &str) -> Result<String>;
 
-    /// Links of this kind only work with the app's containers, e.g. routes to
-    /// them; a deploy of the links alone (`dev up --host`) skips them.
-    fn needs_app_containers(&self) -> bool {
-        false
+    /// The link entry as a deploy of the links alone (`dev up --host`) uses
+    /// it, while the app's services run outside Docker; `None` skips the link.
+    /// Default: the entry as it is.
+    fn without_app_containers<'v>(&self, link: &'v Value) -> Result<Option<Cow<'v, Value>>> {
+        Ok(Some(Cow::Borrowed(link)))
     }
 
     /// `--purge <kind>` is allowed: the kind holds data of the app.

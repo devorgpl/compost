@@ -5961,6 +5961,73 @@ fn dev_up_host_sets_up_links_for_an_app_outside_docker() {
 }
 
 #[test]
+fn dev_up_host_keeps_ingress_routes_to_other_links() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file("compost-server.yaml", OIDC_SERVER_CONFIG);
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+    server.write_work_file(
+        "compost.yaml",
+        "\
+name: shop
+app_services: [{name: backend, service: backend}]
+services:
+  oidc:
+    - name: login
+      type: keycloak
+      realm: shop
+      public_url: http://auth.lvh.me:18080
+      targets: [backend]
+      redirect_uris: ['http://localhost:8000/*']
+      environment: {OIDC_ISSUER: oidc_issuer}
+  ingress:
+    - name: login
+      domains: [auth.lvh.me]
+      routes:
+        - {name: realm, link: oidc/login}
+    - name: site
+      domains: [shop.localhost]
+      routes:
+        - {name: app, target: backend, port: 8080}
+        - {name: old, path: /old, redirect: {to: /}}
+    - name: api
+      domains: [api.shop.localhost]
+      routes:
+        - {name: app, target: backend, port: 8080}
+",
+    );
+    server.write_work_file("docker-compose.yaml", "services: {backend: {image: x}}");
+
+    server
+        .run(&["dev", "up", "--host"], &running)
+        .success()
+        .stdout(contains(
+            "services.ingress[api]: skipped (the app runs outside Docker)",
+        ))
+        .stdout(contains("services.ingress[login]: skipped").not())
+        .stdout(contains("services.ingress[site]: skipped").not())
+        .stdout(contains("links of shop-local are ready"));
+    let login =
+        server.read_server_file("shared/ingress/caddy-main/conf/sites/shop-local-login.caddy");
+    assert!(
+        login.contains("@realm-realm path /realms/shop /realms/shop/*"),
+        "{login}"
+    );
+    // Only the route to the app's service is left out.
+    let site =
+        server.read_server_file("shared/ingress/caddy-main/conf/sites/shop-local-site.caddy");
+    assert!(site.contains("redir"), "{site}");
+    assert!(!site.contains("shop-local-backend"), "{site}");
+    server
+        .run(&["dev", "env"], &running)
+        .success()
+        .stdout(contains("OIDC_ISSUER=http://auth.lvh.me:18080/realms/shop"));
+}
+
+#[test]
 fn dev_up_uses_the_matching_shared_app_for_a_pin_of_another_server() {
     let running = [("FAKE_DOCKER_RUNNING", "1")];
     let server = server_with_shared_apps();
