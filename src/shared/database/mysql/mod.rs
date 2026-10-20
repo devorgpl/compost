@@ -3,13 +3,14 @@
 //! tool names and environment variables.
 
 use std::fmt::Write as _;
+use std::io::Read;
 
 use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 
 use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint, External, Purge};
-use super::{DatabaseType, KIND};
+use super::{DatabaseType, KIND, peek};
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
@@ -327,46 +328,65 @@ impl DatabaseType for MySql {
         from: &ItemReader,
         replace: bool,
     ) -> Result<()> {
-        check_record(record)?;
-        let root = Client::root(ctx.server, ctx.shared, self.flavor)?;
-        let provisioning = provisioning_sql(&record.db_name, &record.db_user, &record.db_password);
-        if let Some(root) = &root {
-            root.run_sql(&provisioning)
-                .with_context(|| format!("creating database `{}` failed", record.db_name))?;
-        }
-        let client = Client::user(ctx.server, ctx.shared, self.flavor, record)?;
-        let tables = client
-            .query(&format!(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{}';",
+        if self.prepare_load(ctx, record, replace)? {
+            return Err(CompostError::ServerNotReady(format!(
+                "database `{}` is not empty; add --replace to drop and recreate it",
                 record.db_name
             ))
-            .with_context(|| format!("cannot open database `{}`", record.db_name))?;
-        if tables.trim() != "0" {
-            if !replace {
-                return Err(CompostError::ServerNotReady(format!(
-                    "database `{}` is not empty; add --replace to drop and recreate it",
-                    record.db_name
-                ))
-                .into());
-            }
-            let Some(root) = &root else {
-                return Err(CompostError::ServerNotReady(format!(
-                    "database `{}` on {} is not empty, and compost has no root credentials to recreate it; empty it first",
-                    record.db_name, ctx.shared.name
-                ))
-                .into());
-            };
-            let drop = format!("DROP DATABASE IF EXISTS `{}`;\n", record.db_name);
-            root.run_sql(&format!("{drop}{provisioning}"))
-                .with_context(|| format!("recreating database `{}` failed", record.db_name))?;
+            .into());
         }
         out!("  loading database {} ...", record.db_name);
+        let client = Client::user(ctx.server, ctx.shared, self.flavor, record)?;
         from.feed(
             name,
             b"",
             &client.command(self.flavor.client(), &record.db_name),
         )
         .with_context(|| format!("loading database `{}` failed", record.db_name))
+    }
+
+    /// Plain SQL as the link user, without `DEFINER` clauses, which name
+    /// users of the server the dump comes from.
+    fn import_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        input: &mut (dyn Read + Send),
+        clean: bool,
+    ) -> Result<()> {
+        self.prepare_load(ctx, record, clean)?;
+        let (archive, mut input) = peek(input, b"PGDMP")?;
+        ensure!(
+            !archive,
+            "this is a Postgres archive (pg_dump -Fc); {} takes plain SQL",
+            self.type_name()
+        );
+        let client = Client::user(ctx.server, ctx.shared, self.flavor, record)?;
+        let script = format!(
+            "sed -e 's/ DEFINER=`[^`]*`@`[^`]*`//g' | ({})",
+            client.command(self.flavor.client(), &record.db_name)
+        );
+        ctx.server
+            .connector
+            .stream_in(&script, &mut input)
+            .with_context(|| format!("importing into database `{}` failed", record.db_name))
+    }
+
+    fn export_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        out: &mut dyn std::io::Write,
+    ) -> Result<()> {
+        check_record(record)?;
+        let client = Client::user(ctx.server, ctx.shared, self.flavor, record)?;
+        let dump = client.command(
+            self.flavor.dump(),
+            &format!("{} {}", self.flavor.dump_options(), record.db_name),
+        );
+        ctx.server
+            .connector
+            .stream_out(&without_definers(&dump), out)
     }
 
     /// `dumpall.sql` with every database, user and grant, and the root
@@ -537,6 +557,43 @@ impl MySql {
             shared_dir(KIND, name),
             self.flavor.env_file()
         )
+    }
+
+    /// Create the link's database and user when missing. A database that
+    /// holds tables is dropped and recreated with `replace`. Returns whether
+    /// it holds tables afterwards.
+    fn prepare_load(&self, ctx: &AppCtx, record: &DatabaseRecord, replace: bool) -> Result<bool> {
+        check_record(record)?;
+        let root = Client::root(ctx.server, ctx.shared, self.flavor)?;
+        let provisioning = provisioning_sql(&record.db_name, &record.db_user, &record.db_password);
+        if let Some(root) = &root {
+            root.run_sql(&provisioning)
+                .with_context(|| format!("creating database `{}` failed", record.db_name))?;
+        }
+        let client = Client::user(ctx.server, ctx.shared, self.flavor, record)?;
+        let tables = client
+            .query(&format!(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{}';",
+                record.db_name
+            ))
+            .with_context(|| format!("cannot open database `{}`", record.db_name))?;
+        if tables.trim() == "0" {
+            return Ok(false);
+        }
+        if !replace {
+            return Ok(true);
+        }
+        let Some(root) = &root else {
+            return Err(CompostError::ServerNotReady(format!(
+                "database `{}` on {} is not empty, and compost has no root credentials to recreate it; empty it first",
+                record.db_name, ctx.shared.name
+            ))
+            .into());
+        };
+        let drop = format!("DROP DATABASE IF EXISTS `{}`;\n", record.db_name);
+        root.run_sql(&format!("{drop}{provisioning}"))
+            .with_context(|| format!("recreating database `{}` failed", record.db_name))?;
+        Ok(false)
     }
 }
 

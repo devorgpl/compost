@@ -415,8 +415,8 @@ pub fn run(
                 prefix: args.prefix,
             })?;
             let name = words.next();
-            if let Some(name) = name.as_ref().filter(|n| *n != "--history") {
-                check_name("command name", name)?;
+            if let Some(name) = name.as_ref() {
+                check_command_name(name)?;
             }
             let words: Vec<String> = words.collect();
             let connector = connector::open(&server, home, connect)?;
@@ -481,6 +481,21 @@ fn exec(
         &selector,
         &options,
     )
+}
+
+/// A command of `commands`, or `<entry>.<command>` of a link, checked by its parts.
+pub(super) fn check_command_name(name: &str) -> Result<()> {
+    if name == "--history" {
+        return Ok(());
+    }
+    match name.split_once('.') {
+        Some((entry, command)) => {
+            let entry = entry.split_once('/').map_or(entry, |(_, entry)| entry);
+            check_name("link name", entry)?;
+            check_name("command name", command)
+        }
+        None => check_name("command name", name),
+    }
 }
 
 /// The positional instance, name and prefix from `--app`/`--prefix`, or the

@@ -1,13 +1,14 @@
 //! Postgres database type (spec §5.3, §9.3).
 
 use std::fmt::Write as _;
+use std::io::Read;
 
 use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 
 use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint, External, Purge};
-use super::{DatabaseType, KIND};
+use super::{DatabaseType, KIND, peek};
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
@@ -190,47 +191,68 @@ impl DatabaseType for Postgres {
         from: &ItemReader,
         replace: bool,
     ) -> Result<()> {
-        check_record(record)?;
-        let root = Client::root(ctx.server, ctx.shared)?;
-        let provisioning = provisioning_sql(&record.db_name, &record.db_user, &record.db_password);
-        if let Some(root) = &root {
-            run_sql(root, &provisioning)
-                .with_context(|| format!("creating database `{}` failed", record.db_name))?;
-        }
-        let client = Client::user(ctx.server, ctx.shared, record)?;
-        let count = format!("-d {} -tAc {}", record.db_name, shell_quote(OBJECTS_SQL));
-        let objects = ctx
-            .server
-            .connector
-            .exec(&client.command("psql", &count))
-            .with_context(|| format!("cannot open database `{}`", record.db_name))?;
-        if objects.trim() != "0" {
-            if !replace {
-                return Err(CompostError::ServerNotReady(format!(
-                    "database `{}` is not empty; add --replace to drop and recreate it",
-                    record.db_name
-                ))
-                .into());
-            }
-            let Some(root) = &root else {
-                return Err(CompostError::ServerNotReady(format!(
-                    "database `{}` on {} is not empty, and compost has no root credentials to recreate it; empty it first",
-                    record.db_name, ctx.shared.name
-                ))
-                .into());
-            };
-            let drop = format!(
-                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\n",
+        if prepare_load(ctx, record, replace)? {
+            return Err(CompostError::ServerNotReady(format!(
+                "database `{}` is not empty; add --replace to drop and recreate it",
                 record.db_name
-            );
-            run_sql(root, &format!("{drop}{provisioning}"))
-                .with_context(|| format!("recreating database `{}` failed", record.db_name))?;
+            ))
+            .into());
         }
         out!("  loading database {} ...", record.db_name);
+        let client = Client::user(ctx.server, ctx.shared, record)?;
         let load = format!("-d {} -q -v ON_ERROR_STOP=1", record.db_name);
         let prelude = format!("SET ROLE \"{}\";\n", record.db_user);
         from.feed(name, prelude.as_bytes(), &client.command("psql", &load))
             .with_context(|| format!("loading database `{}` failed", record.db_name))
+    }
+
+    /// Plain SQL goes through psql as the link user, without the lines that
+    /// set owners and privileges; a custom-format archive through pg_restore
+    /// with `--no-owner --no-privileges`.
+    fn import_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        input: &mut (dyn Read + Send),
+        clean: bool,
+    ) -> Result<()> {
+        prepare_load(ctx, record, clean)?;
+        let (archive, mut input) = peek(input, ARCHIVE_MAGIC)?;
+        let client = Client::user(ctx.server, ctx.shared, record)?;
+        let script = if archive {
+            let restore = format!(
+                "--no-owner --no-privileges --exit-on-error --role={} -d {}",
+                record.db_user, record.db_name
+            );
+            client.command("pg_restore", &restore)
+        } else {
+            let load = format!("-d {} -q -v ON_ERROR_STOP=1", record.db_name);
+            // The command is `cd … && docker …`: in a subshell, all of it reads the pipe.
+            format!(
+                "{{ printf '%s\\n' 'SET ROLE \"{}\";'; awk {}; }} | ({})",
+                record.db_user,
+                shell_quote(WITHOUT_OWNERS),
+                client.command("psql", &load)
+            )
+        };
+        ctx.server
+            .connector
+            .stream_in(&script, &mut input)
+            .with_context(|| format!("importing into database `{}` failed", record.db_name))
+    }
+
+    fn export_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        out: &mut dyn std::io::Write,
+    ) -> Result<()> {
+        check_record(record)?;
+        let client = Client::user(ctx.server, ctx.shared, record)?;
+        let dump = format!("--no-owner --no-acl -d {}", record.db_name);
+        ctx.server
+            .connector
+            .stream_out(&client.command("pg_dump", &dump), out)
     }
 
     /// `dumpall.sql` with every database and role, and the root password, which
@@ -624,6 +646,57 @@ fn exec_command(ctx: &ServerCtx, name: &str, command: &str) -> String {
         shell_quote(&service_name(name))
     )
 }
+
+/// Create the link's database and user when missing. A database that holds
+/// objects is dropped and recreated with `replace`. Returns whether it holds
+/// objects afterwards.
+fn prepare_load(ctx: &AppCtx, record: &DatabaseRecord, replace: bool) -> Result<bool> {
+    check_record(record)?;
+    let root = Client::root(ctx.server, ctx.shared)?;
+    let provisioning = provisioning_sql(&record.db_name, &record.db_user, &record.db_password);
+    if let Some(root) = &root {
+        run_sql(root, &provisioning)
+            .with_context(|| format!("creating database `{}` failed", record.db_name))?;
+    }
+    let client = Client::user(ctx.server, ctx.shared, record)?;
+    let count = format!("-d {} -tAc {}", record.db_name, shell_quote(OBJECTS_SQL));
+    let objects = ctx
+        .server
+        .connector
+        .exec(&client.command("psql", &count))
+        .with_context(|| format!("cannot open database `{}`", record.db_name))?;
+    if objects.trim() == "0" {
+        return Ok(false);
+    }
+    if !replace {
+        return Ok(true);
+    }
+    let Some(root) = &root else {
+        return Err(CompostError::ServerNotReady(format!(
+            "database `{}` on {} is not empty, and compost has no root credentials to recreate it; empty it first",
+            record.db_name, ctx.shared.name
+        ))
+        .into());
+    };
+    let drop = format!(
+        "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\n",
+        record.db_name
+    );
+    run_sql(root, &format!("{drop}{provisioning}"))
+        .with_context(|| format!("recreating database `{}` failed", record.db_name))?;
+    Ok(false)
+}
+
+/// The start of a custom-format archive of pg_dump.
+const ARCHIVE_MAGIC: &[u8] = b"PGDMP";
+
+/// awk program that drops the lines of a plain dump that set owners and
+/// privileges: the dump comes from another server, with other roles. Data of
+/// `COPY` blocks passes unchanged.
+const WITHOUT_OWNERS: &str = r#"/^COPY .* FROM stdin;$/ { copy = 1 }
+copy { print; if ($0 == "\\.") copy = 0; next }
+/^(ALTER .* OWNER TO |GRANT |REVOKE |ALTER DEFAULT PRIVILEGES |SET SESSION AUTHORIZATION )/ { next }
+{ print }"#;
 
 /// Names go into SQL and commands unquoted; they were checked on deploy, but
 /// the record is a file on the server.

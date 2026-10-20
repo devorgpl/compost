@@ -1620,6 +1620,8 @@ services:
 | `db_password` | generated on the first deploy, then kept |
 | `db_url` | `postgres://user:password@postgres18:5432/dbname`; `mysql://…:3306/…` for MariaDB and MySQL |
 
+To load a dump into the link's database, or dump it, use `compost app cmd <instance> <entry>.import` and `.export` ([Database links](Admin-Commands.md#database-links)).
+
 In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them. MariaDB and MySQL user names are at most 32 characters: a longer default is cut and ends in a short hash.
 
 **One user for several databases.** Some software logs in to several databases with one user, e.g. Temporal's `auto-setup` image with its main and visibility databases. Give each link its own database and the same `db_user`:
@@ -2816,6 +2818,13 @@ Only database, key-value and storage links give addresses on 127.0.0.1. The valu
 
 `dev env` also works after `dev up` without `--host` once the shared apps have a `host_port`, e.g. to run a migration or a database client on this machine.
 
+To load a dump into a link's database, e.g. an anonymized copy of production, use the link's [import command](Admin-Commands.md#database-links):
+
+```sh
+compost dev cmd main.import --yes < anonymized.sql
+compost dev cmd main.import --clean --file anonymized.pgdump
+```
+
 ## Fresh data: `dev reset`
 
 ```sh
@@ -3454,6 +3463,7 @@ Most admin tasks on a server come down to running a tool in a container: `cscli`
 | `compost server cmd <shared app>.<name> [args]` | A command compost defines for the shared app's type, e.g. `caddy-main.unban` |
 | `compost server cmd <name> [args]` | A command from `commands` in compost-server.yaml |
 | `compost app cmd <instance> <name> [args]` | A command from `commands` in compost.yaml |
+| `compost app cmd <instance> <link>.import` / `.export` | Load a dump into a database link's database, or dump it ([Database links](#database-links)) |
 
 ## Commands in shared apps
 
@@ -3651,6 +3661,33 @@ compost app cmd -f compost.yaml,.compost-staging.yaml create-admin admin@example
 The keys are those of [named commands](#keys), with `exec: <service>` or `run: <service>` in place of `shared_app` and `service`. The commands are those of the deployed instance: `app deploy` stores them with its config. Without `-f`, `--app` or `--prefix`, the first word is the instance, as `app list` shows it.
 
 App commands can't use `{secret:…}`: their containers already get the app's secrets and link variables (`DATABASE_URL`, …) from its environment. A `run` command starts the services the service `depends_on`, like `app run` without `--no-deps`.
+
+On your own machine, `compost dev cmd [name] [args]` runs the commands of the app's local instance, from the same files as `dev up` ([Local development](Local-Development.md)).
+
+### Database links
+
+Every database link of an instance has two built-in commands, `<link>.import` and `<link>.export`. They work in the database server's container, as the link's user, so you don't need its name, user or password:
+
+```sh
+compost app cmd shop-test main.import --yes < dump.sql            # plain SQL on stdin
+compost app cmd shop-test main.import --file dump.pgdump          # asks first
+compost app cmd shop-test main.import --clean --file dump.sql     # drop and recreate the database first
+compost app cmd shop-test main.export > main.sql                  # or --file main.sql
+compost dev cmd main.import --yes < dump.sql                      # the local instance
+compost app cmd shop-test database/main.import --file dump.sql    # <kind>/<link> when two kinds use the name
+```
+
+`import` loads plain SQL (`pg_dump`, `mariadb-dump`, `mysqldump` output) or, into Postgres, a custom-format archive (`pg_dump -Fc`, recognized by its first bytes). The objects it creates belong to the link's user, so the app can use them, and parts that name roles of the server the dump came from are left out:
+
+| Database | Left out |
+|---|---|
+| Postgres, plain SQL | Lines that start with `ALTER … OWNER TO`, `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` or `SET SESSION AUTHORIZATION`, outside `COPY` data |
+| Postgres, archive | Owners and privileges (`pg_restore --no-owner --no-privileges --role <link user>`) |
+| MariaDB, MySQL | `DEFINER` clauses |
+
+The import stops at the first error, which can leave part of the dump loaded. Into a database that holds objects, it fails when they clash; `--clean` drops the database and creates it again empty first, which needs root credentials on an external server. `import` asks before it starts; with the dump on stdin it can't, so it needs `--yes`. It takes the server's lock, like a deploy.
+
+`export` writes a plain SQL dump without owners and privileges (`DEFINER` clauses for MariaDB and MySQL), as [`app backup`](Backup-and-Restore.md) saves it, so it loads into another instance with `import`. Both go into `--history`.
 
 ---
 
@@ -4888,6 +4925,7 @@ Commands:
   up         Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
   reset      Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
   env        Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  cmd        List the app's commands, or run one by name, like `app cmd`: its `commands`, and `<link>.import`/`<link>.export` of database links
   stop       Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
   down       Remove the app's containers; with --purge also its data and volumes
   reset-all  Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
@@ -4958,6 +4996,25 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --format <FORMAT>      `dotenv` (KEY="value"), `shell` (export KEY='value') or `json` [default: dotenv] [possible values: dotenv, shell, json]
   -o, --output <OUTPUT>      Write to this file (mode 0600) instead of printing
+  -h, --help                 Print help
+```
+
+## `compost dev cmd`
+
+```text
+List the app's commands, or run one by name, like `app cmd`: its `commands`, and `<link>.import`/`<link>.export` of database links
+
+Usage: compost dev cmd [OPTIONS] [COMMAND] [ARGS]...
+
+Arguments:
+  [COMMAND] [ARGS]...  The command's name and its arguments, e.g. `main.import --file dump.sql`; `--history` shows the last ones run
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

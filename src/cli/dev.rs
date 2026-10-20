@@ -8,7 +8,7 @@ use clap::{Args, Subcommand};
 use serde_yaml_ng::Value;
 
 use super::DeployArgs;
-use super::app::{AppDeployArgs, DevDeploy, config_files, instance_id};
+use super::app::{AppDeployArgs, DevDeploy, check_command_name, config_files, instance_id};
 use crate::app::instance::Selector;
 use crate::app::{remove, reset, stop};
 use crate::config::app::AppConfig;
@@ -38,6 +38,9 @@ pub enum DevCommand {
     /// Print the app's variables for running it outside Docker, with shared
     /// apps on 127.0.0.1 (after `dev up --host`)
     Env(DevEnvArgs),
+    /// List the app's commands, or run one by name, like `app cmd`: its
+    /// `commands`, and `<link>.import`/`<link>.export` of database links
+    Cmd(DevCmdArgs),
     /// Stop the app's containers; data and shared apps are kept, and `dev up`
     /// starts it again
     Stop(DevStopArgs),
@@ -119,6 +122,20 @@ pub struct DevEnvArgs {
     /// Write to this file (mode 0600) instead of printing
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct DevCmdArgs {
+    #[command(flatten)]
+    pub project: ProjectArgs,
+    /// The command's name and its arguments, e.g. `main.import --file dump.sql`;
+    /// `--history` shows the last ones run
+    #[arg(
+        value_name = "COMMAND] [ARGS",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    pub words: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -273,6 +290,28 @@ pub fn run(
         DevCommand::Env(args) => {
             let project = Project::find(&args.project)?;
             env(home, &manager_key, &server, &project, &args, connect)
+        }
+        DevCommand::Cmd(args) => {
+            let project = Project::find(&args.project)?;
+            let mut words = args.words.into_iter();
+            let name = words.next();
+            if let Some(name) = &name {
+                check_command_name(name)?;
+            }
+            let words: Vec<String> = words.collect();
+            let selector = Selector::Name {
+                name: project.name.clone(),
+                prefix: project.prefix.clone(),
+            };
+            let connector = connector::open(&server, home, connect)?;
+            crate::app::exec::template(
+                connector.as_ref(),
+                server.server_home(),
+                &manager_key,
+                &selector,
+                name.as_deref(),
+                &words,
+            )
         }
         DevCommand::Stop(args) => {
             let project = Project::find(&args.project)?;

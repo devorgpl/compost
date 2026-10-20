@@ -9,6 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::instance::{self, Selector};
+use super::link_cmd;
 use super::logs::deployed;
 use crate::config::command::{self, Rendered, Template};
 use crate::connector::{Connector, shell_quote};
@@ -200,8 +201,16 @@ pub fn template(
                 command::list(app.commands.iter().map(|(n, t)| (n, t, place(t))))
             );
         }
+        let links = link_cmd::list(&instance);
+        if !links.is_empty() {
+            out!("Commands of its links:");
+            out_part!("{links}");
+        }
         return Ok(());
     };
+    if link_cmd::is_link_command(name) {
+        return link_cmd::run(&ctx, &instance, name, words);
+    }
     let template = app.commands.get(name).ok_or_else(|| {
         config_err(format!(
             "{} has no command `{name}` ({})",

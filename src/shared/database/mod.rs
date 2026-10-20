@@ -4,6 +4,8 @@ mod base;
 mod mysql;
 mod postgres;
 
+use std::io::{Read, Write};
+
 use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
@@ -109,6 +111,25 @@ pub trait DatabaseType: Sync {
         record: &DatabaseRecord,
         name: &str,
         out: &mut ItemWriter,
+    ) -> Result<()>;
+
+    /// Load a dump from `input` into the link's database as the link's user:
+    /// plain SQL, or for Postgres also a custom-format archive. Owners and
+    /// privileges in it are left out. `clean` drops and recreates the database first.
+    fn import_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        input: &mut (dyn Read + Send),
+        clean: bool,
+    ) -> Result<()>;
+
+    /// A plain SQL dump of the link's database, as for backups, to `out`.
+    fn export_database(
+        &self,
+        ctx: &AppCtx,
+        record: &DatabaseRecord,
+        out: &mut dyn Write,
     ) -> Result<()>;
 
     /// Load the item `name` into the link's database; a database that is not
@@ -303,10 +324,47 @@ impl Kind for DatabaseKind {
         if !from.has(&name) {
             return Ok(());
         }
-        let record = base::read_record(ctx, entry)?
-            .with_context(|| format!("no link record for `{entry}`; deploy the app first"))?;
+        let record = read_existing_record(ctx, entry)?;
         find_type(&ctx.shared.type_name)?.load_database(ctx, &record, &name, from, replace)
     }
+
+    fn imports(&self) -> bool {
+        true
+    }
+
+    fn import_link(
+        &self,
+        ctx: &AppCtx,
+        entry: &str,
+        input: &mut (dyn Read + Send),
+        clean: bool,
+    ) -> Result<()> {
+        let record = read_existing_record(ctx, entry)?;
+        find_type(&ctx.shared.type_name)?.import_database(ctx, &record, input, clean)
+    }
+
+    fn export_link(&self, ctx: &AppCtx, entry: &str, out: &mut dyn Write) -> Result<()> {
+        let record = read_existing_record(ctx, entry)?;
+        find_type(&ctx.shared.type_name)?.export_database(ctx, &record, out)
+    }
+}
+
+/// An input with its first bytes read and put back.
+type Peeked<'a> = std::io::Chain<std::io::Cursor<Vec<u8>>, &'a mut (dyn Read + Send)>;
+
+/// Whether `input` starts with `magic`, and `input` with its start put back.
+fn peek<'a>(input: &'a mut (dyn Read + Send), magic: &[u8]) -> Result<(bool, Peeked<'a>)> {
+    let mut start = Vec::with_capacity(magic.len());
+    (&mut *input)
+        .take(magic.len() as u64)
+        .read_to_end(&mut start)
+        .context("cannot read the dump")?;
+    Ok((start == magic, std::io::Cursor::new(start).chain(input)))
+}
+
+fn read_existing_record(ctx: &AppCtx, entry: &str) -> Result<DatabaseRecord> {
+    base::read_record(ctx, entry)?
+        .with_context(|| format!("no link record for `{entry}`; deploy the app first"))
 }
 
 fn dump_name(entry: &str) -> String {

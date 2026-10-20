@@ -268,6 +268,8 @@ services:
 | `db_password` | generated on the first deploy, then kept |
 | `db_url` | `postgres://user:password@postgres18:5432/dbname`; `mysql://…:3306/…` for MariaDB and MySQL |
 
+To load a dump into the link's database, or dump it, use `compost app cmd <instance> <entry>.import` and `.export` ([Database links](Admin-Commands.md#database-links)).
+
 In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them. MariaDB and MySQL user names are at most 32 characters: a longer default is cut and ends in a short hash.
 
 **One user for several databases.** Some software logs in to several databases with one user, e.g. Temporal's `auto-setup` image with its main and visibility databases. Give each link its own database and the same `db_user`:

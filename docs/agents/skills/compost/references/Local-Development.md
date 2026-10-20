@@ -91,6 +91,13 @@ Only database, key-value and storage links give addresses on 127.0.0.1. The valu
 
 `dev env` also works after `dev up` without `--host` once the shared apps have a `host_port`, e.g. to run a migration or a database client on this machine.
 
+To load a dump into a link's database, e.g. an anonymized copy of production, use the link's [import command](Admin-Commands.md#database-links):
+
+```sh
+compost dev cmd main.import --yes < anonymized.sql
+compost dev cmd main.import --clean --file anonymized.pgdump
+```
+
 ## Fresh data: `dev reset`
 
 ```sh

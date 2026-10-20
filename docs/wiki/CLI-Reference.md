@@ -733,6 +733,7 @@ Commands:
   up         Run the app on this machine: add the shared apps its links need and the server lacks, give it its own databases, buckets and logins on them, and start it
   reset      Delete the data of the app's links (databases, buckets, key-value databases, realms, namespaces) and start it again with empty ones; passwords and keys stay the same
   env        Print the app's variables for running it outside Docker, with shared apps on 127.0.0.1 (after `dev up --host`)
+  cmd        List the app's commands, or run one by name, like `app cmd`: its `commands`, and `<link>.import`/`<link>.export` of database links
   stop       Stop the app's containers; data and shared apps are kept, and `dev up` starts it again
   down       Remove the app's containers; with --purge also its data and volumes
   reset-all  Remove every app and shared app on this machine with all their data, compost's networks and its folder (~/.compost-server), to start again from nothing with `dev up`; ~/.compost stays
@@ -803,6 +804,25 @@ Options:
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --format <FORMAT>      `dotenv` (KEY="value"), `shell` (export KEY='value') or `json` [default: dotenv] [possible values: dotenv, shell, json]
   -o, --output <OUTPUT>      Write to this file (mode 0600) instead of printing
+  -h, --help                 Print help
+```
+
+## `compost dev cmd`
+
+```text
+List the app's commands, or run one by name, like `app cmd`: its `commands`, and `<link>.import`/`<link>.export` of database links
+
+Usage: compost dev cmd [OPTIONS] [COMMAND] [ARGS]...
+
+Arguments:
+  [COMMAND] [ARGS]...  The command's name and its arguments, e.g. `main.import --file dump.sql`; `--history` shows the last ones run
+
+Options:
+  -f, --file <FILES>         Config files merged in order (repeatable or comma-separated; default: compost.yaml, and .compost-local.yaml if it exists)
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+      --prefix <PREFIX>      Instance prefix (default: the one from the config files, else `local`)
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
 

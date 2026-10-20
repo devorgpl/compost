@@ -512,6 +512,33 @@ pub trait Kind: Sync {
     ) -> Result<()> {
         Ok(())
     }
+
+    /// Links of this kind take `<entry>.import` and `<entry>.export` (`app cmd`).
+    fn imports(&self) -> bool {
+        false
+    }
+
+    /// Load a dump read from `input` into a link's data, as the link's own
+    /// user; with `clean`, its data is deleted first.
+    fn import_link(
+        &self,
+        _ctx: &AppCtx,
+        _entry: &str,
+        _input: &mut (dyn std::io::Read + Send),
+        _clean: bool,
+    ) -> Result<()> {
+        bail!("{} links have no import", self.name())
+    }
+
+    /// Write a dump of a link's data to `out`.
+    fn export_link(
+        &self,
+        _ctx: &AppCtx,
+        _entry: &str,
+        _out: &mut dyn std::io::Write,
+    ) -> Result<()> {
+        bail!("{} links have no export", self.name())
+    }
 }
 
 /// Parse a link entry into a kind's own struct.

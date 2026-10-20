@@ -2084,6 +2084,94 @@ fn app_cmd_runs_in_a_service_and_is_logged() {
 }
 
 #[test]
+fn app_cmd_imports_and_exports_a_database_link() {
+    let server = server_with_app();
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml,app/.compost-staging.yaml",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    server.take_docker_log();
+
+    server
+        .run(&["app", "cmd", "myapp-staging"], &[])
+        .success()
+        .stdout(contains("Commands of its links:"))
+        .stdout(contains("system-data.import [--file <dump>] [--clean]"))
+        .stdout(contains("(postgres16)"));
+    server.write_work_file("dump.sql", "ALTER TABLE t OWNER TO prod;\n");
+    server
+        .run(
+            &[
+                "app",
+                "cmd",
+                "myapp-staging",
+                "system-data.import",
+                "--file",
+                "dump.sql",
+            ],
+            &[],
+        )
+        .code(2)
+        .stderr(contains("add --yes"));
+    server
+        .run(
+            &[
+                "app",
+                "cmd",
+                "myapp-staging",
+                "system-data.import",
+                "--file",
+                "dump.sql",
+                "--yes",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("Imported dump.sql into database system-data."));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("exec -T compost-shared-postgres16 psql -U postgres -d myapp_staging_system_data -q -v ON_ERROR_STOP=1"),
+        "{log}"
+    );
+    server
+        .run(&["app", "cmd", "myapp-staging", "system-data.export"], &[])
+        .success();
+    assert!(
+        server
+            .take_docker_log()
+            .contains("pg_dump -U postgres --no-owner --no-acl -d myapp_staging_system_data")
+    );
+    server
+        .run(&["app", "cmd", "myapp-staging", "--history"], &[])
+        .success()
+        .stdout(contains(
+            "system-data.import  exit 0    postgres16: import dump.sql",
+        ));
+
+    for (words, expected) in [
+        (&["nope.import"][..], "has no database link `nope`"),
+        (&["system-data.drop"][..], "links have no command `drop`"),
+        (
+            &["system-data.export", "--clean"][..],
+            "unexpected `--clean`",
+        ),
+        (&["system-data.import", "--file"][..], "--file needs a path"),
+    ] {
+        let mut args = vec!["app", "cmd", "myapp-staging"];
+        args.extend(words);
+        server.run(&args, &[]).code(2).stderr(contains(expected));
+    }
+}
+
+#[test]
 fn app_state_by_name_or_files() {
     let server = server_with_app();
     let running = [("FAKE_DOCKER_RUNNING", "1")];

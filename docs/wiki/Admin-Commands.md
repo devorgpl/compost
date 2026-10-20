@@ -9,6 +9,7 @@ Most admin tasks on a server come down to running a tool in a container: `cscli`
 | `compost server cmd <shared app>.<name> [args]` | A command compost defines for the shared app's type, e.g. `caddy-main.unban` |
 | `compost server cmd <name> [args]` | A command from `commands` in compost-server.yaml |
 | `compost app cmd <instance> <name> [args]` | A command from `commands` in compost.yaml |
+| `compost app cmd <instance> <link>.import` / `.export` | Load a dump into a database link's database, or dump it ([Database links](#database-links)) |
 
 ## Commands in shared apps
 
@@ -206,3 +207,30 @@ compost app cmd -f compost.yaml,.compost-staging.yaml create-admin admin@example
 The keys are those of [named commands](#keys), with `exec: <service>` or `run: <service>` in place of `shared_app` and `service`. The commands are those of the deployed instance: `app deploy` stores them with its config. Without `-f`, `--app` or `--prefix`, the first word is the instance, as `app list` shows it.
 
 App commands can't use `{secret:…}`: their containers already get the app's secrets and link variables (`DATABASE_URL`, …) from its environment. A `run` command starts the services the service `depends_on`, like `app run` without `--no-deps`.
+
+On your own machine, `compost dev cmd [name] [args]` runs the commands of the app's local instance, from the same files as `dev up` ([Local development](Local-Development.md)).
+
+### Database links
+
+Every database link of an instance has two built-in commands, `<link>.import` and `<link>.export`. They work in the database server's container, as the link's user, so you don't need its name, user or password:
+
+```sh
+compost app cmd shop-test main.import --yes < dump.sql            # plain SQL on stdin
+compost app cmd shop-test main.import --file dump.pgdump          # asks first
+compost app cmd shop-test main.import --clean --file dump.sql     # drop and recreate the database first
+compost app cmd shop-test main.export > main.sql                  # or --file main.sql
+compost dev cmd main.import --yes < dump.sql                      # the local instance
+compost app cmd shop-test database/main.import --file dump.sql    # <kind>/<link> when two kinds use the name
+```
+
+`import` loads plain SQL (`pg_dump`, `mariadb-dump`, `mysqldump` output) or, into Postgres, a custom-format archive (`pg_dump -Fc`, recognized by its first bytes). The objects it creates belong to the link's user, so the app can use them, and parts that name roles of the server the dump came from are left out:
+
+| Database | Left out |
+|---|---|
+| Postgres, plain SQL | Lines that start with `ALTER … OWNER TO`, `GRANT`, `REVOKE`, `ALTER DEFAULT PRIVILEGES` or `SET SESSION AUTHORIZATION`, outside `COPY` data |
+| Postgres, archive | Owners and privileges (`pg_restore --no-owner --no-privileges --role <link user>`) |
+| MariaDB, MySQL | `DEFINER` clauses |
+
+The import stops at the first error, which can leave part of the dump loaded. Into a database that holds objects, it fails when they clash; `--clean` drops the database and creates it again empty first, which needs root credentials on an external server. `import` asks before it starts; with the dump on stdin it can't, so it needs `--yes`. It takes the server's lock, like a deploy.
+
+`export` writes a plain SQL dump without owners and privileges (`DEFINER` clauses for MariaDB and MySQL), as [`app backup`](Backup-and-Restore.md) saves it, so it loads into another instance with `import`. Both go into `--history`.

@@ -5,6 +5,7 @@ pub mod contribution;
 pub mod deploy;
 pub mod exec;
 pub mod instance;
+mod link_cmd;
 pub mod list;
 mod local_build;
 pub mod logs;
