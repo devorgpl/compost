@@ -2280,6 +2280,112 @@ fn app_remove_purge_database() {
 }
 
 #[test]
+fn database_links_can_share_a_user() {
+    let server = server_with_shared_apps();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    // As Temporal does: one login for two databases.
+    server.write_work_file(
+        "shared/compost.yaml",
+        "name: example
+services:
+  database:
+    - {name: one, type: postgres, targets: [probe], environment: {A_URL: db_url}, db_user: ex_shared}
+    - {name: two, type: postgres, targets: [probe], environment: {B_URL: db_url}, db_user: ex_shared}
+app_services:
+  - {name: probe, service: probe}
+",
+    );
+    server.write_work_file(
+        "shared/docker-compose.yaml",
+        "services: {probe: {image: 'postgres:18-alpine'}}",
+    );
+    server.write_work_file("shared/.compost-t.yaml", "prefix: t\n");
+    let files = "shared/compost.yaml,shared/.compost-t.yaml";
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success();
+    let records = server.server_home.join("connectors/database/postgres16");
+    let password = |entry: &str| {
+        let text = fs::read_to_string(records.join(format!("example-t-{entry}.yaml"))).unwrap();
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("db_password:"))
+            .unwrap();
+        line.to_string()
+    };
+    // One user has one password: the second link took the first one's.
+    assert_eq!(password("one"), password("two"));
+
+    // Passwords that differ are refused, in one app and across instances.
+    server.write_work_file(
+        "shared/.compost-bad.yaml",
+        "prefix: t
+services:
+  database:
+    - {name: one, db_password: first}
+    - {name: two, db_password: second}
+",
+    );
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--dry-run",
+                "-f",
+                "shared/compost.yaml,shared/.compost-bad.yaml",
+            ],
+            &running,
+        )
+        .code(2)
+        .stderr(contains(
+            "one and two share user `ex_shared` of app example, so they need the same db_password",
+        ));
+    server.write_work_file(
+        "shared/.compost-u.yaml",
+        "prefix: u
+services:
+  database:
+    - {name: one, db_name: ex_u_one, db_password: other}
+    - {name: two, db_name: ex_u_two, db_password: other}
+",
+    );
+    server
+        .run(
+            &["app", "deploy", "--apply", "-f", "shared/compost.yaml,shared/.compost-u.yaml"],
+            &running,
+        )
+        .failure()
+        .stderr(contains(
+            "user `ex_shared` is also the user of link one of example-t on postgres16, with another password",
+        ));
+
+    // Purging drops each database, and the user with its last link.
+    server.take_docker_log();
+    server
+        .run(
+            &["app", "remove", "example-t", "--purge", "database", "--yes"],
+            &running,
+        )
+        .success()
+        .stdout(contains(
+            "kept user `ex_shared` on postgres16: link two of example-t uses it too",
+        ));
+    let log = server.take_docker_log();
+    let position = |text: &str| {
+        log.find(text)
+            .unwrap_or_else(|| panic!("{text} not in {log}"))
+    };
+    assert!(position("DROP DATABASE IF EXISTS \"example_t_one\"") < position("DROP ROLE"));
+    assert!(position("DROP DATABASE IF EXISTS \"example_t_two\"") < position("DROP ROLE"));
+    assert_eq!(
+        log.matches("DROP ROLE IF EXISTS \"ex_shared\";").count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
 fn app_state_reports_stopped_service_as_unhealthy() {
     let server = server_with_shared_apps();
     server.write_work_file("app/compost.yaml", APP_CONFIG);

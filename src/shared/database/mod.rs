@@ -12,7 +12,7 @@ use super::{
     ServerCtx, SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
-use base::{DatabaseLink, DatabaseRecord, Endpoint};
+use base::{DatabaseLink, DatabaseRecord, Endpoint, Purge};
 
 pub const KIND: &str = "database";
 
@@ -66,11 +66,15 @@ pub trait DatabaseType: Sync {
         Ok(())
     }
 
-    /// Delete the link record; with `purge`, drop the database and user first.
+    /// Delete the link record; with `purge`, drop the database and user first,
+    /// those that no other link uses.
     fn remove_application(&self, ctx: &AppCtx, entry: &str, purge: bool) -> Result<()> {
         if purge {
             if let Some(record) = base::read_record(ctx, entry)? {
-                self.drop_database(ctx, &record)?;
+                let purge = base::purge_of(ctx, &record)?;
+                if purge.database || purge.user {
+                    self.drop_database(ctx, &record, purge)?;
+                }
             }
         }
         base::remove_application(ctx, entry)
@@ -94,8 +98,9 @@ pub trait DatabaseType: Sync {
     /// Create the database and its user, before the app starts.
     fn before_apply_application(&self, ctx: &AppCtx, link: &DatabaseLink) -> Result<()>;
 
-    /// Delete the database and user of a link (`app remove --purge database`).
-    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord) -> Result<()>;
+    /// Delete the database or user of a link, or both (`app remove --purge
+    /// database`), as `purge` says.
+    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord, purge: Purge) -> Result<()>;
 
     /// Save the link's database as the item `name`.
     fn dump_database(
@@ -204,7 +209,16 @@ impl Kind for DatabaseKind {
 
     fn validate_link(&self, link: &Value, app: &AppConfig) -> Result<()> {
         let link: DatabaseLink = parse_link(link)?;
-        find_type(&link.type_name)?.validate_link(&link, app)
+        find_type(&link.type_name)?.validate_link(&link, app)?;
+        // Entries that don't parse report their own errors.
+        let links: Vec<DatabaseLink> = app
+            .services
+            .get(KIND)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| parse_link(entry).ok())
+            .collect();
+        base::validate_shared_users(app, &links)
     }
 
     fn resolve<'s>(

@@ -111,8 +111,8 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `instance` | – | Pin a shared app by name; required for an external database |
 | `targets` | `[]` | `app_services` that get the variables and the network |
 | `environment` | `{}` | Variable → `db_host`, `db_port`, `db_name`, `db_user`, `db_password`, `db_url` |
-| `db_name`, `db_user` | `<app>_<prefix>_<entry>` | Overlay. `^[a-z_][a-z0-9_]{0,62}$` |
-| `db_password` | generated | Overlay, secret. Required for an external database without root credentials |
+| `db_name`, `db_user` | `<app>_<prefix>_<entry>` | Overlay. `^[a-z_][a-z0-9_]{0,62}$`. Links may share a user (see [One user for several databases](Applications.md#database-links)) |
+| `db_password` | generated | Overlay, secret. Required for an external database without root credentials. Links sharing a user share its password |
 
 ### `services.keyvalue[]`
 

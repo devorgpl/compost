@@ -70,7 +70,12 @@ pub fn remove(
         .chain(&instance.removing)
         .cloned()
         .collect();
-    remove_links(&ctx, &instance.app, &links, &options.purge, false)?;
+    // Links already removed are skipped when it runs again.
+    remove_links(&ctx, &instance.app, &links, &options.purge, false).map_err(|err| {
+        err.context(format!(
+            "removing {project} stopped, and it is still deployed; run `app remove` again once the cause is fixed"
+        ))
+    })?;
 
     let volumes = if options.volumes { " -v" } else { "" };
     connector

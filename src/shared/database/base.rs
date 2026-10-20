@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 
@@ -266,6 +266,10 @@ pub fn resolve<'s>(
 /// with a generated password. Reusing the record keeps passwords stable.
 /// Without `provisioned` (compost cannot create databases on the server), the
 /// database and user must exist: the link names them and gives the password.
+///
+/// Links may share a user (`db_user`): one user has one password, so a link
+/// without `db_password` takes the password of another link of the user, and
+/// one with it must agree with the links of other instances.
 pub fn credentials(
     ctx: &AppCtx,
     link: &DatabaseLink,
@@ -280,15 +284,38 @@ pub fn credentials(
         );
     }
     let (name, user) = names(ctx.app, link, endpoint.user_max);
+    let sharing: Vec<DatabaseRecord> = other_records(ctx, &link.name)?
+        .into_iter()
+        .filter(|other| other.db_user == user)
+        .collect();
     let password = match &link.db_password {
-        Some(password) => password.clone(),
+        Some(password) => {
+            // Links of this instance are checked together (see `validate_shared_users`).
+            let other_instance = sharing.iter().find(|other| {
+                (other.app != ctx.app.name || other.prefix != ctx.app.prefix)
+                    && other.db_password != *password
+            });
+            if let Some(other) = other_instance {
+                bail!(
+                    "user `{user}` is also the user of link {} of {}-{} on {}, with another password: links that share a user need the same db_password",
+                    other.entry,
+                    other.app,
+                    other.prefix,
+                    ctx.shared.name
+                );
+            }
+            password.clone()
+        }
         None => match read_record(ctx, &link.name)? {
-            Some(record) => record.db_password,
-            None if provisioned => generate_password(),
-            None => anyhow::bail!(
-                "db_password is required for an existing database on {}",
-                ctx.shared.name
-            ),
+            Some(record) if record.db_user == user => record.db_password,
+            _ => match sharing.first() {
+                Some(other) => other.db_password.clone(),
+                None if provisioned => generate_password(),
+                None => bail!(
+                    "db_password is required for an existing database on {}",
+                    ctx.shared.name
+                ),
+            },
         },
     };
     Ok(Credentials {
@@ -298,10 +325,83 @@ pub fn credentials(
     })
 }
 
+fn records_dir(ctx: &AppCtx) -> String {
+    ctx.server.path(&connectors_dir(KIND, &ctx.shared.name))
+}
+
 fn record_path(ctx: &AppCtx, entry: &str) -> String {
-    let dir = connectors_dir(KIND, &ctx.shared.name);
-    ctx.server
-        .path(&format!("{dir}/{}.yaml", ctx.link_id(entry)))
+    format!("{}/{}.yaml", records_dir(ctx), ctx.link_id(entry))
+}
+
+/// The link records of this database server, except the one of `entry`.
+pub fn other_records(ctx: &AppCtx, entry: &str) -> Result<Vec<DatabaseRecord>> {
+    let dir = records_dir(ctx);
+    let own = format!("{}.yaml", ctx.link_id(entry));
+    let mut records = Vec::new();
+    for file in ctx.server.connector.list_dir(&dir)? {
+        // `root-connector.yaml` holds the root credentials of some types.
+        if file == own || file == "root-connector.yaml" || !file.ends_with(".yaml") {
+            continue;
+        }
+        let path = format!("{dir}/{file}");
+        let Some(text) = ctx.server.connector.read_file(&path)? else {
+            continue;
+        };
+        records.push(serde_yaml_ng::from_str(&text).with_context(|| format!("invalid {path}"))?);
+    }
+    Ok(records)
+}
+
+/// What purging a link deletes: its database and its user, unless another
+/// link of the server still uses them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Purge {
+    pub database: bool,
+    pub user: bool,
+}
+
+/// What to delete when purging `record`, and say what is kept and why.
+pub fn purge_of(ctx: &AppCtx, record: &DatabaseRecord) -> Result<Purge> {
+    let others = other_records(ctx, &record.entry)?;
+    let user_of = others.iter().find(|other| other.db_user == record.db_user);
+    let database_of = others.iter().find(|other| other.db_name == record.db_name);
+    for (what, name, other) in [
+        ("database", &record.db_name, database_of),
+        ("user", &record.db_user, user_of),
+    ] {
+        if let Some(other) = other {
+            out!(
+                "  kept {what} `{name}` on {}: link {} of {}-{} uses it too",
+                ctx.shared.name,
+                other.entry,
+                other.app,
+                other.prefix
+            );
+        }
+    }
+    Ok(Purge {
+        database: database_of.is_none(),
+        user: user_of.is_none(),
+    })
+}
+
+/// Links of one app that set the same `db_user` must set the same
+/// `db_password`, or none: one user has one password.
+pub fn validate_shared_users(app: &AppConfig, links: &[DatabaseLink]) -> Result<()> {
+    for (i, link) in links.iter().enumerate() {
+        let Some(user) = &link.db_user else { continue };
+        for other in &links[..i] {
+            if other.db_user.as_ref() == Some(user) && other.db_password != link.db_password {
+                bail!(
+                    "{} and {} share user `{user}` of app {}, so they need the same db_password (or neither sets it)",
+                    other.name,
+                    link.name,
+                    app.name
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn read_record(ctx: &AppCtx, entry: &str) -> Result<Option<DatabaseRecord>> {

@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 
-use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint, External};
+use super::base::{self, DatabaseLink, DatabaseRecord, Endpoint, External, Purge};
 use super::{DatabaseType, KIND};
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
@@ -120,7 +120,7 @@ impl DatabaseType for Postgres {
     /// `WITH (FORCE)` disconnects the app, which is still running (postgres 13+).
     /// On an external server only with root credentials and `allow_purge`;
     /// otherwise the database is kept, with a warning.
-    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord) -> Result<()> {
+    fn drop_database(&self, ctx: &AppCtx, record: &DatabaseRecord, purge: Purge) -> Result<()> {
         check_record(record)?;
         let allowed = base::external(ctx.shared)?.is_none_or(|external| external.allow_purge);
         let root = match Client::root(ctx.server, ctx.shared)? {
@@ -133,12 +133,20 @@ impl DatabaseType for Postgres {
                 return Ok(());
             }
         };
-        let sql = format!(
-            "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\nDROP ROLE IF EXISTS \"{}\";\n",
-            record.db_name, record.db_user
-        );
-        run_sql(&root, &sql)
-            .map_err(|e| e.context(format!("dropping database `{}` failed", record.db_name)))
+        if purge.database {
+            let sql = format!(
+                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE);\n",
+                record.db_name
+            );
+            run_sql(&root, &sql)
+                .map_err(|e| e.context(format!("dropping database `{}` failed", record.db_name)))?;
+        }
+        if purge.user {
+            let sql = format!("DROP ROLE IF EXISTS \"{}\";\n", record.db_user);
+            run_sql(&root, &sql)
+                .map_err(|e| e.context(format!("dropping user `{}` failed", record.db_user)))?;
+        }
+        Ok(())
     }
 
     /// `pg_isready` from a client container on the server's network.

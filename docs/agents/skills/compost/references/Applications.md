@@ -244,6 +244,15 @@ services:
 
 In the overlay you can set `db_name`, `db_user` and `db_password`. The defaults come from `<app>_<prefix>_<entry>`, so renaming the entry gives a new, empty database unless you set them. MariaDB and MySQL user names are at most 32 characters: a longer default is cut and ends in a short hash.
 
+**One user for several databases.** Some software logs in to several databases with one user, e.g. Temporal's `auto-setup` image with its main and visibility databases. Give each link its own database and the same `db_user`:
+
+```yaml
+    - {name: temporal, type: postgres, targets: [temporal], db_user: temporal, environment: {DB_URL: db_url}}
+    - {name: visibility, type: postgres, targets: [temporal], db_user: temporal, environment: {VISIBILITY_DB_URL: db_url}}
+```
+
+A user has one password. Leave `db_password` out and the links get the same generated one, or set the same value on all of them; `app deploy` refuses links of the user with different passwords, also in other instances. `--purge database` drops each link's database, and the user with the last link on that database server that uses it. A database two links name with the same `db_name` is kept the same way.
+
 **Existing databases.** To link to a database compost doesn't run, register it as an [external database](Servers-and-Shared-Apps.md#external-databases) and pin it with `instance`. Unless compost has root credentials for it, give the existing `db_name`, `db_user` and `db_password`. compost then only passes them to the services:
 
 ```yaml
@@ -614,7 +623,7 @@ Commands you run more than once can go under `commands` in compost.yaml, with ch
 compost app remove myapp-staging [--volumes] [--purge database,oidc] [--yes]
 ```
 
-Removes the routes and link records, then `docker compose down`, the instance's folder (with its releases) and the image tags kept for rollback. Databases and realms stay unless their kind is in `--purge` (databases on an external server stay anyway, see [External databases](Servers-and-Shared-Apps.md#external-databases)); `--volumes` also removes the compose volumes, except external ones. It asks for confirmation unless `--yes`. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
+Removes the routes and link records, then `docker compose down`, the instance's folder (with its releases) and the image tags kept for rollback. Databases and realms stay unless their kind is in `--purge` (databases on an external server stay anyway, see [External databases](Servers-and-Shared-Apps.md#external-databases)); `--volumes` also removes the compose volumes, except external ones. It asks for confirmation unless `--yes`. If a link can't be removed (e.g. its database server is down), it stops there and the instance stays deployed; run it again once that is fixed, and it continues with the links that are left. A stored overlay ([Secrets](Secrets.md)) stays, so deploying the instance again brings it back as it was.
 
 ## Validation errors
 
