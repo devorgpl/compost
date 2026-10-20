@@ -40,6 +40,7 @@ For every link of the app ([Applications](Applications.md#database-links)), `dev
 | `oidc` | Keycloak on `http://auth.localhost:18080`, with the Postgres 18 and Caddy it needs |
 | `workflow` | Temporal, with what it needs |
 | `monitoring` that isn't `optional` | OpenObserve on `http://logs.localhost:18080` |
+| `mail` that isn't `optional` | Mailpit, its inbox on `http://mail.localhost:18080` |
 
 A link that pins a shared app with `instance`, e.g. a production server's `temporal-main`, uses the shared app of that name. If this machine has none, it uses the one shared app that matches the link without the pin (`services.workflow[jobs]: local has no `temporal-main`; using temporal`), so projects don't bring their own copies of shared apps. Only when none matches is one added, with the pinned name. To choose another one yourself, set its `instance` in `.compost-local.yaml`. Shared apps that are already configured never change, except for the `host_port` that `--host` adds. Shared apps that are configured but not running are started.
 
@@ -74,7 +75,7 @@ compost dev env -o .env       # then start the app with these variables
 
 `dev up --host`:
 
-- Gives the shared apps that the app's database, key-value and storage links use a `host_port` on 127.0.0.1, unless they have one. The first free port from 15432 (Postgres), 13306 (MariaDB, MySQL), 16379 (Valkey, Redis) and 13900 (Garage's S3 API) is used. This recreates the shared app's container once; its data is kept.
+- Gives the shared apps that the app's database, key-value, storage and mail links use a `host_port` on 127.0.0.1, unless they have one. The first free port from 15432 (Postgres), 13306 (MariaDB, MySQL), 16379 (Valkey, Redis), 13900 (Garage's S3 API) and 18005 (Mailpit: the SES API, then SMTP and moto on the next two) is used. This recreates the shared app's container once; its data is kept.
 - Sets up the links (database and user, bucket and key, key-value database, realm and client, namespace) and stops the app's containers, if an earlier `dev up` started them. `compost app list` shows the instance as `provisioned`.
 - Skips ingress and monitoring links: they need the app's containers.
 
@@ -87,7 +88,7 @@ S3_BUCKET=myapp-local-files
 S3_ENDPOINT=http://127.0.0.1:13900
 ```
 
-Only database, key-value and storage links give addresses on 127.0.0.1. The values of other links are those the app's containers get: an OIDC link's `oidc_issuer` is the public `http://auth.localhost:18080/realms/…`, which works from both, but `oidc_internal_url` only works in Docker.
+Only database, key-value, storage and mail links give addresses on 127.0.0.1. The values of other links are those the app's containers get: an OIDC link's `oidc_issuer` is the public `http://auth.localhost:18080/realms/…`, which works from both, but `oidc_internal_url` only works in Docker.
 
 `dev env` also works after `dev up` without `--host` once the shared apps have a `host_port`, e.g. to run a migration or a database client on this machine.
 

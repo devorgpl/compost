@@ -27,6 +27,7 @@ The command and its arguments come after `--`. Without `--service`, it runs in t
 |---|---|
 | `caddysecurebuild` | `crowdsec`: the CrowdSec agent, with `cscli` |
 | `openobserve` | `collector` |
+| `mailpit` | `ses`: the SES mock; `aws`: moto, with `moto: true` |
 | `temporal` | `admin`: the `temporal` CLI, with `TEMPORAL_ADDRESS` set; `ui`, if the UI is on |
 
 An unknown service exits 2 and lists the shared app's other services. External shared apps and communication apps have no containers, so `server exec` refuses them.

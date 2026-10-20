@@ -1,0 +1,8 @@
+    # Catches the mail of apps (SMTP and the AWS SES API) and shows it in a
+    # web inbox. For development and test servers. Needs an ingress for the inbox.
+    - name: mail
+      type: mailpit
+      version: 1
+      configuration:
+        # Public URL of the inbox; its host is routed through the ingress.
+        url: http://mail.localhost:18080

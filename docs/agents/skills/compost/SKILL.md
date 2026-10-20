@@ -1,12 +1,12 @@
 ---
 name: compost
-description: Deploy docker-compose apps to Linux servers with the compost CLI. Use when working with compost commands or files (compost.yaml, compost-server.yaml, .compost-*.yaml overlays), when deploying, inspecting, backing up or restoring apps and their shared Caddy, Postgres, MariaDB, MySQL, Valkey, Redis, Garage, Keycloak, OpenObserve or Temporal, when managing compost secrets, or when moving existing Docker servers to compost.
+description: Deploy docker-compose apps to Linux servers with the compost CLI. Use when working with compost commands or files (compost.yaml, compost-server.yaml, .compost-*.yaml overlays), when deploying, inspecting, backing up or restoring apps and their shared Caddy, Postgres, MariaDB, MySQL, Valkey, Redis, Garage, Keycloak, OpenObserve, Mailpit or Temporal, when managing compost secrets, or when moving existing Docker servers to compost.
 license: MIT OR Apache-2.0
 ---
 
 # compost
 
-compost is a CLI on the user's machine that deploys docker-compose apps to servers over SSH (or to this machine). Servers run **shared apps** (Caddy for domains and HTTPS, Postgres, MariaDB or MySQL, Valkey or Redis, Garage S3 storage, Keycloak, OpenObserve, Temporal); each **app** is a compose file plus `compost.yaml`, which links its services to them. One deployment of an app is an **instance**, `<app>-<prefix>` (e.g. `myapp-staging`), whose domains and passwords come from an **overlay** merged over `compost.yaml`. Concepts: [Home](references/Home.md#concepts).
+compost is a CLI on the user's machine that deploys docker-compose apps to servers over SSH (or to this machine). Servers run **shared apps** (Caddy for domains and HTTPS, Postgres, MariaDB or MySQL, Valkey or Redis, Garage S3 storage, Keycloak, OpenObserve, Temporal, and Mailpit as a mail catcher on test servers); each **app** is a compose file plus `compost.yaml`, which links its services to them. One deployment of an app is an **instance**, `<app>-<prefix>` (e.g. `myapp-staging`), whose domains and passwords come from an **overlay** merged over `compost.yaml`. Concepts: [Home](references/Home.md#concepts).
 
 The `references/` folder holds the full user documentation of the compost version this skill came with. Read the page for the task before writing config: see [Where to look](#where-to-look).
 
@@ -112,7 +112,7 @@ compost dev stop              # pause; `dev up` resumes
 | Try it locally with the samples | [Quick start](references/Quick-Start.md) |
 | A new server, end to end | [Production setup](references/Production-Setup.md) |
 | A ready-made setup (static site, API with DB, Keycloak login, Temporal, OpenObserve, RDS, apps you don't own) | [Examples](references/Examples.md) |
-| `compost.yaml`, links (ingress, database, oidc, workflow, monitoring), deploy, remove | [Applications](references/Applications.md) |
+| `compost.yaml`, links (ingress, database, oidc, workflow, monitoring, mail), deploy, remove | [Applications](references/Applications.md) |
 | Run apps on this machine for development, `dev` commands | [Local development](references/Local-Development.md) |
 | `compost-server.yaml`, shared app types, TLS, external databases, locks | [Servers and shared apps](references/Servers-and-Shared-Apps.md) |
 | Every config key, merge rules, preferences, environment variables | [Configuration](references/Configuration.md) |

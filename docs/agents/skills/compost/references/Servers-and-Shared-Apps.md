@@ -90,7 +90,7 @@ Two shared apps can't have the same `host_port`.
 
 ## Shared app types
 
-A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps, workflow servers (Temporal) and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
+A server has at most one ingress, and any number of databases (Postgres, MariaDB, MySQL), key-value stores (Valkey, Redis), storage (Garage, external S3), OIDC providers, monitoring apps, mail catchers (Mailpit), workflow servers (Temporal) and communication apps (channels for notifications: webhook, Slack, Mattermost, Discord, Matrix, email; see [Notifications](Notifications.md)). Every shared app has a `name` (lowercase letters, digits and `-`, up to 31 characters, starting with a letter), a `type`, a `version` and optionally an `image`. Type-specific settings go in `configuration`.
 
 ### caddy (`ingress`)
 
@@ -493,6 +493,40 @@ What ends up in OpenObserve (organization `default`):
 Log in with `root_email` and `root_password`; compost writes both to `connectors/monitoring/<name>/root-connector.yaml` on the server. Apps link to it with [`services.monitoring`](Applications.md#monitoring-links).
 
 The log driver sends asynchronously: linked containers start and run while the collector is down, and `docker logs` keeps working.
+
+### mailpit (`mail`)
+
+A mail catcher for development and test servers: apps send mail to it instead of a real provider, and you read it in a web inbox. Nothing leaves the server. It runs up to three containers:
+
+- **mailpit**, [Mailpit](https://mailpit.axllent.org): SMTP for apps, on port 1025 without TLS (any user and password are accepted), and the inbox.
+- **ses**, [aws-ses-v2-local](https://github.com/domdomegg/aws-ses-v2-local): the AWS SES API (v1 and v2) on port 8005, so code that sends through SES runs unchanged. It hands every mail to Mailpit.
+- **aws**, with `moto: true`: [moto](https://docs.getmoto.org), a mock of other AWS APIs (Cognito, SNS, SQS, …) on port 5000.
+
+```yaml
+shared:
+  mail:
+    - name: mail
+      type: mailpit
+      version: 1
+      configuration:
+        url: https://mail.test.example.com
+        moto: true
+        password: …    # in .compost-server.secrets.yaml
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `1` | Major version of Mailpit |
+| `image` | `axllent/mailpit:vX.Y.Z` for 1 | Required for other versions |
+| `configuration.url` | – | Public URL of the inbox, `https://<domain>` or `http://<domain>[:port]`, no path. compost routes its domain through the ingress. Without it, the inbox is not reachable |
+| `configuration.password` | generated | Secret. Password of the inbox's user `admin`; at least 8 characters, without `:` |
+| `configuration.region` | `us-east-1` | The region links give apps (`aws_region`) |
+| `configuration.moto` | `false` | Also run moto for other AWS APIs |
+| `configuration.host_port` | – | For apps outside Docker ([`dev up --host`](Local-Development.md#running-the-app-outside-docker)): the SES API on this port of 127.0.0.1, SMTP on the next one, moto on the one after |
+| `configuration.ses_image` | `ghcr.io/domdomegg/aws-ses-v2-local:X.Y.Z` | |
+| `configuration.moto_image` | `motoserver/moto:X.Y.Z` | |
+
+There is one inbox per mail app, for all apps linked to it. Log in as `admin` with the password; compost writes it to `connectors/mail/<name>/root-connector.yaml` on the server. Mail, and moto's data, stay in memory: a restart of the containers (a deploy that changes them, a reboot) empties them, and backups don't hold them. Apps link to it with [`services.mail`](Applications.md#mail-links).
 
 ### temporal (`workflow`)
 

@@ -487,6 +487,49 @@ compost connector list
 
 Open http://logs.localhost:18080/ and log in. The `docker` log stream holds the output of all of them; filter with `fluent_tag = 'sampleapp-local.backend'`. Metrics have a stream each, such as `caddy_http_requests_total` and `container_memory_usage_total`; under Traces is a trace per request from Caddy, with the backend's spans in it if its SDK reads the `traceparent` header.
 
+## Catch the mail of a test server
+
+An app sends its mail through AWS SES in production. On the test server and locally, the mail should land in an inbox instead. Give the test server a mail catcher:
+
+```yaml
+# compost-server.yaml of the test server
+shared:
+  mail:
+    - name: mail
+      type: mailpit
+      version: 1
+      configuration:
+        url: https://mail.test.example.com      # the inbox, through the ingress
+```
+
+```yaml
+# compost.yaml
+services:
+  mail:
+    - name: outbox
+      optional: true                   # production has no mail app: the app uses real SES
+      targets: [api]
+      environment:
+        AWS_ENDPOINT_URL_SES: ses_endpoint
+        AWS_ENDPOINT_URL_SESV2: ses_endpoint
+        AWS_ACCESS_KEY_ID: aws_access_key_id
+        AWS_SECRET_ACCESS_KEY: aws_secret_access_key
+```
+
+```yaml
+# .compost-local.yaml
+services:
+  mail:
+    - {name: outbox, optional: false}  # `compost dev up` adds Mailpit on this machine
+```
+
+```sh
+compost -s test app deploy --apply -f compost.yaml,.compost-test.yaml
+grep password ~/.compost-server/connectors/mail/mail/root-connector.yaml   # on the test server: the inbox's password for `admin`
+```
+
+The app's SES client sends to the mock, which hands the mail to Mailpit; open https://mail.test.example.com and log in as `admin`. Locally, `compost dev up` adds the mail app with its inbox on http://mail.localhost:18080; with `--host`, `compost dev env` gives the SES API and SMTP on 127.0.0.1. For other AWS APIs the app uses in production, such as Cognito or SNS, add `moto: true` to the mail app and map `AWS_ENDPOINT_URL: aws_endpoint`.
+
 ## Block brute-force logins
 
 Switch the ingress to `caddysecurebuild`: Caddy built with CrowdSec. It bans addresses whose login POSTs keep failing with 401 or 403, blocks known exploits with AppSec and throttles login attempts:

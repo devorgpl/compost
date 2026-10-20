@@ -136,14 +136,17 @@ pub struct Published {
     pub existing: bool,
 }
 
-/// Port a type publishes on first with `dev up --host`, unless taken.
-const HOST_PORTS: &[(&str, u16)] = &[
-    ("postgres", 15432),
-    ("mysql", 13306),
-    ("mariadb", 13306),
-    ("valkey", 16379),
-    ("redis", 16379),
-    ("garage", 13900),
+/// Port a type publishes on first with `dev up --host`, unless taken, and
+/// how many ports from there it uses.
+const HOST_PORTS: &[(&str, u16, u16)] = &[
+    ("postgres", 15432, 1),
+    ("mysql", 13306, 1),
+    ("mariadb", 13306, 1),
+    ("valkey", 16379, 1),
+    ("redis", 16379, 1),
+    ("garage", 13900, 1),
+    // The SES API, SMTP and moto.
+    ("mailpit", 18005, 3),
 ];
 
 /// What `dev up` changes in the server's config.
@@ -212,17 +215,21 @@ fn publish(plan: &mut Plan, app: &AppConfig, free: &dyn Fn(u16) -> bool) -> Resu
             continue;
         };
         let name = found.name.clone();
-        let Some((_, default)) = HOST_PORTS.iter().find(|(t, _)| *t == found.type_name) else {
+        let Some((_, default, count)) = HOST_PORTS.iter().find(|(t, _, _)| *t == found.type_name)
+        else {
             continue;
         };
         if found.is_external() || found.configuration.get("host_port").is_some() {
             continue;
         }
+        let taken = |port: u16| {
+            (port..port.saturating_add(*count)).any(|p| used.contains(&u64::from(p)) || !free(p))
+        };
         let mut port = *default;
-        while used.contains(&u64::from(port)) || !free(port) {
+        while taken(port) {
             port = port.checked_add(1).context("no free port for host_port")?;
         }
-        used.push(u64::from(port));
+        used.extend((port..port + count).map(u64::from));
         let app = plan
             .config
             .shared
@@ -475,6 +482,31 @@ mod tests {
                 .starts_with("shared.oidc[keycloak]: services.database[")
         );
         assert_eq!(planned.shared.len(), 3);
+    }
+
+    #[test]
+    fn adds_a_mail_catcher_with_its_inbox_on_the_ingress() {
+        let (planned, added) = plan_of(
+            &ServerConfig::default(),
+            &app("  mail:\n    - {name: outbox, targets: []}\n"),
+        )
+        .unwrap();
+        assert_eq!(names(&added), ["mail/mail/1", "ingress/caddy-main/2"]);
+        let mail = &planned.shared["mail"][0];
+        assert_eq!(
+            mail.configuration["url"].as_str(),
+            Some("http://mail.localhost:18080")
+        );
+
+        // With --host it publishes the SES API, SMTP and moto on three ports.
+        let free = |port: u16| port != 18006;
+        let plan = plan(
+            &ServerConfig::default(),
+            &app("  mail:\n    - {name: outbox, targets: []}\n"),
+            Some(&free),
+        )
+        .unwrap();
+        assert_eq!(plan.published[0].port, 18007);
     }
 
     #[test]

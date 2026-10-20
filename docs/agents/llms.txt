@@ -10,14 +10,14 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Installation](https://github.com/devorgpl/compost/wiki/Installation): install script, release archives, macOS, first setup, updates
 - [Quick start](https://github.com/devorgpl/compost/wiki/Quick-Start): run compost against this machine with the sample app
 - [Production setup](https://github.com/devorgpl/compost/wiki/Production-Setup): from an empty Linux server to an app on HTTPS, step by step, with a checklist
-- [Examples](https://github.com/devorgpl/compost/wiki/Examples): static site, API with a database, WordPress on MariaDB, uploads in S3 storage, staging and production, apps you don't own, AWS RDS, Keycloak logins, Temporal workflows, OpenObserve, review copies, nightly backups
+- [Examples](https://github.com/devorgpl/compost/wiki/Examples): static site, API with a database, WordPress on MariaDB, uploads in S3 storage, staging and production, apps you don't own, AWS RDS, Keycloak logins, Temporal workflows, OpenObserve, a mail catcher for test servers, review copies, nightly backups
 - [Migrating to compost](https://github.com/devorgpl/compost/wiki/Migration): move a server with hand-made containers to compost in reversible phases
 - [Facts and limits](https://github.com/devorgpl/compost/wiki/Facts): what works, what doesn't yet (no failover, no zero-downtime deploys, no isolation between apps on a shared app), requirements, limits, security, license and status
 
 ## Use
 
-- [Applications](https://github.com/devorgpl/compost/wiki/Applications): `compost.yaml`, services, ingress, database, key-value, storage, OIDC, workflow and monitoring links, deploying, inspecting, removing
-- [Servers and shared apps](https://github.com/devorgpl/compost/wiki/Servers-and-Shared-Apps): defining servers, `compost-server.yaml`, the caddy, postgres, mariadb, mysql, valkey, redis, garage, s3, keycloak, openobserve and temporal types, external databases, locks
+- [Applications](https://github.com/devorgpl/compost/wiki/Applications): `compost.yaml`, services, ingress, database, key-value, storage, OIDC, workflow, monitoring and mail links, deploying, inspecting, removing
+- [Servers and shared apps](https://github.com/devorgpl/compost/wiki/Servers-and-Shared-Apps): defining servers, `compost-server.yaml`, the caddy, postgres, mariadb, mysql, valkey, redis, garage, s3, keycloak, openobserve, mailpit and temporal types, external databases, locks
 - [Local development](https://github.com/devorgpl/compost/wiki/Local-Development): `compost dev up` on this machine (adds missing shared apps, reuses existing ones), several projects, `dev up --host` and `dev env` for apps run outside Docker, `dev reset`, `dev stop`, `dev down`
 - [Secrets](https://github.com/devorgpl/compost/wiki/Secrets): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](https://github.com/devorgpl/compost/wiki/Backup-and-Restore): app and server backups, targets, formats, restoring, copies, moving to a new server

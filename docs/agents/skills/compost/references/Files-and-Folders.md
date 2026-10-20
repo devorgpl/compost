@@ -105,14 +105,20 @@ infra/
 │       ├── collector/config.yaml
 │       ├── collector/targets/<instance>-<entry>.yaml   metrics endpoints of a link
 │       └── secrets/                  openobserve.env, collector.env: root email and password
+│   └── mail/mail/
+│       ├── compose.yaml              mailpit, ses and (with `moto`) aws
+│       ├── compose.override.yaml     ingress network, if `url` is set
+│       └── secrets/mailpit.env       the inbox's login
 ├── connectors/                       link records, one per instance and entry
 │   ├── ingress/caddy-main/<instance>-<entry>.yaml
 │   ├── database/postgres18/root-connector.yaml, <instance>-<entry>.yaml
 │   │                                 (for an external database: how to reach it, and root credentials)
 │   ├── oidc/keycloak/root-connector.yaml, <instance>-<entry>.yaml
 │   ├── workflow/temporal/<instance>-<entry>.yaml   the link's namespace and retention
-│   └── monitoring/monitoring/root-connector.yaml, <instance>-<entry>.yaml
-│                                     (root-connector.yaml: URL and root login)
+│   ├── monitoring/monitoring/root-connector.yaml, <instance>-<entry>.yaml
+│   │                                 (root-connector.yaml: URL and root login)
+│   └── mail/mail/root-connector.yaml, <instance>-<entry>.yaml
+│                                     (root-connector.yaml: URL and the inbox's login)
 └── apps/<app>/<prefix>/
     ├── sources/                      uploaded files; .compost/ holds the compose_overrides
     ├── compose/compost.override.yaml networks and variables added to your services
@@ -129,8 +135,8 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 |---|---|
 | Instance compose project | `<app>-<prefix>`, e.g. `myapp-staging` |
 | Shared app compose project | `compost-<kind>-<name>`, e.g. `compost-database-postgres18` |
-| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, Temporal's other services `compost-shared-<name>-schema`, `-admin` and `-ui`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
-| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, Temporal's admin tools `compost-workflow-<name>-admin`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
+| Shared app compose service | `compost-shared-<name>`, e.g. `compost-shared-postgres18`; OpenObserve's collector is `compost-shared-<name>-collector`, a mail app's SES mock and moto `compost-shared-<name>-ses` and `-aws`, Temporal's other services `compost-shared-<name>-schema`, `-admin` and `-ui`, the CrowdSec agent of a `caddysecurebuild` ingress `compost-shared-<name>-crowdsec`. Compose makes the service name a host name on every network the container joins, so it is unique on purpose: an app's own `postgres` service stays `postgres` |
+| Shared app container | `compost-<kind>-<name>`, like its project, e.g. `compost-database-postgres18`; OpenObserve's collector is `compost-monitoring-<name>-collector`, a mail app's SES mock `compost-mail-<name>-ses` and moto `compost-mail-<name>-aws`, Temporal's admin tools `compost-workflow-<name>-admin`, a CrowdSec agent `compost-ingress-<name>-crowdsec` |
 | Built image | `compost-caddysecurebuild-<name>:<hash>` of a `caddysecurebuild` ingress; `compost-communication:<hash>` of communication apps |
 | Release image | `compost-release/<app>-<prefix>:<n>-<service>`: the image a service ran in release `<n>`, kept for `app rollback` |
 | Volumes | `compost-ingress-<name>_crowdsec-data` and `_crowdsec-config`: state of a CrowdSec agent |
@@ -141,6 +147,7 @@ Files with secrets (`secrets/`, connector records of databases and OIDC, `root-c
 | OIDC network | `compost-oidc-<name>`; host name `<name>` |
 | Workflow network | `compost-wf-<name>`; host name `<name>` |
 | Monitoring network | `compost-monitoring-<name>`; the collector's host name is `<name>` |
+| Mail network | `compost-mail-<name>`; host names `<name>` (SMTP), `<name>-ses` (SES API) and `<name>-aws` (moto) |
 | A service's name on the ingress and monitoring networks | `<app>-<prefix>-<service>`; for a shared app its service name, `compost-shared-<name>` |
 
 So you can use plain Docker commands:

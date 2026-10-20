@@ -16,7 +16,7 @@ It isn't for you if you want someone else to run the server, need an app to run 
 
 ## What works today
 
-- **Shared apps on a server:** Caddy (`caddy`, or `caddysecurebuild` with CrowdSec bans, AppSec and rate limits), Postgres, MariaDB, MySQL, Valkey, Redis, Garage, Keycloak, OpenObserve, Temporal, and channels for notifications. Existing databases (a container, AWS RDS) and S3 services can be registered as external ([Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types)).
+- **Shared apps on a server:** Caddy (`caddy`, or `caddysecurebuild` with CrowdSec bans, AppSec and rate limits), Postgres, MariaDB, MySQL, Valkey, Redis, Garage, Keycloak, OpenObserve, Temporal, Mailpit (a mail catcher with the AWS SES API, for test servers), and channels for notifications. Existing databases (a container, AWS RDS) and S3 services can be registered as external ([Servers and shared apps](Servers-and-Shared-Apps.md#shared-app-types)).
 - **Links:** an app gets a domain and routes on the ingress with automatic HTTPS, its own database and user, a key-value database, an S3 bucket and key, a Keycloak realm with a client, roles and users, a Temporal namespace, and log, metric and trace collection. Its services get the connection values as variables ([Applications](Applications.md#ingress-links)).
 - **Your compose file stays as it is.** compost adds networks and variables in an override file on the server. `compose_overrides` change apps you don't own without editing them.
 - **Instances:** the same app as `staging`, `prod` or a review copy on one server, each with its own domains, data and passwords ([Configuration](Configuration.md#overlays)).

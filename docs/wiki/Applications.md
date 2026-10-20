@@ -573,6 +573,40 @@ Services in `targets` and `metrics` join the monitoring network as `<instance>-<
 
 compost collects the output with Docker's `fluentd` log driver, set in its override file, so `docker logs` keeps working. A service that sets its own `logging` in the compose file can't be a target with `logs: true`: the deploy fails and says so.
 
+## Mail links
+
+A mail link points services at a [mail catcher](Servers-and-Shared-Apps.md#mailpit-mail) on development and test servers: they send by SMTP or through the AWS SES API, and the mail lands in its inbox. On production, where the app uses a real provider, the server has no mail app and an `optional` link is skipped:
+
+```yaml
+services:
+  mail:
+    - name: outbox
+      optional: true                   # skip (with a notice) when the server runs no mail app
+      instance: mail                   # optional: this shared app, when there are several
+      targets: [api]
+      environment:
+        AWS_ENDPOINT_URL_SES: ses_endpoint
+        AWS_ENDPOINT_URL_SESV2: ses_endpoint
+        AWS_REGION: aws_region
+        AWS_ACCESS_KEY_ID: aws_access_key_id
+        AWS_SECRET_ACCESS_KEY: aws_secret_access_key
+        SMTP_URL: smtp_url
+```
+
+| Link value | Example |
+|---|---|
+| `ses_endpoint` | `http://mail-ses:8005`: the SES API, v1 and v2 |
+| `smtp_host`, `smtp_port` | `mail`, `1025` |
+| `smtp_url` | `smtp://mail:1025` |
+| `aws_endpoint` | `http://mail-aws:5000`: moto, for other AWS APIs. Needs `moto: true` on the mail app |
+| `aws_region` | `us-east-1`, the mail app's `region` |
+| `aws_access_key_id`, `aws_secret_access_key` | `test`: the mocks accept any |
+| `inbox_url` | `https://mail.test.example.com`, empty without `url` |
+
+AWS SDKs read `AWS_ENDPOINT_URL_<SERVICE>` for one service and `AWS_ENDPOINT_URL` for all, so the same code sends through real SES where these variables are unset. The services in `targets` join the mail app's network. Removing the link deletes only its record: the mail in the inbox belongs to all apps.
+
+`compost dev up` adds a mail app for a link that isn't `optional`. To keep the link optional on servers and have it locally, set `optional: false` for it in `.compost-local.yaml`.
+
 ## Deploying
 
 ```sh

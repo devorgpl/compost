@@ -47,6 +47,7 @@ services:
   database: [ … ]
   oidc: [ … ]
   monitoring: [ … ]
+  mail: [ … ]
 app_services:
   - name: backend                      # name used by links
     service: backend-webapp            # service in the compose file
@@ -191,6 +192,16 @@ In the `environment` of every link below, a variable gets one of the link's valu
 
 At least one of `targets` and `metrics` is required.
 
+### `services.mail[]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | Entry name |
+| `instance` | – | Pin a mail app by name; required when the server has several |
+| `optional` | `false` | Skip the entry when the server runs no mail app |
+| `targets` | required | `app_services` that get the variables and the network |
+| `environment` | `{}` | Variable → `smtp_host`, `smtp_port`, `smtp_url`, `ses_endpoint`, `aws_endpoint` (with `moto: true`), `aws_region`, `aws_access_key_id`, `aws_secret_access_key`, `inbox_url` |
+
 Details and examples: [Applications](Applications.md).
 
 ## Overlays
@@ -232,6 +243,8 @@ shared:
     - {name: keycloak, type: keycloak, version: 26, configuration: {url: https://auth.example.com}}
   monitoring:
     - {name: monitoring, type: openobserve, version: 1, configuration: {url: https://logs.example.com}}
+  mail:                                # development and test servers
+    - {name: mail, type: mailpit, version: 1, configuration: {url: https://mail.test.example.com}}
   workflow:
     - {name: temporal, type: temporal, version: 1, configuration: {ui: {url: https://temporal.example.com, oidc: {}}}}
   communication:
