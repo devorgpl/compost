@@ -16,9 +16,9 @@ use serde_yaml_ng::Value;
 
 use super::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
-    RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, app_service, connectors_dir,
-    generate_password, host_address, is_variable_name, parse_link, project_name, render_template,
-    resolve_versioned, service_name, shared_dir,
+    RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, app_service,
+    check_link_environment, connectors_dir, generate_password, host_address, link_value,
+    parse_link, project_name, render_template, resolve_versioned, service_name, shared_dir,
 };
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
@@ -521,17 +521,7 @@ impl Kind for KeyValueKind {
                 "target `{target}` is not in app_services"
             );
         }
-        for (variable, value) in &link.environment {
-            ensure!(
-                is_variable_name(variable),
-                "`{variable}` is not a valid variable name"
-            );
-            ensure!(
-                LINK_VALUES.contains(&value.as_str()),
-                "environment.{variable}: unknown value `{value}` (known: {})",
-                LINK_VALUES.join(", ")
-            );
-        }
+        check_link_environment(&link.environment, &LINK_VALUES)?;
         Ok(())
     }
 
@@ -608,7 +598,7 @@ impl Kind for KeyValueKind {
             let service = ctx.compose_service(target)?;
             out.join_network(service, &network, None);
             for (variable, value) in &link.environment {
-                out.set_env(service, variable, values[value.as_str()].clone())?;
+                out.set_env(service, variable, link_value(value, &values)?)?;
             }
         }
         let text = serde_yaml_ng::to_string(&record)?;

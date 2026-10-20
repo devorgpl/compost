@@ -11,7 +11,7 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
     AppCtx, Contribution, Exposed, ExposedRoute, ItemWriter, Resolution, Role, SharedAppConfig,
-    connectors_dir, generate_password, is_variable_name, resolve_versioned,
+    check_link_environment, connectors_dir, generate_password, link_value, resolve_versioned,
 };
 pub use crate::shared::{PublicUrl, parse_url};
 
@@ -335,17 +335,7 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
             "target `{target}` is not in app_services"
         );
     }
-    for (variable, value) in &link.environment {
-        ensure!(
-            is_variable_name(variable),
-            "`{variable}` is not a valid variable name"
-        );
-        ensure!(
-            LINK_VALUES.contains(&value.as_str()),
-            "environment.{variable}: unknown value `{value}` (known: {})",
-            LINK_VALUES.join(", ")
-        );
-    }
+    check_link_environment(&link.environment, &LINK_VALUES)?;
     let (realm, client_id) = names(app, link);
     for (key, value) in [("realm", &realm), ("client_id", &client_id)] {
         ensure!(
@@ -690,7 +680,7 @@ pub fn prepare_application(
         let service = ctx.compose_service(target)?;
         out.join_network(service, &network, None);
         for (variable, value) in &link.environment {
-            out.set_env(service, variable, values[value.as_str()].clone())?;
+            out.set_env(service, variable, link_value(value, &values)?)?;
         }
     }
 

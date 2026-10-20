@@ -10,8 +10,8 @@ use super::KIND;
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir,
-    is_variable_name, resolve_versioned,
+    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, check_link_environment,
+    connectors_dir, link_value, resolve_versioned,
 };
 
 /// Values a link can map to app variables.
@@ -92,17 +92,7 @@ pub fn validate_link(link: &WorkflowLink, app: &AppConfig) -> Result<()> {
             "target `{target}` is not in app_services"
         );
     }
-    for (variable, value) in &link.environment {
-        ensure!(
-            is_variable_name(variable),
-            "`{variable}` is not a valid variable name"
-        );
-        ensure!(
-            LINK_VALUES.contains(&value.as_str()),
-            "environment.{variable}: unknown value `{value}` (known: {})",
-            LINK_VALUES.join(", ")
-        );
-    }
+    check_link_environment(&link.environment, &LINK_VALUES)?;
     let namespace = namespace(app, link);
     ensure!(
         is_namespace(&namespace),
@@ -250,7 +240,7 @@ pub fn prepare_application(
         let service = ctx.compose_service(target)?;
         out.join_network(service, &network, None);
         for (variable, value) in &link.environment {
-            out.set_env(service, variable, values[value.as_str()].clone())?;
+            out.set_env(service, variable, link_value(value, &values)?)?;
         }
     }
 

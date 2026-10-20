@@ -82,6 +82,8 @@ commands:                              # run by name with `app cmd`
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
 
+In the `environment` of every link below, a variable gets one of the link's values, e.g. `db_url`, or a template with values in braces, e.g. `"{db_host}:{db_port}"` ([Combining values](Applications.md#combining-values)).
+
 ### `services.ingress[]`
 
 | Key | Default | Meaning |

@@ -727,6 +727,70 @@ pub fn is_variable_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Check a link's `environment`: every variable gets one of the link's
+/// `known` values, or a template of them, e.g. `{db_host}:{db_port}`.
+pub fn check_link_environment(
+    environment: &BTreeMap<String, String>,
+    known: &[&str],
+) -> Result<()> {
+    for (variable, value) in environment {
+        ensure!(
+            is_variable_name(variable),
+            "`{variable}` is not a valid variable name"
+        );
+        if let Err(problem) =
+            expand_link_value(value, |name| known.contains(&name).then(String::new))
+        {
+            bail!(
+                "environment.{variable}: {problem} (known: {})",
+                known.join(", ")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The value of a link's `environment` entry, checked before by [`check_link_environment`].
+pub fn link_value(value: &str, values: &BTreeMap<&str, String>) -> Result<String> {
+    expand_link_value(value, |name| values.get(name).cloned())
+        .map_err(|problem| anyhow::anyhow!("`{value}`: {problem}"))
+}
+
+/// A link value's name, or a template: a value with braces, where `{name}`
+/// is a link value and `{{`/`}}` are literal braces.
+fn expand_link_value(
+    value: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> std::result::Result<String, String> {
+    let unknown = |name: &str| format!("unknown value `{name}`");
+    if !value.contains(['{', '}']) {
+        return lookup(value).ok_or_else(|| unknown(value));
+    }
+    let mut expanded = String::new();
+    let mut rest = value;
+    while let Some(i) = rest.find(['{', '}']) {
+        expanded.push_str(&rest[..i]);
+        let brace = &rest[i..i + 1];
+        rest = &rest[i + 1..];
+        if let Some(after) = rest.strip_prefix(brace) {
+            expanded.push_str(brace);
+            rest = after;
+            continue;
+        }
+        if brace == "}" {
+            return Err("`}` without `{` (write `}}` for a brace)".to_string());
+        }
+        let Some(end) = rest.find('}') else {
+            return Err("`{` without `}` (write `{{` for a brace)".to_string());
+        };
+        let name = &rest[..end];
+        expanded.push_str(&lookup(name).ok_or_else(|| unknown(name))?);
+        rest = &rest[end + 1..];
+    }
+    expanded.push_str(rest);
+    Ok(expanded)
+}
+
 /// A new random password: 32 hexadecimal characters (122 random bits).
 pub fn generate_password() -> String {
     uuid::Uuid::new_v4().simple().to_string()

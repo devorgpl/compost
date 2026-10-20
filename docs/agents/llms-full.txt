@@ -1642,6 +1642,20 @@ A user has one password. Leave `db_password` out and the links get the same gene
       db_password: …           # in the overlay
 ```
 
+### Combining values
+
+Every link's `environment` also takes templates, for apps that want the values in another shape. A value with braces is a template: `{name}` is a value of that link, and `{{` and `}}` are literal braces:
+
+```yaml
+      environment:
+        POSTGRES_URL: "{db_host}:{db_port}"                       # postgres18:5432
+        JDBC_URL: "jdbc:postgresql://{db_host}:{db_port}/{db_name}"
+        DSN: "{db_url}?sslmode=require&application_name=shop"
+        PGDATABASE: db_name                                       # a plain value, as before
+```
+
+A template names values of its own link only. An unknown name fails validation (exit 2) with the path of the entry. With [`compost dev env`](Local-Development.md#running-the-app-outside-docker), templates use the addresses on 127.0.0.1 like the plain values.
+
 ## Key-value links
 
 A key-value link gives services a Valkey or Redis server of their own to use, e.g. as a cache, for sessions or for job queues:
@@ -3725,6 +3739,8 @@ commands:                              # run by name with `app cmd`
 | `profiles` | `{}` | Per profile: settings that override the server's profile (`include`, `links`, `format`, `target`, `keep`, `schedule` or `schedule: off`, and `volumes`, `stop`, `before_backup`, `after_backup` in place of the keys above), or `false` to opt out. A profile the server doesn't have is the app's own. See [Profiles](Backup-and-Restore.md#profiles) |
 
 Each step is `{exec: <service>, command: …}`, run in the service's running container, or `{run: <service>, command: …}`, a one-off container (`command` optional) that must exit with 0. A string `command` runs with `sh -c`; a list is the command and its arguments. See [Backup and restore](Backup-and-Restore.md#steps-around-a-backup-or-restore).
+
+In the `environment` of every link below, a variable gets one of the link's values, e.g. `db_url`, or a template with values in braces, e.g. `"{db_host}:{db_port}"` ([Combining values](Applications.md#combining-values)).
 
 ### `services.ingress[]`
 

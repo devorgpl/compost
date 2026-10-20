@@ -10,8 +10,8 @@ use super::KIND;
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Contribution, Resolution, SharedAppConfig, connectors_dir, generate_password,
-    host_address, is_network_name, is_variable_name, resolve_versioned,
+    AppCtx, Contribution, Resolution, SharedAppConfig, check_link_environment, connectors_dir,
+    generate_password, host_address, is_network_name, link_value, resolve_versioned,
 };
 
 /// Values a link can map to app variables (spec §6.1).
@@ -207,17 +207,7 @@ pub fn validate_link(link: &DatabaseLink, app: &AppConfig) -> Result<()> {
             "target `{target}` is not in app_services"
         );
     }
-    for (variable, value) in &link.environment {
-        ensure!(
-            is_variable_name(variable),
-            "`{variable}` is not a valid variable name"
-        );
-        ensure!(
-            LINK_VALUES.contains(&value.as_str()),
-            "environment.{variable}: unknown value `{value}` (known: {})",
-            LINK_VALUES.join(", ")
-        );
-    }
+    check_link_environment(&link.environment, &LINK_VALUES)?;
     Ok(())
 }
 
@@ -483,7 +473,7 @@ pub fn prepare_application(
             out.join_network(service, network, None);
         }
         for (variable, value) in &link.environment {
-            out.set_env(service, variable, values[value.as_str()].clone())?;
+            out.set_env(service, variable, link_value(value, &values)?)?;
         }
     }
 
@@ -549,7 +539,9 @@ mod tests {
 
     #[test]
     fn validates_targets_and_environment() {
-        let ok = "{name: d, type: postgres, targets: [backend], environment: {PG_URL: db_url}}";
+        let ok = "{name: d, type: postgres, targets: [backend], environment: {PG_URL: db_url, \
+                  POSTGRES_URL: '{db_host}:{db_port}', JDBC: 'jdbc:postgresql://{db_host}:{db_port}/{db_name}', \
+                  JSON: '{{\"db\": \"{db_name}\"}}'}}";
         validate_link(&link(ok), &app()).unwrap();
         for (text, expected) in [
             ("{name: d, type: postgres}", "at least one"),
@@ -562,6 +554,18 @@ mod tests {
                 "unknown value",
             ),
             (
+                "{name: d, type: postgres, targets: [backend], environment: {X: '{db_host}:{db_prt}'}}",
+                "environment.X: unknown value `db_prt` (known: db_host,",
+            ),
+            (
+                "{name: d, type: postgres, targets: [backend], environment: {X: '{db_host'}}",
+                "environment.X: `{` without `}`",
+            ),
+            (
+                "{name: d, type: postgres, targets: [backend], environment: {X: 'a}b'}}",
+                "environment.X: `}` without `{`",
+            ),
+            (
                 "{name: d, type: postgres, targets: [backend], version: 'abc'}",
                 "not a valid requirement",
             ),
@@ -569,6 +573,24 @@ mod tests {
             let err = validate_link(&link(text), &app()).unwrap_err().to_string();
             assert!(err.contains(expected), "{text}: {err}");
         }
+    }
+
+    #[test]
+    fn templates_combine_link_values() {
+        let values = BTreeMap::from([
+            ("db_host", "db".to_string()),
+            ("db_port", "5432".to_string()),
+            ("db_name", "shop".to_string()),
+        ]);
+        let value = |template: &str| link_value(template, &values).unwrap();
+        assert_eq!(value("db_port"), "5432");
+        assert_eq!(value("{db_host}:{db_port}"), "db:5432");
+        assert_eq!(
+            value("jdbc:postgresql://{db_host}:{db_port}/{db_name}?sslmode=require"),
+            "jdbc:postgresql://db:5432/shop?sslmode=require"
+        );
+        assert_eq!(value("{{\"db\": \"{db_name}\"}}"), "{\"db\": \"shop\"}");
+        assert_eq!(value("{{db_name}}"), "{db_name}");
     }
 
     #[test]

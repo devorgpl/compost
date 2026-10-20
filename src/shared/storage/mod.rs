@@ -15,8 +15,8 @@ use serde_yaml_ng::Value;
 use super::{
     AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
     RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, SharedLinks, app_service,
-    connectors_dir, host_address, is_variable_name, parse_link, parse_url, project_name,
-    render_template, service_name, shared_dir,
+    check_link_environment, connectors_dir, host_address, link_value, parse_link, parse_url,
+    project_name, render_template, service_name, shared_dir,
 };
 use crate::backup::remote::RCLONE_IMAGE;
 use crate::config::app::AppConfig;
@@ -503,17 +503,7 @@ impl Kind for StorageKind {
                 "target `{target}` is not in app_services"
             );
         }
-        for (variable, value) in &link.environment {
-            ensure!(
-                is_variable_name(variable),
-                "`{variable}` is not a valid variable name"
-            );
-            ensure!(
-                LINK_VALUES.contains(&value.as_str()),
-                "environment.{variable}: unknown value `{value}` (known: {})",
-                LINK_VALUES.join(", ")
-            );
-        }
+        check_link_environment(&link.environment, &LINK_VALUES)?;
         if let Some(bucket) = &link.bucket {
             ensure!(
                 is_bucket_name(bucket),
@@ -849,7 +839,7 @@ fn set_variables(
             out.join_network(service, network, None);
         }
         for (variable, value) in &link.environment {
-            out.set_env(service, variable, values[value.as_str()].clone())?;
+            out.set_env(service, variable, link_value(value, &values)?)?;
         }
     }
     Ok(())

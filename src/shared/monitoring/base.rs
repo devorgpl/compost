@@ -11,8 +11,8 @@ use super::KIND;
 use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, connectors_dir,
-    is_variable_name, shared_dir,
+    AppCtx, Contribution, ItemWriter, Resolution, Role, SharedAppConfig, check_link_environment,
+    connectors_dir, link_value, shared_dir,
 };
 
 /// Values a link can map to app variables.
@@ -140,17 +140,7 @@ pub fn validate_link(link: &MonitoringLink, app: &AppConfig) -> Result<()> {
             metrics.path
         );
     }
-    for (variable, value) in &link.environment {
-        ensure!(
-            is_variable_name(variable),
-            "`{variable}` is not a valid variable name"
-        );
-        ensure!(
-            LINK_VALUES.contains(&value.as_str()),
-            "environment.{variable}: unknown value `{value}` (known: {})",
-            LINK_VALUES.join(", ")
-        );
-    }
+    check_link_environment(&link.environment, &LINK_VALUES)?;
     Ok(())
 }
 
@@ -248,7 +238,7 @@ pub fn prepare_application(
             ),
         ]);
         for (variable, value) in &link.environment {
-            out.set_env(service, variable, values[value.as_str()].clone())?;
+            out.set_env(service, variable, link_value(value, &values)?)?;
         }
         if link.logs {
             let label = ctx.service_label(target)?;

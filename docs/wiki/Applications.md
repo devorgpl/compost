@@ -290,6 +290,20 @@ A user has one password. Leave `db_password` out and the links get the same gene
       db_password: …           # in the overlay
 ```
 
+### Combining values
+
+Every link's `environment` also takes templates, for apps that want the values in another shape. A value with braces is a template: `{name}` is a value of that link, and `{{` and `}}` are literal braces:
+
+```yaml
+      environment:
+        POSTGRES_URL: "{db_host}:{db_port}"                       # postgres18:5432
+        JDBC_URL: "jdbc:postgresql://{db_host}:{db_port}/{db_name}"
+        DSN: "{db_url}?sslmode=require&application_name=shop"
+        PGDATABASE: db_name                                       # a plain value, as before
+```
+
+A template names values of its own link only. An unknown name fails validation (exit 2) with the path of the entry. With [`compost dev env`](Local-Development.md#running-the-app-outside-docker), templates use the addresses on 127.0.0.1 like the plain values.
+
 ## Key-value links
 
 A key-value link gives services a Valkey or Redis server of their own to use, e.g. as a cache, for sessions or for job queues:

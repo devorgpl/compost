@@ -1089,6 +1089,7 @@ services:
       environment:
         DATABASE_URL: db_url
         DATABASE_PASSWORD: db_password
+        POSTGRES_URL: '{db_host}:{db_port}'
   ingress:
     - name: ui-front
       routes:
@@ -1200,6 +1201,7 @@ fn app_deploy_end_to_end() {
         "PRICE: $$5",
         "DATABASE_PASSWORD: pa$$$$word",
         "DATABASE_URL: postgres://myapp_staging_system_data:pa%24%24word@postgres16:5432/myapp_staging_system_data",
+        "POSTGRES_URL: postgres16:5432",
     ] {
         assert!(
             override_yaml.contains(expected),
@@ -5511,7 +5513,7 @@ name: shop
 app_services: [{name: backend, service: backend}]
 services:
   database:
-    - {name: db, type: postgres, version: '>=16', targets: [backend], environment: {DATABASE_URL: db_url}}
+    - {name: db, type: postgres, version: '>=16', targets: [backend], environment: {DATABASE_URL: db_url, POSTGRES_URL: '{db_host}:{db_port}'}}
   storage:
     - {name: files, targets: [backend], environment: {S3_BUCKET: s3_bucket}}
 ";
@@ -5835,6 +5837,7 @@ fn dev_up_host_sets_up_links_for_an_app_outside_docker() {
         "{env}"
     );
     assert!(env.contains("@127.0.0.1:"), "{env}");
+    assert!(env.contains("POSTGRES_URL=127.0.0.1:"), "{env}");
     assert!(env.contains("S3_BUCKET=shop-local-files\n"), "{env}");
     server
         .run(
