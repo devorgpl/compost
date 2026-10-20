@@ -172,6 +172,9 @@ shared:
           crowdsec:
             whitelist: [203.0.113.0/24]   # never banned: your office, monitoring
             ban_duration: 4h
+            ignore:                       # requests of every site CrowdSec never counts
+              - {paths: [/healthz], methods: [GET]}
+            simulated_scenarios: []       # scenarios that only raise alerts, never ban
           appsec:
             crs: false
           defaults:                       # what a site gets unless its own `security` says otherwise
@@ -194,6 +197,11 @@ shared:
 | `security.crowdsec.ban_duration` | `4h` | How long a ban lasts, e.g. `30m`, `1h30m` |
 | `security.crowdsec.collections` | `[]` | Hub collections installed besides `crowdsecurity/caddy`, `crowdsecurity/base-http-scenarios`, `crowdsecurity/appsec-virtual-patching` and `crowdsecurity/appsec-generic-rules`, e.g. `crowdsecurity/wordpress` |
 | `security.crowdsec.scenarios` | `[]` | Hub scenarios installed besides those of the collections |
+| `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban (see [False positives](#false-positives)) |
+| `security.crowdsec.ignore[].paths` | every path | Request paths; `*` matches any characters, `/` included |
+| `security.crowdsec.ignore[].methods` | every method | e.g. `[GET]` |
+| `security.crowdsec.ignore[].statuses` | every status | Response statuses, e.g. `[404]` |
+| `security.crowdsec.simulated_scenarios` | `[]` | Scenarios in CrowdSec's simulation mode: their alerts show up in `alerts`, but they never ban |
 | `security.appsec.crs` | `false` | Also check the OWASP Core Rule Set (`crowdsecurity/appsec-crs`), out of band |
 | `security.defaults.bans` | `true` | Sites enforce bans |
 | `security.defaults.appsec` | `true` | Sites check requests with AppSec |
@@ -228,6 +236,36 @@ compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing   # ever
 These are [built into compost](Admin-Commands.md#built-in-commands). Other `cscli` commands run with `compost server exec caddy-main --service crowdsec -- cscli …`.
 
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
+
+#### False positives
+
+Some apps answer their own clients' normal requests with many 4xx responses, and CrowdSec takes that for an attack. The usual one is `crowdsecurity/http-probing`: many different paths answered 4xx within seconds, which is how scanners look for admin pages. Matrix clients such as Element do exactly that: they ask for the presence and profile fields of every member of the user's rooms, and the homeserver answers 404 for each one that has none. Every Element user is then banned within minutes. Registries (`HEAD` on missing blobs), S3 clients (missing keys) and SPAs probing optional endpoints can do the same. The other scenarios of `crowdsecurity/base-http-scenarios` look for scans of admin pages and backups, crawlers, path traversal, SQL injection and brute-force logins.
+
+`bans: false` on a site doesn't help: CrowdSec still reads that site's requests, and the address it bans is blocked on every other site. To find out, look at the requests behind the ban:
+
+```sh
+compost server cmd caddy-main.check 198.51.100.7          # the ban, with its alert id
+compost server cmd caddy-main.alert 12                   # each request: site, method, path, status
+```
+
+Then tell CrowdSec which requests not to count, with `ignore` rules. A rule matches requests that match all of its keys (`paths`, `methods`, `statuses`). In an app's ingress entry or a site's `security`, it only applies to that entry's domains:
+
+```yaml
+# compost.yaml of the Matrix homeserver
+services:
+  ingress:
+    - name: matrix
+      routes: [ … ]
+      security:
+        ignore:
+          - paths: [/_matrix/client/*/presence/*, /_matrix/client/*/profile/*]
+            methods: [GET]
+            statuses: [404]
+```
+
+Other requests to the same site are still checked, and so are the same paths with another method or status. A rule of `security.crowdsec.ignore` in compost-server.yaml applies to every site and needs at least one key. An entry's `ignore: [{}]` leaves all of its requests out. Bans, AppSec and rate limits stay as they are; compost marks the requests in Caddy's access log and a CrowdSec whitelist (`compost/ignore`) drops them before any scenario counts them. Then lift the bans the false positive made: `compost server cmd caddy-main.unban-scenario crowdsecurity/http-probing`.
+
+`simulated_scenarios` is the blunter tool: those scenarios still raise alerts, which `caddy-main.alerts` shows, but never ban anyone. It also lets you watch a scenario for a while before letting it ban. Taking a scenario off the list makes it ban again on the next `server deploy`.
 
 ### postgres (`database`)
 

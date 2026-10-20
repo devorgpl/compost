@@ -87,6 +87,8 @@ compost dev stop              # pause; `dev up` resumes
 
 **Admin commands** ([Admin commands](references/Admin-Commands.md)): `compost server exec <shared app> [--service crowdsec|admin|…] -- <command>` runs a command in a shared app's container; don't use `ssh` plus `docker exec`. compost has built-in commands per shared-app type, named `<shared app>.<command>`: check `compost server cmd` (the list) before writing your own, e.g. `server cmd caddy-main.bans`, `caddy-main.unban <ip>`, `postgres18.psql [database]` (input can be piped in), `postgres18.activity`, `mariadb11.sql`. Tasks done repeatedly go under `commands` in compost-server.yaml (`shared_app`, `command` as a list, typed `args`, secrets only via `env: {X: "{secret:root_password}"}`) or compost.yaml (`exec:`/`run:` a service), and run with `compost server cmd <name> [args]` or `compost app cmd <instance> <name> [args]`; without a name they list the commands, and `--history` shows the ones run (`logs/commands.log` on the server).
 
+**Bans of normal users** (`caddysecurebuild`; [False positives](references/Servers-and-Shared-Apps.md#false-positives)): find the ban with `server cmd caddy-main.check <ip>` and its requests with `caddy-main.alert <id>`. If they are an app's normal traffic (e.g. Matrix clients' 404s on presence and profile), add `security.ignore` rules (`paths`, `methods`, `statuses`) to that app's ingress entry, or `security.crowdsec.ignore` in compost-server.yaml, rather than `bans: false` (which doesn't stop the ban) or plain `caddy`. Then lift the bans with `caddy-main.unban-scenario <scenario>`, after asking.
+
 **Existing servers:** follow [Migrating to compost](references/Migration.md) phase by phase; every phase ends with everything working.
 
 ## Exit codes

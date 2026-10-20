@@ -8,7 +8,8 @@ use minijinja::context;
 use serde::Deserialize;
 
 use crate::shared::ingress::security::{
-    LinkSecurity, RateLimit, is_address_or_network, is_duration, validate_rate_limits,
+    IgnoreRule, LinkSecurity, RateLimit, ignore_lines, is_address_or_network, is_duration,
+    validate_ignore, validate_rate_limits,
 };
 use crate::shared::render_template;
 
@@ -56,6 +57,11 @@ pub struct Crowdsec {
     pub collections: Vec<String>,
     /// Hub scenarios installed besides those of the collections.
     pub scenarios: Vec<String>,
+    /// Scenarios in CrowdSec's simulation mode: they raise alerts and never
+    /// ban, e.g. one that bans an app's normal clients.
+    pub simulated_scenarios: Vec<String>,
+    /// Requests of every site CrowdSec doesn't count.
+    pub ignore: Vec<IgnoreRule>,
 }
 
 impl Default for Crowdsec {
@@ -65,6 +71,8 @@ impl Default for Crowdsec {
             ban_duration: "4h".to_string(),
             collections: Vec::new(),
             scenarios: Vec::new(),
+            simulated_scenarios: Vec::new(),
+            ignore: Vec::new(),
         }
     }
 }
@@ -113,6 +121,7 @@ impl ServerSecurity {
         for (what, items) in [
             ("collections", &self.crowdsec.collections),
             ("scenarios", &self.crowdsec.scenarios),
+            ("simulated_scenarios", &self.crowdsec.simulated_scenarios),
         ] {
             for item in items {
                 ensure!(
@@ -121,6 +130,7 @@ impl ServerSecurity {
                 );
             }
         }
+        validate_ignore("security.crowdsec.ignore", &self.crowdsec.ignore, false)?;
         validate_rate_limits("security.rate_limits", &self.rate_limits)?;
         if let Some(names) = &self.defaults.rate_limits {
             let mut seen = HashSet::new();
@@ -172,6 +182,12 @@ impl ServerSecurity {
             }
         }
         all
+    }
+
+    /// Directives of every site's `compost_log`: marks the requests of
+    /// `crowdsec.ignore` in the access log.
+    pub fn log_lines(&self) -> Vec<String> {
+        ignore_lines("s", &self.crowdsec.ignore)
     }
 
     /// Global options of the Caddyfile: handler order and the bouncer. While
@@ -235,6 +251,17 @@ impl ServerSecurity {
                 )?,
             ),
             (
+                "ignore.yaml",
+                include_str!("templates/crowdsec/ignore.yaml").to_string(),
+            ),
+            (
+                "simulation.yaml",
+                render_template(
+                    include_str!("templates/crowdsec/simulation.yaml.j2"),
+                    context! { scenarios => self.crowdsec.simulated_scenarios.clone() },
+                )?,
+            ),
+            (
                 "profiles.yaml",
                 render_template(
                     include_str!("templates/crowdsec/profiles.yaml.j2"),
@@ -288,6 +315,7 @@ pub fn site_lines(security: Option<&LinkSecurity>, site: &str) -> Vec<String> {
         return vec![format!("import compost_site {site}")];
     };
     let mut lines = vec!["import compost_log".to_string()];
+    lines.extend(ignore_lines("", &security.ignore));
     let mut choose = |choice: Option<bool>, snippet: &str| match choice {
         None => lines.push(format!("import compost_default_{snippet}")),
         Some(true) => lines.push(format!("import compost_{snippet}")),
@@ -467,14 +495,21 @@ mod tests {
         let names: Vec<_> = files.iter().map(|(name, _)| *name).collect();
         assert_eq!(
             names,
-            ["acquis-caddy.yaml", "acquis-appsec.yaml", "profiles.yaml"]
+            [
+                "acquis-caddy.yaml",
+                "acquis-appsec.yaml",
+                "ignore.yaml",
+                "simulation.yaml",
+                "profiles.yaml"
+            ]
         );
         assert!(files[1].1.contains("  - crowdsecurity/appsec-default\n"));
         assert!(!files[1].1.contains("crs"));
-        assert!(files[2].1.contains("duration: 4h"));
+        assert!(files[3].1.ends_with("simulation: false\nexclusions: []\n"));
+        assert!(files[4].1.contains("duration: 4h"));
 
         let files = security(
-            "{appsec: {crs: true}, crowdsec: {ban_duration: 30m, whitelist: [203.0.113.7, 198.51.100.0/24]}}",
+            "{appsec: {crs: true}, crowdsec: {ban_duration: 30m, whitelist: [203.0.113.7, 198.51.100.0/24], simulated_scenarios: [crowdsecurity/http-probing]}}",
         )
         .crowdsec_files()
         .unwrap();
@@ -483,13 +518,72 @@ mod tests {
             "{}",
             files[1].1
         );
-        assert!(files[2].1.contains("duration: 30m"));
-        let (name, whitelist) = &files[3];
+        assert!(
+            files[3]
+                .1
+                .ends_with("exclusions:\n  - crowdsecurity/http-probing\n"),
+            "{}",
+            files[3].1
+        );
+        assert!(files[4].1.contains("duration: 30m"));
+        let (name, whitelist) = &files[5];
         assert_eq!(*name, "whitelist.yaml");
         assert!(
             whitelist.contains("  ip:\n    - 203.0.113.7\n  cidr:\n    - 198.51.100.0/24\n"),
             "{whitelist}"
         );
+    }
+
+    #[test]
+    fn ignore_rules_mark_requests_in_the_access_log() {
+        let server = security(
+            "{crowdsec: {ignore: [{statuses: [404]}, {paths: [/healthz], methods: [GET, HEAD]}]}}",
+        );
+        server.validate().unwrap();
+        assert_eq!(
+            server.log_lines().join("\n"),
+            "log_append compost_ignore_s0 \"404\"\n@compost_ignore_s1 {\n\tpath_regexp ^(?:/healthz)$\n\tmethod GET HEAD\n}\nlog_append @compost_ignore_s1 compost_ignore_s1 \"any\""
+        );
+
+        let link: LinkSecurity = serde_yaml_ng::from_str(
+            "{ignore: [{paths: [/_matrix/client/*/presence/*, /v1.0/*], statuses: [404, 410]}]}",
+        )
+        .unwrap();
+        link.validate().unwrap();
+        let lines = site_lines(Some(&link), "s").join("\n");
+        assert!(
+            lines.starts_with(
+                "import compost_log\n@compost_ignore_0 {\n\tpath_regexp ^(?:/_matrix/client/.*/presence/.*|/v1\\.0/.*)$\n}\nlog_append @compost_ignore_0 compost_ignore_0 \"404 410\"\nimport compost_default_bans"
+            ),
+            "{lines}"
+        );
+
+        // A site may leave all its requests out; the server can't.
+        let everything: LinkSecurity = serde_yaml_ng::from_str("{ignore: [{}]}").unwrap();
+        everything.validate().unwrap();
+        assert!(
+            site_lines(Some(&everything), "s")
+                .contains(&"log_append compost_ignore_0 \"any\"".to_string())
+        );
+        for (text, expected) in [
+            ("{crowdsec: {ignore: [{}]}}", "every request of every site"),
+            (
+                "{crowdsec: {ignore: [{statuses: [99]}]}}",
+                "not an HTTP status",
+            ),
+            (
+                "{crowdsec: {ignore: [{paths: [a]}]}}",
+                "must start with `/`",
+            ),
+            ("{crowdsec: {ignore: [{methods: [get]}]}}", "unknown method"),
+            (
+                "{crowdsec: {simulated_scenarios: [http-probing]}}",
+                "not a hub name",
+            ),
+        ] {
+            let err = security(text).validate().unwrap_err().to_string();
+            assert!(err.contains(expected), "{text}: {err}");
+        }
     }
 
     #[test]

@@ -209,9 +209,11 @@ services:
             paths: [/api/*]
             events: 100
             window: 10s
+        ignore:                  # requests CrowdSec never counts towards a ban
+          - {paths: [/api/v1/items/*], methods: [GET], statuses: [404]}
 ```
 
-`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429.
+`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429. `ignore` is for apps whose own clients get many 4xx answers, which CrowdSec would take for a scan and ban, e.g. Matrix clients; see [False positives](Servers-and-Shared-Apps.md#false-positives).
 
 ## Database links
 

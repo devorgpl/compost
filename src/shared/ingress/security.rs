@@ -26,6 +26,95 @@ pub struct LinkSecurity {
     /// Zones of this entry only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub own_rate_limits: Vec<RateLimit>,
+    /// Requests of this entry CrowdSec doesn't count.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<IgnoreRule>,
+}
+
+/// Requests CrowdSec doesn't count towards a ban: those matching all the
+/// rule's keys. A key left out matches every request.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IgnoreRule {
+    /// Request paths; `*` matches any characters, `/` included.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<String>,
+    /// Response statuses, e.g. 404.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub statuses: Vec<u16>,
+}
+
+/// Prefix of the access-log fields that mark a request for the CrowdSec
+/// whitelist `compost/ignore`; the value is the statuses, or `any`.
+const IGNORE_FIELD: &str = "compost_ignore_";
+
+impl IgnoreRule {
+    fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.methods.is_empty() && self.statuses.is_empty()
+    }
+}
+
+/// Rules with valid paths, methods and statuses. `everything`: a rule
+/// without keys is allowed (it leaves out all of a site's requests).
+pub fn validate_ignore(what: &str, rules: &[IgnoreRule], everything: bool) -> Result<()> {
+    for (i, rule) in rules.iter().enumerate() {
+        let at = format!("{what}[{i}]");
+        ensure!(
+            everything || !rule.is_empty(),
+            "{at}: give paths, methods or statuses; a rule without them would leave out every request of every site"
+        );
+        validate_paths(&at, &rule.paths)?;
+        validate_methods(&at, &rule.methods)?;
+        for status in &rule.statuses {
+            ensure!(
+                (100..=599).contains(status),
+                "{at}: status {status} is not an HTTP status (100 to 599)"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Caddy directives that mark the requests the rules match in the access
+/// log, as `compost_ignore_<key><n>` fields. `key` keeps the fields of the
+/// server's rules apart from a site's.
+pub fn ignore_lines(key: &str, rules: &[IgnoreRule]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (i, rule) in rules.iter().enumerate() {
+        let field = format!("{IGNORE_FIELD}{key}{i}");
+        let value = if rule.statuses.is_empty() {
+            "any".to_string()
+        } else {
+            let statuses: Vec<String> = rule.statuses.iter().map(u16::to_string).collect();
+            statuses.join(" ")
+        };
+        if rule.paths.is_empty() && rule.methods.is_empty() {
+            lines.push(format!("log_append {field} \"{value}\""));
+            continue;
+        }
+        lines.push(format!("@{field} {{"));
+        if !rule.paths.is_empty() {
+            let paths: Vec<String> = rule.paths.iter().map(|p| path_regex(p)).collect();
+            lines.push(format!("\tpath_regexp ^(?:{})$", paths.join("|")));
+        }
+        if !rule.methods.is_empty() {
+            lines.push(format!("\tmethod {}", rule.methods.join(" ")));
+        }
+        lines.push("}".to_string());
+        lines.push(format!("log_append @{field} {field} \"{value}\""));
+    }
+    lines
+}
+
+/// A path of a rule as a regular expression: `*` matches any characters.
+/// Caddy's `path` matcher would not let a `*` in the middle match a `/`.
+fn path_regex(path: &str) -> String {
+    path.split('*')
+        .map(|part| part.replace('.', "\\."))
+        .collect::<Vec<_>>()
+        .join(".*")
 }
 
 /// A rate-limit zone: at most `events` matching requests per client address
@@ -61,7 +150,8 @@ impl LinkSecurity {
                 );
             }
         }
-        validate_rate_limits("security.own_rate_limits", &self.own_rate_limits)
+        validate_rate_limits("security.own_rate_limits", &self.own_rate_limits)?;
+        validate_ignore("security.ignore", &self.ignore, true)
     }
 
     /// Zones of the ingress this uses by name.
@@ -81,28 +171,38 @@ pub fn validate_rate_limits(what: &str, zones: &[RateLimit]) -> Result<()> {
             zone.name
         );
         let at = format!("{what}[{}]", zone.name);
-        for path in &zone.paths {
-            let valid = path.starts_with('/')
-                && path
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "/-_.~*".contains(c));
-            ensure!(
-                valid,
-                "{at}: path `{path}` must start with `/` and use only letters, digits and `/-_.~*`"
-            );
-        }
-        for method in &zone.methods {
-            ensure!(
-                METHODS.contains(&method.as_str()),
-                "{at}: unknown method `{method}` (known: {})",
-                METHODS.join(", ")
-            );
-        }
+        validate_paths(&at, &zone.paths)?;
+        validate_methods(&at, &zone.methods)?;
         ensure!(zone.events > 0, "{at}: events must be at least 1");
         ensure!(
             is_duration(&zone.window),
             "{at}: window `{}` is not a duration like 30s, 1m or 1h",
             zone.window
+        );
+    }
+    Ok(())
+}
+
+fn validate_paths(at: &str, paths: &[String]) -> Result<()> {
+    for path in paths {
+        let valid = path.starts_with('/')
+            && path
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/-_.~*".contains(c));
+        ensure!(
+            valid,
+            "{at}: path `{path}` must start with `/` and use only letters, digits and `/-_.~*`"
+        );
+    }
+    Ok(())
+}
+
+fn validate_methods(at: &str, methods: &[String]) -> Result<()> {
+    for method in methods {
+        ensure!(
+            METHODS.contains(&method.as_str()),
+            "{at}: unknown method `{method}` (known: {})",
+            METHODS.join(", ")
         );
     }
     Ok(())

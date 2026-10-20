@@ -50,6 +50,8 @@ services:
       - ./conf/crowdsec/acquis-caddy.yaml:/etc/crowdsec/acquis.d/compost-caddy.yaml:ro
       - ./conf/crowdsec/acquis-appsec.yaml:/etc/crowdsec/acquis.d/compost-appsec.yaml:ro
       - ./conf/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
+      - ./conf/crowdsec/simulation.yaml:/etc/crowdsec/simulation.yaml:ro
+      - ./conf/crowdsec/ignore.yaml:/etc/crowdsec/parsers/s02-enrich/compost-ignore.yaml:ro
 {%- if crowdsec.whitelist %}
       - ./conf/crowdsec/whitelist.yaml:/etc/crowdsec/parsers/s02-enrich/compost-whitelist.yaml:ro
 {%- endif %}

@@ -20,6 +20,9 @@
 		}
 		format json
 	}
+{%- for line in log_lines %}
+	{{ line }}
+{%- endfor %}
 }
 
 # Imported by every site without `security` of its own.

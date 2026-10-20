@@ -67,7 +67,7 @@ infra/
 │   │   ├── data/                     certificates
 │   │   ├── config/
 │   │   ├── build/Dockerfile          caddysecurebuild: the image built on the server
-│   │   ├── conf/crowdsec/            caddysecurebuild: the CrowdSec agent's log sources, ban profile, whitelist
+│   │   ├── conf/crowdsec/            caddysecurebuild: the CrowdSec agent's log sources, ban profile, whitelists, simulated scenarios
 │   │   ├── logs/access.log           caddysecurebuild: access log of every site, read by CrowdSec
 │   │   └── secrets/crowdsec.env      caddysecurebuild: key of the bouncer in Caddy
 │   ├── database/postgres18/

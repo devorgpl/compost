@@ -390,12 +390,14 @@ impl IngressType for Caddy {
         networks.extend(caddy.networks.iter().cloned());
         let mut service_networks = networks.clone();
         let mut snippets = None;
+        let mut log_lines = Vec::new();
         let mut crowdsec = None;
         if let Some(security) = &security {
             check_link_security_in_use(ctx, config, security)?;
             let host = crowdsec_service(&config.name);
             options.extend(security.options(&host));
             snippets = Some(security.snippets()?.trim_end().to_string());
+            log_lines = security.log_lines();
             files.push(RenderedFile::secret(
                 format!("{dir}/{CROWDSEC_SECRETS}"),
                 crowdsec_secrets(&crowdsec_key(ctx, &config.name)?),
@@ -443,6 +445,7 @@ impl IngressType for Caddy {
             context! {
                 options,
                 security => snippets,
+                log_lines,
                 custom_sites => !caddy.sites.is_empty(),
                 access_log => caddy.access_log,
                 metrics_port => metrics.then_some(METRICS_PORT),
@@ -1094,6 +1097,8 @@ mod tests {
             [
                 "acquis-caddy.yaml",
                 "acquis-appsec.yaml",
+                "ignore.yaml",
+                "simulation.yaml",
                 "profiles.yaml",
                 "whitelist.yaml"
             ]
