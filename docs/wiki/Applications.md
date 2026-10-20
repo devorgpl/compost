@@ -417,8 +417,30 @@ Without `post_logout_redirect_uris`, logout may redirect to any of the `redirect
         verify_email: false
         brute_force_protection: true
         ssl_required: external          # none, external or all
+        sso_session_idle_timeout: 3h    # durations: 30m, 3h, 1d
+        sso_session_max_lifespan: 10h
+        access_token_lifespan: 5m
       roles: [platform_admin, tenant_admin, user]
 ```
+
+**Custom claims.** `client_scopes` creates client scopes in the realm whose mappers put user attributes into tokens, and adds them to the client's default scopes (to the list in `default_scopes` when it is set, else next to the scopes the client has):
+
+```yaml
+      client_scopes:
+        - name: myapp
+          include_in_token_scope: true  # default true: `myapp` appears in the token's `scope`
+          mappers:
+            - name: company
+              type: user_attribute      # the only type so far
+              attribute: company        # the user attribute
+              claim: "custom:company"   # dots nest the claim: org.company
+              multivalued: false        # true: all values, as a list
+              id_token: true            # these three default to true
+              access_token: true
+              userinfo: true
+```
+
+A scope's settings and mappers are set on every deploy: mappers it doesn't list are deleted. Names of the scopes Keycloak creates itself (`profile`, `email`, `roles`, …) are refused. Like roles, scopes stay when a link is removed, until the realm is deleted. Links that share a realm should agree on them.
 
 **Users for bootstrap accounts.** A user's `roles` (from the link's `roles`) are added on every deploy, never removed. With `temporary: true`, the password is set only when compost creates the user, and must be changed at the first login, so later deploys keep the one the user chose. `id` gives the user a fixed ID when compost creates it, for an app that recognizes its first admin by ID:
 
@@ -431,7 +453,10 @@ Without `post_logout_redirect_uris`, logout may redirect to any of the `redirect
           roles: [platform_admin, user]
           password: …                   # secret
           temporary: true
+          attributes: {company: ACME, userid: 485, groups: [a, b]}   # set on every deploy
 ```
+
+`attributes` are set on every deploy; other attributes of the user stay. Keycloak keeps attributes outside its user profile only when the realm allows them, so a link with attributes sets the realm's *unmanaged attributes* policy to *only administrators can view and edit* (`ADMIN_EDIT`), unless it is already that or *enabled*. Users then can't change them on their account page, so a claim taken from them can be trusted. With *enabled*, which compost leaves as it is, users can edit them.
 
 User IDs are unique in the whole Keycloak, not per realm: two instances on one Keycloak (e.g. staging and production) can't create users with the same `id`, and the second deploy fails. If the user already exists with another ID, the deploy keeps it and warns.
 

@@ -82,6 +82,10 @@ pub struct OidcLink {
     /// Realm roles, created when missing.
     #[serde(default)]
     pub roles: Vec<String>,
+    /// Client scopes of the realm, created or updated on every deploy and
+    /// added to the client's default scopes.
+    #[serde(default)]
+    pub client_scopes: Vec<ClientScope>,
     /// Default: generated on the first deploy, then reused.
     #[serde(default)]
     pub client_secret: Option<String>,
@@ -121,7 +125,100 @@ pub struct OidcUser {
     /// The password is set when the user is created, and must be changed at the first login.
     #[serde(default)]
     pub temporary: bool,
+    /// Attributes set on every deploy, e.g. `company: ACME`; a list for several values.
+    #[serde(default, deserialize_with = "attribute_values")]
+    pub attributes: BTreeMap<String, Vec<String>>,
 }
+
+/// Attribute values: a scalar, or a list of them, as strings.
+fn attribute_values<'de, D>(deserializer: D) -> Result<BTreeMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let scalar = |value: serde_yaml_ng::Value| match value {
+        serde_yaml_ng::Value::String(s) => Ok(s),
+        serde_yaml_ng::Value::Number(n) => Ok(n.to_string()),
+        serde_yaml_ng::Value::Bool(b) => Ok(b.to_string()),
+        _ => Err(D::Error::custom(
+            "attribute values are strings, numbers, booleans or lists of them",
+        )),
+    };
+    let map = BTreeMap::<String, serde_yaml_ng::Value>::deserialize(deserializer)?;
+    map.into_iter()
+        .map(|(name, value)| {
+            let values = match value {
+                serde_yaml_ng::Value::Sequence(items) => {
+                    items.into_iter().map(scalar).collect::<Result<_, _>>()?
+                }
+                value => vec![scalar(value)?],
+            };
+            Ok((name, values))
+        })
+        .collect()
+}
+
+/// A client scope of the realm with its protocol mappers.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientScope {
+    pub name: String,
+    /// The scope's name is listed in the `scope` claim of tokens.
+    #[serde(default = "yes")]
+    pub include_in_token_scope: bool,
+    #[serde(default)]
+    pub mappers: Vec<Mapper>,
+}
+
+/// A protocol mapper: puts a value of the user into the tokens.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mapper {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: MapperKind,
+    /// The user attribute, for `user_attribute`.
+    pub attribute: String,
+    /// The claim; dots nest it, e.g. `custom.company`.
+    pub claim: String,
+    /// All values of the attribute, as a list.
+    #[serde(default)]
+    pub multivalued: bool,
+    #[serde(default = "yes")]
+    pub id_token: bool,
+    #[serde(default = "yes")]
+    pub access_token: bool,
+    #[serde(default = "yes")]
+    pub userinfo: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MapperKind {
+    UserAttribute,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Client scopes Keycloak creates in every realm: compost would replace their mappers.
+const BUILT_IN_SCOPES: [&str; 14] = [
+    "acr",
+    "address",
+    "basic",
+    "email",
+    "microprofile-jwt",
+    "offline_access",
+    "organization",
+    "phone",
+    "profile",
+    "role_list",
+    "roles",
+    "saml_organization",
+    "service_account",
+    "web-origins",
+];
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub enum Pkce {
@@ -139,6 +236,45 @@ pub struct RealmSettings {
     pub verify_email: Option<bool>,
     pub brute_force_protection: Option<bool>,
     pub ssl_required: Option<SslRequired>,
+    /// Durations, e.g. `30m` or `3h`.
+    pub sso_session_idle_timeout: Option<String>,
+    pub sso_session_max_lifespan: Option<String>,
+    pub access_token_lifespan: Option<String>,
+}
+
+impl RealmSettings {
+    /// The durations that are set, as Keycloak's keys and seconds.
+    pub fn durations(&self) -> Result<Vec<(&'static str, u64)>> {
+        let mut durations = Vec::new();
+        for (key, name, value) in [
+            (
+                "ssoSessionIdleTimeout",
+                "sso_session_idle_timeout",
+                &self.sso_session_idle_timeout,
+            ),
+            (
+                "ssoSessionMaxLifespan",
+                "sso_session_max_lifespan",
+                &self.sso_session_max_lifespan,
+            ),
+            (
+                "accessTokenLifespan",
+                "access_token_lifespan",
+                &self.access_token_lifespan,
+            ),
+        ] {
+            let Some(value) = value else { continue };
+            let seconds = humantime::parse_duration(value)
+                .ok()
+                .map(|d| d.as_secs())
+                .filter(|&s| s > 0);
+            let Some(seconds) = seconds else {
+                bail!("realm_settings.{name}: `{value}` is not a duration like 30m or 3h");
+            };
+            durations.push((key, seconds));
+        }
+        Ok(durations)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -237,6 +373,38 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
             "`{uri}` is not a valid URI"
         );
     }
+    link.realm_settings.durations()?;
+    let mut scopes = HashSet::new();
+    for scope in &link.client_scopes {
+        ensure!(
+            is_role_name(&scope.name),
+            "client_scopes: `{}` must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{0,254}}$",
+            scope.name
+        );
+        ensure!(
+            !BUILT_IN_SCOPES.contains(&scope.name.as_str()),
+            "client_scopes: `{}` is a scope Keycloak creates itself; pick another name",
+            scope.name
+        );
+        ensure!(
+            scopes.insert(&scope.name),
+            "client_scopes: `{}` is listed twice",
+            scope.name
+        );
+        let mut mappers = HashSet::new();
+        for mapper in &scope.mappers {
+            let path = format!("client_scopes[{}]: mapper `{}`", scope.name, mapper.name);
+            ensure!(
+                is_role_name(&mapper.name),
+                "{path} must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{0,254}}$"
+            );
+            ensure!(mappers.insert(&mapper.name), "{path} is listed twice");
+            ensure!(
+                !mapper.attribute.is_empty() && !mapper.claim.is_empty(),
+                "{path}: `attribute` and `claim` must not be empty"
+            );
+        }
+    }
     for (key, names) in [
         ("roles", &link.roles),
         (
@@ -297,6 +465,13 @@ pub fn validate_link(link: &OidcLink, app: &AppConfig) -> Result<()> {
             ensure!(
                 link.roles.contains(role),
                 "users: role `{role}` of `{}` is not in `roles`",
+                user.username
+            );
+        }
+        for name in user.attributes.keys() {
+            ensure!(
+                is_role_name(name),
+                "users: attribute `{name}` of `{}` must match ^[A-Za-z0-9][A-Za-z0-9._:-]{{0,254}}$",
                 user.username
             );
         }
@@ -640,6 +815,38 @@ mod tests {
             (", roles: [x, x]", "roles: `x` is listed twice"),
             (", default_scopes: [\"it's\"]", "default_scopes: `it's`"),
             (", users: [{username: a, temporary: true}]", "no password"),
+            (
+                ", realm_settings: {access_token_lifespan: 2 hours later}",
+                "realm_settings.access_token_lifespan: `2 hours later` is not a duration",
+            ),
+            (
+                ", realm_settings: {sso_session_idle_timeout: 0s}",
+                "is not a duration",
+            ),
+            (
+                ", client_scopes: [{name: profile}]",
+                "a scope Keycloak creates itself",
+            ),
+            (
+                ", client_scopes: [{name: a}, {name: a}]",
+                "`a` is listed twice",
+            ),
+            (
+                ", client_scopes: [{name: 'a b'}]",
+                "client_scopes: `a b` must match",
+            ),
+            (
+                ", client_scopes: [{name: a, mappers: [{name: m, type: user_attribute, attribute: x, claim: ''}]}]",
+                "client_scopes[a]: mapper `m`: `attribute` and `claim` must not be empty",
+            ),
+            (
+                ", client_scopes: [{name: a, mappers: [{name: m, type: user_attribute, attribute: x, claim: y}, {name: m, type: user_attribute, attribute: x, claim: z}]}]",
+                "mapper `m` is listed twice",
+            ),
+            (
+                ", users: [{username: a, attributes: {'a b': x}}]",
+                "users: attribute `a b` of `a` must match",
+            ),
             (", users: [{username: a, id: \"1'1\"}]", "must be a UUID"),
             (
                 ", users: [{username: a, roles: [admin]}]",
@@ -678,6 +885,14 @@ mod tests {
             (
                 "realm_settings: {registraton: true}",
                 "unknown field `registraton`",
+            ),
+            (
+                "client_scopes: [{name: a, mappers: [{name: m, type: hardcoded, attribute: x, claim: y}]}]",
+                "unknown variant `hardcoded`",
+            ),
+            (
+                "users: [{username: a, attributes: {x: {y: z}}}]",
+                "attribute values are strings, numbers, booleans or lists of them",
             ),
         ] {
             let err = serde_yaml_ng::from_str::<OidcLink>(&format!("{{{BASE}, {extra}}}"))

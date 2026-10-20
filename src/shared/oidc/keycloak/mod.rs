@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_yaml_ng::Value;
 
-use super::base::{self, Endpoint, OidcLink, OidcRecord, Pkce, PublicUrl};
+use super::base::{self, Endpoint, MapperKind, OidcLink, OidcRecord, Pkce, PublicUrl};
 use super::{KIND, OidcType};
 use crate::connector::shell_quote;
 use crate::shared::{
@@ -375,6 +375,68 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
     if let Some(ssl) = settings.ssl_required {
         realm.insert("sslRequired".into(), json!(ssl));
     }
+    for (key, seconds) in settings.durations()? {
+        realm.insert(key.into(), json!(seconds));
+    }
+    let client_scopes: Vec<_> = link
+        .client_scopes
+        .iter()
+        .map(|scope| {
+            let mappers: Vec<_> = scope
+                .mappers
+                .iter()
+                .map(|mapper| {
+                    let protocol_mapper = match mapper.kind {
+                        MapperKind::UserAttribute => "oidc-usermodel-attribute-mapper",
+                    };
+                    let json = json!({
+                        "name": mapper.name,
+                        "protocol": "openid-connect",
+                        "protocolMapper": protocol_mapper,
+                        "config": {
+                            "user.attribute": mapper.attribute,
+                            "claim.name": mapper.claim,
+                            "jsonType.label": "String",
+                            "multivalued": mapper.multivalued.to_string(),
+                            "id.token.claim": mapper.id_token.to_string(),
+                            "access.token.claim": mapper.access_token.to_string(),
+                            "userinfo.token.claim": mapper.userinfo.to_string(),
+                            "introspection.token.claim": "true",
+                        },
+                    });
+                    context! { name => mapper.name.as_str(), json => json.to_string() }
+                })
+                .collect();
+            let json = json!({
+                "name": scope.name,
+                "protocol": "openid-connect",
+                "attributes": {
+                    "include.in.token.scope": scope.include_in_token_scope.to_string(),
+                },
+            });
+            context! {
+                name => scope.name.as_str(),
+                json => json.to_string(),
+                mapper_names => scope.mappers.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
+                mappers,
+            }
+        })
+        .collect();
+    // The link's client scopes are default scopes of the client: added to
+    // `default_scopes`, or to the scopes the client has.
+    let scope_names = link.client_scopes.iter().map(|s| s.name.clone());
+    let default_scopes = match &link.default_scopes {
+        Some(scopes) => {
+            let mut scopes = scopes.clone();
+            scopes.extend(
+                scope_names
+                    .filter(|name| !scopes.contains(name))
+                    .collect::<Vec<_>>(),
+            );
+            Some(scopes)
+        }
+        None => (!link.client_scopes.is_empty()).then(|| scope_names.collect()),
+    };
     let users: Vec<_> = link
         .users
         .iter()
@@ -407,12 +469,15 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
                 imported["realmRoles"] = json!([format!("default-roles-{}", record.realm)]);
                 json!({"ifResourceExists": "FAIL", "users": [imported]}).to_string()
             });
+            let attributes_json = (!user.attributes.is_empty())
+                .then(|| json!({ "attributes": user.attributes }).to_string());
             context! {
                 username => user.username.as_str(),
                 id => user.id.as_deref(),
                 json => json.to_string(),
                 import_json,
                 password_json,
+                attributes_json,
                 temporary => user.temporary,
                 roles => &user.roles,
             }
@@ -427,7 +492,10 @@ fn provisioning_script(link: &OidcLink, record: &OidcRecord) -> Result<String> {
             client_json => client.to_string(),
             realm_json => (!realm.is_empty()).then(|| serde_json::Value::Object(realm).to_string()),
             roles => &link.roles,
-            default_scopes => link.default_scopes.as_ref(),
+            client_scopes,
+            default_scopes,
+            remove_other_scopes => link.default_scopes.is_some(),
+            user_attributes => link.users.iter().any(|u| !u.attributes.is_empty()),
             // Empty clears it: the realm then uses the provider's URL.
             frontend_url => record.public_url.as_deref().unwrap_or(""),
             users,
@@ -778,6 +846,57 @@ mod tests {
         ] {
             assert!(!script.contains(absent), "{absent:?} in\n{script}");
         }
+    }
+
+    #[test]
+    fn provisioning_script_sets_client_scopes_attributes_and_token_lifetimes() {
+        let esr = link(
+            "{name: login, type: keycloak, targets: [x], redirect_uris: ['https://a.com/*'], \
+             realm_settings: {sso_session_idle_timeout: 3h, access_token_lifespan: 2h}, \
+             client_scopes: [{name: esr, mappers: [\
+               {name: company, type: user_attribute, attribute: company, claim: 'custom:company'}, \
+               {name: userid, type: user_attribute, attribute: userid, claim: 'custom:userid', userinfo: false}]}], \
+             users: [{username: norman, attributes: {company: AMBERIA, userid: 485, roles: [a, b]}}]}",
+        );
+        let script = provisioning_script(&esr, &record(&["norman"])).unwrap();
+        for expected in [
+            r#"{"accessTokenLifespan":7200,"ssoSessionIdleTimeout":10800}"#,
+            "sid=$(scope_id 'esr')",
+            r#"{"attributes":{"include.in.token.scope":"true"},"name":"esr","protocol":"openid-connect"}"#,
+            "case ' company userid ' in",
+            r#""claim.name":"custom:userid""#,
+            r#""userinfo.token.claim":"false""#,
+            r#""protocolMapper":"oidc-usermodel-attribute-mapper""#,
+            // Added to the client's scopes, the others stay.
+            "wanted=' esr '",
+            r#""unmanagedAttributePolicy" : "ADMIN_EDIT""#,
+            r#"{"attributes":{"company":["AMBERIA"],"roles":["a","b"],"userid":["485"]}}"#,
+        ] {
+            assert!(
+                script.contains(expected),
+                "missing {expected:?} in\n{script}"
+            );
+        }
+        assert!(
+            !script.contains("kc delete \"clients/$id/default-client-scopes"),
+            "{script}"
+        );
+
+        // With default_scopes, the link's scopes join them.
+        let joined = link(
+            "{name: login, type: keycloak, targets: [x], redirect_uris: ['https://a.com/*'], \
+             default_scopes: [basic, esr, email], client_scopes: [{name: esr}, {name: other}]}",
+        );
+        let script = provisioning_script(&joined, &record(&[])).unwrap();
+        assert!(
+            script.contains("wanted=' basic esr email other '"),
+            "{script}"
+        );
+        assert!(
+            script.contains("kc delete \"clients/$id/default-client-scopes"),
+            "{script}"
+        );
+        assert!(!script.contains("unmanagedAttributePolicy"), "{script}");
     }
 
     #[test]

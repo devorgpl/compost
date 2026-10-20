@@ -157,10 +157,11 @@ Each step is `{exec: <service>, command: …}`, run in the service's running con
 | `pkce` | – | `S256` or `plain` |
 | `direct_access_grants` | `false` | Resource owner password grant |
 | `default_scopes` | unchanged | The client's default scopes |
-| `realm_settings` | `{}` | `registration`, `reset_password`, `login_with_email`, `verify_email`, `brute_force_protection` (`true`/`false`), `ssl_required` (`none`, `external`, `all`); unset keys are not changed |
+| `realm_settings` | `{}` | `registration`, `reset_password`, `login_with_email`, `verify_email`, `brute_force_protection` (`true`/`false`), `ssl_required` (`none`, `external`, `all`), `sso_session_idle_timeout`, `sso_session_max_lifespan`, `access_token_lifespan` (durations like `30m`, `3h`); unset keys are not changed |
 | `roles` | `[]` | Realm roles, created if missing |
+| `client_scopes[]` | `[]` | `name`, `include_in_token_scope` (default `true`), `mappers[]`: `name`, `type: user_attribute`, `attribute`, `claim`, `multivalued` (default `false`), `id_token`, `access_token`, `userinfo` (default `true`). Set on every deploy and added to the client's default scopes |
 | `client_secret` | generated | Secret |
-| `users[]` | `[]` | `username`, `email`, `email_verified` (default `true` with `email`), `first_name`, `last_name`, `id` (when created), `roles` (from `roles`), `password`, `temporary` (password set only when created, changed at first login). Secret |
+| `users[]` | `[]` | `username`, `email`, `email_verified` (default `true` with `email`), `first_name`, `last_name`, `id` (when created), `roles` (from `roles`), `password`, `temporary` (password set only when created, changed at first login), `attributes` (set on every deploy). Secret |
 | `targets`, `environment` | | Values: `oidc_issuer`, `oidc_internal_url`, `oidc_base_url`, `oidc_internal_base_url`, `oidc_origin`, `oidc_jwks_uri`, `oidc_realm`, `oidc_client_id`, `oidc_client_secret` |
 
 ### `services.workflow[]`

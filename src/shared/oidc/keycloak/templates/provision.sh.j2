@@ -28,6 +28,50 @@ kc update "realms/$realm" -f - <<'COMPOST_JSON'
 {{ realm_json }}
 COMPOST_JSON
 {%- endif %}
+{%- for scope in client_scopes %}
+{%- if loop.first %}
+# The ID of client scope $1, empty when it is missing.
+scope_id() {
+  kc get client-scopes -r "$realm" --fields id,name --format csv --noquotes </dev/null |
+    while IFS=, read -r found name; do if [ "$name" = "$1" ]; then echo "$found"; fi; done
+}
+{%- endif %}
+# Client scope {{ scope.name }}: its settings and exactly the mappers listed.
+sid=$(scope_id '{{ scope.name }}')
+if [ -z "$sid" ]; then
+  kc create client-scopes -r "$realm" -f - <<'COMPOST_JSON'
+{{ scope.json }}
+COMPOST_JSON
+  sid=$(scope_id '{{ scope.name }}')
+else
+  kc update "client-scopes/$sid" -r "$realm" -f - <<'COMPOST_JSON'
+{{ scope.json }}
+COMPOST_JSON
+fi
+mappers=$(kc get "client-scopes/$sid/protocol-mappers/models" -r "$realm" --fields id,name --format csv --noquotes </dev/null)
+while IFS=, read -r mid name; do
+  if [ -z "$mid" ]; then continue; fi
+  case ' {{ scope.mapper_names | join(" ") }} ' in
+    *" $name "*) ;;
+    *) kc delete "client-scopes/$sid/protocol-mappers/models/$mid" -r "$realm" </dev/null ;;
+  esac
+done <<< "$mappers"
+{%- for mapper in scope.mappers %}
+mid=''
+while IFS=, read -r found name; do
+  if [ "$name" = '{{ mapper.name }}' ]; then mid=$found; fi
+done <<< "$mappers"
+if [ -z "$mid" ]; then
+  kc create "client-scopes/$sid/protocol-mappers/models" -r "$realm" -f - <<'COMPOST_JSON'
+{{ mapper.json }}
+COMPOST_JSON
+else
+  kc update "client-scopes/$sid/protocol-mappers/models/$mid" -r "$realm" --merge -f - <<'COMPOST_JSON'
+{{ mapper.json }}
+COMPOST_JSON
+fi
+{%- endfor %}
+{%- endfor %}
 {%- if roles %}
 # Each kcadm call starts a JVM: read what exists once.
 existing=$'\n'$(kc get roles -r "$realm" --fields name --format csv --noquotes </dev/null)$'\n'
@@ -47,7 +91,11 @@ else
 COMPOST_JSON
 fi
 {%- if default_scopes is not none %}
+{%- if remove_other_scopes %}
 # Client updates ignore the scopes: remove the others, then add the missing ones.
+{%- else %}
+# Client updates ignore the scopes: add the missing ones.
+{%- endif %}
 wanted=' {{ default_scopes | join(" ") }} '
 current=$(kc get "clients/$id/default-client-scopes" -r "$realm" --fields id,name --format csv --noquotes </dev/null)
 have=' '
@@ -55,7 +103,9 @@ while IFS=, read -r scope name; do
   if [ -z "$scope" ]; then continue; fi
   case "$wanted" in
     *" $name "*) have="$have$name " ;;
+{%- if remove_other_scopes %}
     *) kc delete "clients/$id/default-client-scopes/$scope" -r "$realm" </dev/null ;;
+{%- endif %}
   esac
 done <<< "$current"
 scopes=''
@@ -71,6 +121,19 @@ for wanted_name in $wanted; do
   if [ -z "$scope" ]; then echo "client scope \`$wanted_name\` does not exist in realm $realm" >&2; exit 1; fi
   kc update "clients/$id/default-client-scopes/$scope" -r "$realm" -b '{}' </dev/null
 done
+{%- endif %}
+{%- if user_attributes %}
+# Attributes outside the user profile: admins may set them, users only see them.
+profile=$(kc get users/profile -r "$realm" </dev/null)
+case "$profile" in
+  *'"unmanagedAttributePolicy" : "ENABLED"'* | *'"unmanagedAttributePolicy" : "ADMIN_EDIT"'*) ;;
+  *'"unmanagedAttributePolicy"'*)
+    printf '%s' "$profile" | sed 's/"unmanagedAttributePolicy" : "[A-Z_]*"/"unmanagedAttributePolicy" : "ADMIN_EDIT"/' |
+      kc update users/profile -r "$realm" -f - ;;
+  *)
+    printf '%s' "$profile" | sed '1s/^{/{ "unmanagedAttributePolicy" : "ADMIN_EDIT",/' |
+      kc update users/profile -r "$realm" -f - ;;
+esac
 {%- endif %}
 {%- for user in users %}
 id=$(kc get users -r "$realm" -q username='{{ user.username }}' -q exact=true --fields id --format csv --noquotes </dev/null)
@@ -102,6 +165,11 @@ fi
 {%- if user.password_json and not user.temporary %}
 kc update "users/$id/reset-password" -r "$realm" -f - <<'COMPOST_JSON'
 {{ user.password_json }}
+COMPOST_JSON
+{%- endif %}
+{%- if user.attributes_json %}
+kc update "users/$id" -r "$realm" --merge -f - <<'COMPOST_JSON'
+{{ user.attributes_json }}
 COMPOST_JSON
 {%- endif %}
 {%- if user.roles %}
