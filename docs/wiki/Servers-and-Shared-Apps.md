@@ -216,12 +216,15 @@ Changing `defaults` or a zone applies to every site on the next `server deploy`,
 To see and lift bans:
 
 ```sh
-compost server exec caddy-main --service crowdsec -- cscli decisions list
-compost server exec caddy-main --service crowdsec -- cscli alerts list
-compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
+compost server cmd caddy-main.bans
+compost server cmd caddy-main.alerts
+compost server cmd caddy-main.check 198.51.100.7
+compost server cmd caddy-main.alert 12                   # the requests behind alert 12
+compost server cmd caddy-main.unban 198.51.100.7          # asks first
+compost server cmd caddy-main.ban 198.51.100.7 30m       # 4h without a duration
 ```
 
-To run them by name (`compost server cmd unban 198.51.100.7`), add them to [`commands`](Admin-Commands.md#named-commands).
+These are [built into compost](Admin-Commands.md#built-in-commands). Other `cscli` commands run with `compost server exec caddy-main --service crowdsec -- cscli …`.
 
 Lock yourself out of a site and it's usually a ban: lift it, then add your address to `whitelist`. Behind another proxy or a CDN, every request comes from the proxy's address; this type is for servers that face the internet directly.
 

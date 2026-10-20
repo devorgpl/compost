@@ -52,7 +52,8 @@ infra/
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
 ├── logs/backup.log                   output of scheduled backups and notifications
-├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target, variables of a `server cmd`
+├── logs/commands.log                 every command `server cmd` and `app cmd` ran, without the values of `env`
+├── tmp/                              short-lived files, e.g. client credentials for external databases, archives on their way to or from an S3 target, variables of a `server cmd` or `app cmd`
 ├── backups/                          archives of the `server` backup target; a profile's are named `<instance or server>-<profile>-<time>…`
 ├── secrets/apps/<app>/<prefix>.yaml  overlay stored by `secret deploy` or `app deploy --secret`
 ├── secrets/server.yaml               shared apps' secrets stored by `server deploy --secret`

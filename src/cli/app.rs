@@ -188,7 +188,8 @@ pub struct AppLogsArgs {
 #[derive(Debug, Args)]
 pub struct AppCmdArgs {
     /// Instance as shown by `app list`, then the command's name and its arguments;
-    /// with -f, --app or --prefix, the instance is left out. Without a command, lists them.
+    /// with -f, --app or --prefix, the instance is left out. Without a command, lists them;
+    /// `--history` in place of the command shows the last ones run.
     /// Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`)
     /// come after its name
     #[arg(
@@ -414,7 +415,7 @@ pub fn run(
                 prefix: args.prefix,
             })?;
             let name = words.next();
-            if let Some(name) = &name {
+            if let Some(name) = name.as_ref().filter(|n| *n != "--history") {
                 check_name("command name", name)?;
             }
             let words: Vec<String> = words.collect();

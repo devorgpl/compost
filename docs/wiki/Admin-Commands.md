@@ -6,6 +6,7 @@ Most admin tasks on a server come down to running a tool in a container: `cscli`
 |---|---|
 | `compost server exec <shared app> -- <command>` | Any command in a shared app's container, e.g. a shell |
 | `compost app exec` / `app run` | Any command in an app's container ([Commands in containers](Applications.md#commands-in-containers)) |
+| `compost server cmd <shared app>.<name> [args]` | A command compost defines for the shared app's type, e.g. `caddy-main.unban` |
 | `compost server cmd <name> [args]` | A command from `commands` in compost-server.yaml |
 | `compost app cmd <instance> <name> [args]` | A command from `commands` in compost.yaml |
 
@@ -30,6 +31,30 @@ The command and its arguments come after `--`. Without `--service`, it runs in t
 An unknown service exits 2 and lists the shared app's other services. External shared apps and communication apps have no containers, so `server exec` refuses them.
 
 As with `app exec`, the command gets a terminal on the server when stdin and stdout are terminals, so a shell or `psql` works and Ctrl-C goes to the command. Otherwise input and output can be piped. compost exits with the command's exit status. `server exec` changes whatever the command changes: there is no dry run and no lock.
+
+## Built-in commands
+
+compost has commands of its own for most shared-app types. They are named `<shared app>.<command>`, so each shared app gets its own, and they need no config:
+
+```sh
+compost -s prod server cmd                                  # lists yours and these
+compost -s prod server cmd caddy-main.unban 198.51.100.7
+echo 'select count(*) from orders;' | compost -s prod server cmd postgres18.psql shop
+compost -s prod server cmd postgres18.psql shop             # psql on a terminal
+compost -s prod server cmd database/main.activity           # <kind>/<name> when two kinds use the name
+```
+
+| Type | Commands |
+|---|---|
+| `caddysecurebuild` | `bans`, `alerts`, `check <ip>` (its bans), `alert <id>` (the requests behind it), `ban <ip> [duration]` (`4h` by default; `30m`, `168h`, …), `unban <ip>`; `ban` and `unban` ask first |
+| `postgres` | `psql [database]` (as `postgres`; `postgres` by default), `activity` (`pg_stat_activity`) |
+| `mariadb`, `mysql` | `sql [database]` (the client as `root`), `activity` (`show full processlist`) |
+| `valkey`, `redis` | `cli`, `info` |
+| `garage` | `status`, `buckets`, `keys` |
+| `temporal` | `namespaces`, `workflows <namespace>` (the running ones), in its `admin` container |
+| `keycloak` | `realms`, `sessions <realm>` (active sessions per client), logged in as its admin |
+
+They run as named commands do, with `--help`, `--dry-run` and `--yes`, and they log in with the credentials the container already has in its environment. External shared apps have none. Your own commands' names have no `.`, so they never clash with these. For anything else, write [your own](#named-commands) or use `server exec`.
 
 ## Named commands
 
@@ -82,7 +107,7 @@ commands:
 `server deploy` stores them with the rest of the config on the server. So `server cmd` uses the commands of the last deploy, and works from any machine, CI included, without the local files.
 
 ```sh
-compost -s prod server cmd                          # lists them
+compost -s prod server cmd                          # lists them, then the built-in ones
 #   bans                        Addresses banned by this server's CrowdSec  (caddy-main/crowdsec)
 #   kc-sessions <realm>         Active sessions per client in a realm       (keycloak)
 #   sql <statement> [database]  One statement as root on MariaDB            (mariadb11)
@@ -136,7 +161,21 @@ A `string` without a `pattern` can't start with `-`, so it can't become an optio
 
 ### Checks
 
-`server deploy` (also with `--dry-run`) checks every command: `shared_app` exists, runs containers and isn't external; `command` is a list; placeholders and arguments match; `{secret:…}` appears only in `env`. Whether `service` exists, and which keys `root-connector.yaml` has, are checked when the command runs.
+`server deploy` (also with `--dry-run`) checks every command: `shared_app` exists, runs containers and isn't external; `service` is one of its services; `command` is a list; placeholders and arguments match; `{secret:…}` appears only in `env`. Which keys `root-connector.yaml` has is checked when the command runs.
+
+## History
+
+`server cmd` and `app cmd` write a line for every command they run to `logs/commands.log` on the server: the time, who ran it (user and host of the machine compost ran on), the command, where it ran, its words with their values, and its exit status. The values of `env` are never written. `--dry-run`, `--help` and a cancelled confirmation write nothing, and neither do `server exec`, `app exec` and `app run`.
+
+```sh
+compost -s prod server cmd --history
+# Commands of prod:
+#   2026-05-04T09:12:40Z  ana@laptop  caddy-main.unban  exit 0    caddy-main/crowdsec: cscli decisions delete --ip 198.51.100.7
+#   2026-05-04T09:30:02Z  ci@runner   sql               exit 1    mariadb11: mariadb -u root -e 'show tables' shop
+compost app cmd myapp-staging --history
+```
+
+`server cmd --history` shows the server's commands and `app cmd <instance> --history` the instance's, the last 50 of each. The file keeps growing; delete it on the server to start over.
 
 ## Commands in apps
 
@@ -159,6 +198,7 @@ commands:
 ```sh
 compost app cmd myapp-staging                       # lists them
 compost app cmd myapp-staging migrate --yes
+compost app cmd myapp-staging --history
 compost app cmd myapp-staging create-admin admin@example.com
 compost app cmd -f compost.yaml,.compost-staging.yaml create-admin admin@example.com   # instance from files
 ```

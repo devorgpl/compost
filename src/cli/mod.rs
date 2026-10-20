@@ -101,7 +101,8 @@ pub enum ServerCommand {
     Logs(server::ServerLogsArgs),
     /// Run a command in a shared application's container, e.g. a shell
     Exec(server::ServerExecArgs),
-    /// List the commands of compost-server.yaml, or run one by name in its shared app's container
+    /// List the commands of compost-server.yaml and compost's own, or run one by name in its
+    /// shared app's container
     Cmd(server::ServerCmdArgs),
     /// Show disk usage, then remove images no container uses (except those kept for
     /// `app rollback`), dangling images and the build cache

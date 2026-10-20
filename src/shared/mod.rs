@@ -4,6 +4,7 @@
 //! `postgres`, `keycloak`, `openobserve`).
 //! Core only talks to the [`Kind`] trait; each kind looks up its types and calls them.
 
+pub mod commands;
 pub mod communication;
 pub mod database;
 pub mod ingress;

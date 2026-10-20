@@ -240,8 +240,10 @@ pub fn exec(
 
 #[derive(Debug, Args)]
 pub struct ServerCmdArgs {
-    /// Command from `commands` of compost-server.yaml, then its arguments, in order or as
-    /// `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them
+    /// Command from `commands` of compost-server.yaml, or compost's own as
+    /// `<shared app>.<command>` (e.g. `caddy-main.unban`), then its arguments, in order or as
+    /// `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them;
+    /// `--history` shows the last ones run
     #[arg(
         value_name = "COMMAND] [ARGS",
         trailing_var_arg = true,
@@ -258,7 +260,11 @@ pub fn cmd(
 ) -> Result<()> {
     let mut words = args.words.into_iter();
     let name = words.next();
-    if let Some(name) = &name {
+    // A built-in command is `<shared app>.<command>`, found by its parts.
+    if let Some(name) = name
+        .as_ref()
+        .filter(|n| *n != "--history" && !n.contains('.'))
+    {
         check_name("command name", name)?;
     }
     let words: Vec<String> = words.collect();

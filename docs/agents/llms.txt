@@ -21,7 +21,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Local development](https://github.com/devorgpl/compost/wiki/Local-Development): `compost dev up` on this machine (adds missing shared apps, reuses existing ones), several projects, `dev up --host` and `dev env` for apps run outside Docker, `dev reset`, `dev stop`, `dev down`
 - [Secrets](https://github.com/devorgpl/compost/wiki/Secrets): overlays with passwords, local or stored on the server, generated passwords
 - [Backup and restore](https://github.com/devorgpl/compost/wiki/Backup-and-Restore): app and server backups, targets, formats, restoring, copies, moving to a new server
-- [Admin commands](https://github.com/devorgpl/compost/wiki/Admin-Commands): `server exec`, named commands in compost-server.yaml and compost.yaml (`server cmd`, `app cmd`): typed arguments, secrets through `env`, confirmation, dry run
+- [Admin commands](https://github.com/devorgpl/compost/wiki/Admin-Commands): `server exec`, named commands in compost-server.yaml and compost.yaml (`server cmd`, `app cmd`): typed arguments, secrets through `env`, confirmation, dry run; built-in commands per shared-app type (`caddy-main.unban`, `postgres18.psql`); history
 - [Notifications](https://github.com/devorgpl/compost/wiki/Notifications): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
 
 ## Reference

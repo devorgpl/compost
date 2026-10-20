@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::IsTerminal;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 use super::instance::{self, Selector};
 use super::logs::deployed;
@@ -178,6 +179,14 @@ pub fn template(
         (_, Some(service)) => format!("a new container of {service}"),
         _ => String::new(),
     };
+    if name == Some("--history") {
+        if let Some(word) = words.first() {
+            return Err(config_err(format!(
+                "--history takes no arguments, found `{word}`"
+            )));
+        }
+        return history(&ctx, Some(&app.instance()), &app.instance());
+    }
     let Some(name) = name else {
         if app.commands.is_empty() {
             out!(
@@ -240,7 +249,101 @@ pub fn template(
         "{prelude}{}",
         script(&compose, &options, tty, &prepared.env_names())
     );
-    attach(connector, &script, tty)
+    let entry = Entry::new(&prepared, Some(&app.instance()));
+    attach(connector, &logged(&ctx, &script, &entry)?, tty)
+}
+
+/// Where `server cmd` and `app cmd` record each command they run.
+pub const COMMANDS_LOG: &str = "logs/commands.log";
+
+/// How many entries `--history` shows.
+const HISTORY: usize = 50;
+
+/// One line of [`COMMANDS_LOG`]. Never holds the values of `env`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Entry {
+    pub time: String,
+    /// Who ran it, e.g. `cyprian@laptop`.
+    pub by: String,
+    /// The instance whose command it is; none for the server's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    pub name: String,
+    /// e.g. `caddy-main/crowdsec`, `backend`.
+    pub place: String,
+    pub words: Vec<String>,
+    /// The command's exit status; the script fills it in.
+    #[serde(default)]
+    pub exit: i32,
+}
+
+impl Entry {
+    pub fn new(prepared: &Prepared, instance: Option<&str>) -> Self {
+        Self {
+            time: humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string(),
+            by: crate::server::lock::operator(),
+            instance: instance.map(str::to_string),
+            name: prepared.name.to_string(),
+            place: prepared.place.clone(),
+            words: prepared.rendered.argv.clone(),
+            exit: 0,
+        }
+    }
+}
+
+/// The script, followed by a line in [`COMMANDS_LOG`] with its exit status.
+/// The script's status stays the status of the whole.
+pub fn logged(ctx: &ServerCtx, script: &str, entry: &Entry) -> Result<String> {
+    let json = serde_json::to_string(entry)?;
+    // `…,"exit":0}` without the status, which the script prints.
+    let prefix = json
+        .strip_suffix("0}")
+        .ok_or_else(|| anyhow::anyhow!("unexpected log entry {json}"))?;
+    let log = shell_quote(&ctx.path(COMMANDS_LOG));
+    let dir = shell_quote(&ctx.path("logs"));
+    Ok(format!(
+        "{script}; status=$?; mkdir -p -- {dir} && printf '%s%s}}\\n' {} \"$status\" >> {log}; exit $status",
+        shell_quote(prefix)
+    ))
+}
+
+/// `--history`: the last commands run, the server's (`instance` none) or an
+/// instance's, oldest first.
+pub fn history(ctx: &ServerCtx, instance: Option<&str>, whose: &str) -> Result<()> {
+    let text = ctx.read(COMMANDS_LOG)?.unwrap_or_default();
+    let entries: Vec<Entry> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Entry>(line).ok())
+        .filter(|entry| entry.instance.as_deref() == instance)
+        .collect();
+    if entries.is_empty() {
+        out!("No commands of {whose} were run yet");
+        return Ok(());
+    }
+    let skipped = entries.len().saturating_sub(HISTORY);
+    if skipped > 0 {
+        out!(
+            "The last {HISTORY} commands of {whose} ({skipped} earlier ones are in {}):",
+            ctx.path(COMMANDS_LOG)
+        );
+    } else {
+        out!("Commands of {whose}:");
+    }
+    let shown = &entries[skipped..];
+    let width = |f: fn(&Entry) -> usize| shown.iter().map(f).max().unwrap_or(0);
+    let (by, name) = (width(|e| e.by.len()), width(|e| e.name.len()));
+    for entry in shown {
+        out!(
+            "  {}  {:<by$}  {:<name$}  exit {:<3}  {}: {}",
+            entry.time,
+            entry.by,
+            entry.name,
+            entry.exit,
+            entry.place,
+            command::display(&entry.words)
+        );
+    }
+    Ok(())
 }
 
 /// The commands there are, for an error about one that isn't.

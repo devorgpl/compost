@@ -17,7 +17,7 @@ use crate::config::app::ComposeFile;
 use crate::config::server::{Consumer, ConsumerLink, ServerConfig};
 use crate::connector::dry_run::DryRun;
 use crate::connector::{Connector, shell_quote};
-use crate::error::CompostError;
+use crate::error::{CompostError, config_err};
 use crate::shared::{self, AppCtx, Kind, Rendered, RenderedFile, ServerCtx, SharedAppConfig};
 
 /// Written next to `compose.yaml` of a shared app with links; docker compose
@@ -95,6 +95,7 @@ pub fn deploy(
 
     // 2. Render everything before changing anything on the server.
     let mut plans = render_all(&ctx, config, &StateFile::load(&ctx)?)?;
+    check_command_services(config, &plans)?;
     let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
 
     if options.dry_run {
@@ -240,6 +241,34 @@ fn render_all<'a>(
         plans.push(plan);
     }
     Ok(plans)
+}
+
+/// The `service` of each command of `commands` is one the shared app's
+/// rendered compose file has.
+fn check_command_services(config: &ServerConfig, plans: &[Plan]) -> Result<()> {
+    for (name, command) in &config.commands {
+        let Some(shared_app) = &command.shared_app else {
+            continue;
+        };
+        let (kind, app) = config.find_shared(shared_app)?;
+        let Some(plan) = plans
+            .iter()
+            .find(|p| p.kind_name() == kind && p.app.name == app.name)
+        else {
+            continue;
+        };
+        let path = compose_path(plan);
+        let compose = plan
+            .rendered
+            .files
+            .iter()
+            .find(|f| f.path == path)
+            .map(|f| f.contents.as_str())
+            .unwrap_or_default();
+        super::exec::compose_service(kind, &app.name, compose, command.service.as_deref())
+            .map_err(|e| config_err(format!("commands.{name}: {e}")))?;
+    }
+    Ok(())
 }
 
 /// `sha256:<hex>` over everything a shared app puts on the server.

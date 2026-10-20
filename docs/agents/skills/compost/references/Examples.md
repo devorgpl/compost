@@ -530,8 +530,8 @@ services:
 From an address that isn't whitelisted, a burst of failed logins gets it banned within seconds: every site then answers 403 until `ban_duration` (4 hours by default) passes. Slower attempts are cut off at 10 a minute with 429.
 
 ```sh
-compost server exec caddy-main --service crowdsec -- cscli decisions list
-compost server exec caddy-main --service crowdsec -- cscli decisions delete --ip 198.51.100.7
+compost server cmd caddy-main.bans
+compost server cmd caddy-main.unban 198.51.100.7
 ```
 
 ## A review copy of production

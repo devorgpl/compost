@@ -1905,6 +1905,175 @@ fn app_exec_and_run_pass_the_command_and_its_status() {
         .code(2);
 }
 
+const SERVER_COMMANDS: &str = "
+commands:
+  ls:
+    shared_app: postgres16
+    args:
+      path: {pattern: '/[a-z/]*', default: /}
+    env:
+      PGPASSWORD: '{secret:root_password}'
+    command: [ls, -lah, '{path}']
+";
+
+#[test]
+fn server_cmd_checks_the_service_when_deploying() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!(
+            "{SERVER_CONFIG}commands:\n  bans:\n    shared_app: caddy-main\n    service: crowdsec\n    command: [cscli, decisions, list]\n"
+        ),
+    );
+    server
+        .run(&["server", "deploy", "--dry-run"], &[])
+        .code(2)
+        .stderr(contains(
+            "commands.bans: ingress caddy-main has no service `crowdsec` (it has only its main one)",
+        ));
+}
+
+#[test]
+fn server_cmd_runs_in_the_shared_app_and_is_logged() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        &format!("{SERVER_CONFIG}{SERVER_COMMANDS}"),
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    server.take_docker_log();
+    server
+        .run(&["server", "cmd", "--history"], &[])
+        .success()
+        .stdout(contains("No commands of dev were run yet"));
+
+    server
+        .run(&["server", "cmd", "ls", "/var/lib"], &[])
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(
+            "docker compose -p compost-database-postgres16 exec -T -e PGPASSWORD compost-shared-postgres16 ls -lah /var/lib"
+        ),
+        "{log}"
+    );
+    // The variables' file is gone once the command ran.
+    let tmp: Vec<_> = fs::read_dir(server.server_home.join("tmp"))
+        .map(|dir| dir.collect())
+        .unwrap_or_default();
+    assert!(tmp.is_empty(), "{tmp:?}");
+
+    server.run(&["server", "cmd", "ls", "/x;y"], &[]).code(2);
+    server
+        .run(&["server", "cmd", "ls", "--dry-run"], &[])
+        .success()
+        .stdout(contains(
+            "Would run ls in postgres16:\n  ls -lah /\n  environment: PGPASSWORD (secret)",
+        ));
+    let history = server.read_server_file("logs/commands.log");
+    assert_eq!(history.lines().count(), 1, "{history}");
+    assert!(!history.contains("PGPASSWORD"), "{history}");
+    server
+        .run(&["server", "cmd", "--history"], &[])
+        .success()
+        .stdout(contains("Commands of dev:"))
+        .stdout(contains("ls  exit 0    postgres16: ls -lah /var/lib"));
+    server
+        .run(&["server", "cmd", "--history", "ls"], &[])
+        .code(2)
+        .stderr(contains("--history takes no arguments"));
+
+    // compost's own commands, as `<shared app>.<command>`.
+    server
+        .run(&["server", "cmd"], &[])
+        .success()
+        .stdout(contains("Built into compost:"))
+        .stdout(contains("postgres16.psql [database]"));
+    server
+        .run(&["server", "cmd", "postgres16.psql", "shop"], &[])
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("exec -T compost-shared-postgres16 psql -U postgres -d shop"),
+        "{log}"
+    );
+    server
+        .run(&["server", "cmd", "postgres16.nope"], &[])
+        .code(2)
+        .stderr(contains(
+            "compost has no command `nope` for database postgres16 (commands: psql, activity)",
+        ));
+    server
+        .run(&["server", "cmd", "caddy-main.bans"], &[])
+        .code(2)
+        .stderr(contains("compost has no commands for ingress caddy-main"));
+}
+
+#[test]
+fn app_cmd_runs_in_a_service_and_is_logged() {
+    let server = server_with_app();
+    server.write_work_file(
+        "app/compost.yaml",
+        &format!(
+            "{APP_CONFIG}commands:\n  migrate:\n    run: backend-webapp\n    command: [migrate]\n  fail:\n    run: backend-webapp\n    command: [exit-7]\n  ls:\n    exec: backend-webapp\n    command: [ls, -lah]\n"
+        ),
+    );
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "-f",
+                "app/compost.yaml,app/.compost-staging.yaml",
+            ],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    server.take_docker_log();
+    let compose = "docker compose -p myapp-staging --project-directory sources \
+                   -f sources/docker-compose.yaml -f compose/compost.override.yaml";
+
+    server
+        .run(&["app", "cmd", "myapp-staging", "ls"], &[])
+        .success();
+    server
+        .run(&["app", "cmd", "myapp-staging", "migrate"], &[])
+        .success()
+        .stdout(contains("job output"));
+    server
+        .run(&["app", "cmd", "myapp-staging", "fail"], &[])
+        .code(7);
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(&format!("{compose} exec -T backend-webapp ls -lah")),
+        "{log}"
+    );
+    assert!(
+        log.contains(&format!("{compose} run --rm -T backend-webapp migrate")),
+        "{log}"
+    );
+
+    server
+        .run(&["app", "cmd", "myapp-staging", "--history"], &[])
+        .success()
+        .stdout(contains("Commands of myapp-staging:"))
+        .stdout(contains("ls       exit 0    backend-webapp: ls -lah"))
+        .stdout(contains(
+            "fail     exit 7    a new container of backend-webapp: exit-7",
+        ));
+    // The server's history has only the server's commands.
+    server
+        .run(&["server", "cmd", "--history"], &[])
+        .success()
+        .stdout(contains("No commands of dev were run yet"));
+}
+
 #[test]
 fn app_state_by_name_or_files() {
     let server = server_with_app();

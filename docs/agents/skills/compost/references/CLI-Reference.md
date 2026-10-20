@@ -69,7 +69,7 @@ Commands:
   restore   Restore shared applications from a server backup
   logs      Show the output of a shared application's containers
   exec      Run a command in a shared application's container, e.g. a shell
-  cmd       List the commands of compost-server.yaml, or run one by name in its shared app's container
+  cmd       List the commands of compost-server.yaml and compost's own, or run one by name in its shared app's container
   prune     Show disk usage, then remove images no container uses (except those kept for `app rollback`), dangling images and the build cache
   help      Print this message or the help of the given subcommand(s)
 
@@ -256,12 +256,12 @@ Options:
 ## `compost server cmd`
 
 ```text
-List the commands of compost-server.yaml, or run one by name in its shared app's container
+List the commands of compost-server.yaml and compost's own, or run one by name in its shared app's container
 
 Usage: compost server cmd [OPTIONS] [COMMAND] [ARGS]...
 
 Arguments:
-  [COMMAND] [ARGS]...  Command from `commands` of compost-server.yaml, then its arguments, in order or as `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them
+  [COMMAND] [ARGS]...  Command from `commands` of compost-server.yaml, or compost's own as `<shared app>.<command>` (e.g. `caddy-main.unban`), then its arguments, in order or as `--<arg> <value>`, and `--yes`, `--dry-run` or `--help`. Without a command, lists them; `--history` shows the last ones run
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
@@ -504,7 +504,7 @@ List the commands of the instance's compost.yaml, or run one by name
 Usage: compost app cmd [OPTIONS] [INSTANCE] [COMMAND] [ARGS]...
 
 Arguments:
-  [INSTANCE] [COMMAND] [ARGS]...  Instance as shown by `app list`, then the command's name and its arguments; with -f, --app or --prefix, the instance is left out. Without a command, lists them. Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`) come after its name
+  [INSTANCE] [COMMAND] [ARGS]...  Instance as shown by `app list`, then the command's name and its arguments; with -f, --app or --prefix, the instance is left out. Without a command, lists them; `--history` in place of the command shows the last ones run. Options of the command (`--<arg> <value>`, `--yes`, `--dry-run`, `--help`) come after its name
 
 Options:
   -f, --file <FILES>         Config files merged in order, to select the instance (repeatable or comma-separated); the commands are those of the deployed instance

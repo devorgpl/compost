@@ -26,6 +26,41 @@ struct Target {
     place: String,
 }
 
+/// The compose service of a shared app for `service` (one of its other
+/// services by its short name, or its main one), checked against its
+/// compose file.
+pub fn compose_service(
+    kind: &str,
+    name: &str,
+    compose: &str,
+    service: Option<&str>,
+) -> Result<String> {
+    let main = shared::service_name(name);
+    let compose_service = match service {
+        Some(service) => format!("{main}-{service}"),
+        None => main.clone(),
+    };
+    // A missing or unreadable compose file gives no services; compose then
+    // reports the name.
+    let file = ComposeFile::parse_all(&[compose]).unwrap_or_default();
+    if file.services.is_empty() || file.services.contains_key(&compose_service) {
+        return Ok(compose_service);
+    }
+    let others: Vec<String> = file
+        .services
+        .keys()
+        .filter_map(|s| s.strip_prefix(&format!("{main}-")))
+        .map(|s| format!("`{s}`"))
+        .collect();
+    let what = service.map_or_else(|| "main service".to_string(), |s| format!("service `{s}`"));
+    let hint = if others.is_empty() {
+        "it has only its main one".to_string()
+    } else {
+        format!("others: {}", others.join(", "))
+    };
+    Err(config_err(format!("{kind} {name} has no {what} ({hint})")))
+}
+
 impl Target {
     /// `service` is one of the shared app's other services by its short name,
     /// e.g. `crowdsec`; without it, the shared app's main container.
@@ -47,32 +82,11 @@ impl Target {
                 "{kind} {name} runs only when it sends; it has no container to run a command in"
             )));
         }
-        let main = shared::service_name(name);
-        let compose_service = match service {
-            Some(service) => format!("{main}-{service}"),
-            None => main.clone(),
-        };
         let dir = shared::shared_dir(kind, name);
-        // Unreadable compose files give no services; compose then reports the name.
-        if let Some(text) = ctx.read(&format!("{dir}/compose.yaml"))? {
-            let file = ComposeFile::parse_all(&[&text]).unwrap_or_default();
-            if !file.services.is_empty() && !file.services.contains_key(&compose_service) {
-                let others: Vec<String> = file
-                    .services
-                    .keys()
-                    .filter_map(|s| s.strip_prefix(&format!("{main}-")))
-                    .map(|s| format!("`{s}`"))
-                    .collect();
-                let what = service
-                    .map_or_else(|| "main service".to_string(), |s| format!("service `{s}`"));
-                let hint = if others.is_empty() {
-                    "it has only its main one".to_string()
-                } else {
-                    format!("others: {}", others.join(", "))
-                };
-                return Err(config_err(format!("{kind} {name} has no {what} ({hint})")));
-            }
-        }
+        let compose = ctx
+            .read(&format!("{dir}/compose.yaml"))?
+            .unwrap_or_default();
+        let compose_service = compose_service(kind, name, &compose, service)?;
         Ok(Self {
             kind: kind.to_string(),
             name: name.clone(),
@@ -166,17 +180,28 @@ pub fn cmd(
 ) -> Result<()> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let config = instance::server_config(&ctx)?;
+    // `caddy-main/crowdsec`, without the kind of `<kind>/<name>`.
     let place = |template: &command::Template| {
-        let app = template.shared_app.clone().unwrap_or_default();
+        let app = template.shared_app.as_deref().unwrap_or_default();
+        let app = app.split_once('/').map_or(app, |(_, name)| name);
         match &template.service {
             Some(service) => format!("{app}/{service}"),
-            None => app,
+            None => app.to_string(),
         }
     };
+    let builtin = builtin_commands(&config)?;
+    if name == Some("--history") {
+        if let Some(word) = words.first() {
+            return Err(config_err(format!(
+                "--history takes no arguments, found `{word}`"
+            )));
+        }
+        return exec::history(&ctx, None, server_name);
+    }
     let Some(name) = name else {
         if config.commands.is_empty() {
             out!(
-                "{server_name} has no commands; add them under `commands` in compost-server.yaml and deploy"
+                "{server_name} has no commands of its own; add them under `commands` in compost-server.yaml and deploy"
             );
         } else {
             out!("Commands of {server_name}:");
@@ -185,14 +210,24 @@ pub fn cmd(
                 command::list(config.commands.iter().map(|(n, t)| (n, t, place(t))))
             );
         }
+        if !builtin.is_empty() {
+            out!("Built into compost:");
+            out_part!(
+                "{}",
+                command::list(builtin.iter().map(|(n, t)| (n, t, place(t))))
+            );
+        }
         return Ok(());
     };
-    let template = config.commands.get(name).ok_or_else(|| {
-        config_err(format!(
-            "{server_name} has no command `{name}` ({})",
-            exec::known(&config.commands, "compost-server.yaml")
-        ))
-    })?;
+    let template = match name.split_once('.') {
+        Some((shared_app, command)) => find_builtin(&config, &builtin, shared_app, command)?,
+        None => config.commands.get(name).ok_or_else(|| {
+            config_err(format!(
+                "{server_name} has no command `{name}` ({})",
+                exec::known(&config.commands, "compost-server.yaml")
+            ))
+        })?,
+    };
     let call = template.parse_call(name, words)?;
     if call.help {
         out!("{}", template.help(name, &place(template)));
@@ -222,5 +257,46 @@ pub fn cmd(
         "{prelude}{}",
         target.script(&prepared.rendered.argv, tty, &prepared.env_names())
     );
-    attach(connector, &script, tty)
+    let entry = exec::Entry::new(&prepared, None);
+    attach(connector, &exec::logged(&ctx, &script, &entry)?, tty)
+}
+
+/// compost's commands for the shared apps that run containers.
+fn builtin_commands(config: &ServerConfig) -> Result<Vec<(String, command::Template)>> {
+    let mut commands = Vec::new();
+    for (kind, app) in config.shared_apps() {
+        if shared::find_kind(kind).is_some_and(|k| k.runs_service(app)) {
+            commands.extend(shared::commands::builtin(kind, app)?);
+        }
+    }
+    Ok(commands)
+}
+
+/// A built-in command, as `<shared app>.<command>`; the shared app may be
+/// `<kind>/<name>`.
+fn find_builtin<'a>(
+    config: &ServerConfig,
+    builtin: &'a [(String, command::Template)],
+    shared_app: &str,
+    command: &str,
+) -> Result<&'a command::Template> {
+    let (kind, app) = config.find_shared(shared_app)?;
+    let id = format!("{kind}/{}", app.name);
+    let of_app: Vec<(&str, &command::Template)> = builtin
+        .iter()
+        .filter(|(_, t)| t.shared_app.as_deref() == Some(id.as_str()))
+        .filter_map(|(n, t)| Some((n.split_once('.')?.1, t)))
+        .collect();
+    if let Some((_, template)) = of_app.iter().find(|(n, _)| *n == command) {
+        return Ok(template);
+    }
+    let names: Vec<&str> = of_app.iter().map(|(n, _)| *n).collect();
+    Err(config_err(match names.as_slice() {
+        [] => format!("compost has no commands for {kind} {}", app.name),
+        _ => format!(
+            "compost has no command `{command}` for {kind} {} (commands: {})",
+            app.name,
+            names.join(", ")
+        ),
+    }))
 }
