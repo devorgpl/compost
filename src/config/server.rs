@@ -39,7 +39,8 @@ pub struct Notifications {
     /// Percent of free disk space below which `disk` is sent.
     #[serde(default = "default_disk_free_below")]
     pub disk_free_below: u8,
-    /// When `bans_daily` is sent, `HH:MM` in the server's time zone.
+    /// When `bans_daily` is sent and `updates` checked, `HH:MM` in the
+    /// server's time zone.
     #[serde(default = "default_daily_at")]
     pub daily_at: String,
 }
@@ -78,6 +79,8 @@ pub enum Event {
     Bans,
     /// A summary of the bans of the last 24 hours.
     BansDaily,
+    /// Shared apps' tags have newer images, or compost a newer release.
+    Updates,
 }
 
 impl Event {
@@ -88,13 +91,14 @@ impl Event {
             Event::Disk => "disk",
             Event::Bans => "bans",
             Event::BansDaily => "bans_daily",
+            Event::Updates => "updates",
         }
     }
 
     /// Sent only to recipients that list it: a server facing the internet
-    /// bans scanners many times a day.
+    /// bans scanners many times a day, and moving tags get new images often.
     pub fn opt_in(self) -> bool {
-        matches!(self, Event::Bans | Event::BansDaily)
+        matches!(self, Event::Bans | Event::BansDaily | Event::Updates)
     }
 }
 

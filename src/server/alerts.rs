@@ -3,7 +3,8 @@
 //! disk space. The cron tick checks every few minutes; a notification goes out
 //! when something breaks and when it is fine again, never on every check.
 //! Besides, CrowdSec's new bans, and a daily summary of them (see
-//! [`report_bans`]).
+//! [`report_bans`]), and once a day, newer images and releases (see
+//! [`report_updates`]).
 
 use std::time::Duration;
 
@@ -12,7 +13,8 @@ use anyhow::{Context, Result};
 use super::lock::Lock;
 use super::prune;
 use super::state::{self as server_state, Status};
-use super::state_file::{AlertRecord, BackupStatus, StateFile};
+use super::state_file::{AlertRecord, BackupStatus, StateFile, UpdatesRecord};
+use super::updates;
 use crate::app::{instance, state as app_state};
 use crate::config::server::{Event, Notifications, ServerConfig};
 use crate::notify::{self, Notification, Severity};
@@ -193,6 +195,70 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
     }
     if let Err(err) = report_bans(ctx, server_name, &config, notifications) {
         eprintln!("error: bans notifications: {err:#}");
+    }
+    if let Err(err) = report_updates(ctx, server_name, notifications) {
+        eprintln!("error: updates notifications: {err:#}");
+    }
+    Ok(())
+}
+
+/// `updates`: once a day at `daily_at`, ask the registries and GitHub what is
+/// newer than what runs, and send it when something wasn't reported before.
+fn report_updates(ctx: &ServerCtx, server_name: &str, notifications: &Notifications) -> Result<()> {
+    if !notifications.wants(Event::Updates) {
+        return Ok(());
+    }
+    let record = StateFile::load(ctx)?.updates.unwrap_or_default();
+    let Some(due) = daily_due(notifications, record.last_daily.as_deref()) else {
+        return Ok(());
+    };
+    // Due once: a registry that can't be reached isn't asked every few minutes.
+    save_updates(
+        ctx,
+        UpdatesRecord {
+            last_daily: Some(due.clone()),
+            ..record.clone()
+        },
+    )?;
+    let mut checker = updates::Checker::new(ctx.connector)?;
+    let findings = updates::findings(ctx, &mut checker)?;
+    let compost = updates::newer_compost(ctx.connector).unwrap_or_else(|err| {
+        eprintln!("warning: cannot check for a newer compost release: {err:#}");
+        None
+    });
+    let message = updates::message(&findings, compost.as_deref());
+    let keys = message
+        .as_ref()
+        .map(|(_, _, keys)| keys.clone())
+        .unwrap_or_default();
+    let news = keys.iter().any(|key| !record.reported.contains(key));
+    save_updates(
+        ctx,
+        UpdatesRecord {
+            last_daily: Some(due),
+            reported: keys,
+        },
+    )?;
+    if let (true, Some((title, body, _))) = (news, message) {
+        send(
+            ctx,
+            notifications,
+            server_name,
+            Event::Updates,
+            Severity::Info,
+            title,
+            body,
+        );
+    }
+    Ok(())
+}
+
+fn save_updates(ctx: &ServerCtx, record: UpdatesRecord) -> Result<()> {
+    let _lock = lock(ctx)?;
+    let mut state = StateFile::load(ctx)?;
+    if state.updates.as_ref() != Some(&record) {
+        state.updates = Some(record);
+        state.save(ctx)?;
     }
     Ok(())
 }

@@ -30,6 +30,9 @@ pub struct StateFile {
     /// How far the `bans` notifications got.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bans: Option<BansRecord>,
+    /// What the `updates` notifications reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdatesRecord>,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -91,6 +94,17 @@ pub struct BansRecord {
     /// When `bans_daily` was last sent (`YYYY-MM-DD`, the server's date).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_daily: Option<String>,
+}
+
+/// The newer images and releases the `updates` notifications reported.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdatesRecord {
+    /// When the registries were last asked (`YYYY-MM-DD`, the server's date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_daily: Option<String>,
+    /// What was reported, one key per newer image or release.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reported: Vec<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -193,6 +207,7 @@ impl Default for StateFile {
             backups: Vec::new(),
             alerts: Vec::new(),
             bans: None,
+            updates: None,
             other: Mapping::new(),
         }
     }

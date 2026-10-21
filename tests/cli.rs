@@ -3750,6 +3750,110 @@ notifications:
 }
 
 #[test]
+fn updates_are_notified_once_a_day_when_new() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  communication:
+    - {name: hook, type: webhook}
+notifications:
+  send_to: [hook, {to: hook, events: [updates]}]
+  daily_at: '00:00'
+",
+    );
+    server.write_work_file(
+        "secrets.yaml",
+        "shared: {communication: [{name: hook, configuration: {url: 'https://hooks.example.com/x'}}]}",
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &running,
+        )
+        .success();
+    server.take_docker_log();
+    let home = server.server_home.display().to_string();
+    let tick = [
+        "backup",
+        "tick",
+        "--server-home",
+        home.as_str(),
+        "--server-name",
+        "dev",
+    ];
+    let state_path = server.server_home.join("state.yaml");
+    let due_again = || {
+        let state = fs::read_to_string(&state_path).unwrap();
+        let earlier: String = state
+            .lines()
+            .map(|line| match line.find("last_daily:") {
+                Some(at) => format!("{}last_daily: '2020-01-01'\n", &line[..at]),
+                None => format!("{line}\n"),
+            })
+            .collect();
+        fs::write(&state_path, earlier).unwrap();
+    };
+    let newer = [
+        ("FAKE_DOCKER_RUNNING", "1"),
+        ("FAKE_REGISTRY_ID", "sha256:3333333333333333"),
+        ("FAKE_REGISTRY_VERSION", "v2.11.8"),
+    ];
+
+    // Current: asked once a day, nothing to send.
+    server.run(&tick, &running).success();
+    let log = server.take_docker_log();
+    assert!(log.contains("imagetools inspect caddy:2-alpine"), "{log}");
+    assert!(!log.contains(" send "), "{log}");
+    server.run(&tick, &newer).success();
+    let log = server.take_docker_log();
+    assert!(!log.contains("imagetools"), "not due again today: {log}");
+
+    // A newer image: sent once.
+    due_again();
+    server.run(&tick, &newer).success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains(
+            "send --severity info --title Newer images for caddy-main --server dev --event updates"
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains(
+            "ingress caddy-main: newer image for caddy:2-alpine: version v2.11.8 (running v2.11.7)"
+        ),
+        "{log}"
+    );
+    assert!(
+        log.contains("compost server deploy --apply --pull --shared caddy-main"),
+        "{log}"
+    );
+    due_again();
+    server.run(&tick, &newer).success();
+    let log = server.take_docker_log();
+    assert!(log.contains("imagetools"), "{log}");
+    assert!(!log.contains(" send "), "reported before: {log}");
+
+    // A newer compost release is news again.
+    due_again();
+    server
+        .run(
+            &tick,
+            &[newer[0], newer[1], newer[2], ("FAKE_RELEASE", "v99.0.0")],
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("--title Newer images for caddy-main, and compost v99.0.0"),
+        "{log}"
+    );
+}
+
+#[test]
 fn notifications_report_changes_from_the_tick() {
     use chrono::Timelike;
     use std::os::unix::fs::PermissionsExt;

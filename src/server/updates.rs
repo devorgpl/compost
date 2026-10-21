@@ -24,6 +24,8 @@ pub enum Update {
         base: bool,
         running: Option<String>,
         available: Option<String>,
+        /// The registry's digest for the tag.
+        digest: String,
     },
     /// The registry could not be asked, or did not say.
     Unknown { reference: String, reason: String },
@@ -153,6 +155,7 @@ impl<'a> Checker<'a> {
                         base,
                         running,
                         available: remote.version,
+                        digest: remote.digest,
                     },
                     None => Update::Unknown {
                         reference,
@@ -247,6 +250,7 @@ pub fn describe(update: &Update) -> Option<String> {
             base,
             running,
             available,
+            ..
         } => {
             let what = if *base {
                 format!("newer {reference} to build on")
@@ -265,6 +269,91 @@ pub fn describe(update: &Update) -> Option<String> {
             Some(format!("cannot check {reference}: {reason}"))
         }
     }
+}
+
+/// The updates of one shared app's containers.
+pub struct Finding {
+    pub kind: String,
+    pub name: String,
+    pub updates: Vec<Update>,
+}
+
+impl Finding {
+    pub fn newer(&self) -> bool {
+        self.updates
+            .iter()
+            .any(|u| matches!(u, Update::Newer { .. }))
+    }
+}
+
+/// What the registries have for every shared app that runs containers.
+pub fn findings(ctx: &ServerCtx, checker: &mut Checker) -> Result<Vec<Finding>> {
+    let mut found = Vec::new();
+    for project in images::projects(ctx)? {
+        let containers = images::running(ctx.connector, &project.project)?;
+        let mut refs: Vec<&str> = Vec::new();
+        for c in &containers {
+            refs.push(&c.image_id);
+            refs.push(&c.reference);
+        }
+        let local = images::inspect(ctx.connector, &refs)?;
+        let mut updates = Vec::new();
+        for c in &containers {
+            updates.extend(checker.container(ctx, &project, c, &local)?);
+        }
+        found.push(Finding {
+            kind: project.kind,
+            name: project.name,
+            updates,
+        });
+    }
+    Ok(found)
+}
+
+/// The `updates` notification: title, body, and one key per newer image or
+/// release, to tell what was reported before. `None` when nothing is newer.
+pub fn message(
+    findings: &[Finding],
+    compost: Option<&str>,
+) -> Option<(String, String, Vec<String>)> {
+    let mut keys = Vec::new();
+    let mut names = Vec::new();
+    let mut body = String::new();
+    for finding in findings.iter().filter(|f| f.newer()) {
+        names.push(finding.name.as_str());
+        for update in &finding.updates {
+            if let Update::Newer {
+                reference, digest, ..
+            } = update
+            {
+                keys.push(format!(
+                    "{}/{} {reference}@{digest}",
+                    finding.kind, finding.name
+                ));
+            }
+            if let Some(line) = describe(update) {
+                body.push_str(&format!("{} {}: {line}\n", finding.kind, finding.name));
+            }
+        }
+        body.push_str(&format!("  {}\n", command(&finding.name)));
+    }
+    if let Some(tag) = compost {
+        keys.push(format!("compost {tag}"));
+        body.push_str(&format!(
+            "compost {tag} is out (the server runs {}): its exact tags and modules may be newer, see Bundled-Images in the wiki.\n",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    body.push_str("`compost server images --check` shows the details.");
+    let title = match (names.as_slice(), compost) {
+        ([], Some(tag)) => format!("compost {tag} is out"),
+        (names, None) => format!("Newer images for {}", names.join(", ")),
+        (names, Some(tag)) => format!("Newer images for {}, and compost {tag}", names.join(", ")),
+    };
+    Some((title, body, keys))
 }
 
 /// The command that updates a shared app to the newer images of its tags.
@@ -329,6 +418,7 @@ mod tests {
                 base: false,
                 running: running.map(Into::into),
                 available: available.map(Into::into),
+                digest: "sha256:3".into(),
             })
             .unwrap()
         };
