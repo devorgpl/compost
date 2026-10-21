@@ -95,7 +95,7 @@ pub enum ServerCommand {
     /// Check and display server state
     State,
     /// Show the image, version and age of each shared app's containers
-    Images,
+    Images(server::ServerImagesArgs),
     /// Deploy shared applications from compost-server.yaml
     Deploy(server::ServerDeployArgs),
     /// Back up shared applications (data, configuration and secrets)
@@ -305,7 +305,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Server(ServerCommand::Define(args)) => server::define(&home, args),
         Command::Server(ServerCommand::List) => server::list(&home),
         Command::Server(ServerCommand::State) => server::state(&home, server, &connect),
-        Command::Server(ServerCommand::Images) => server::images(&home, server, &connect),
+        Command::Server(ServerCommand::Images(args)) => {
+            server::images(&home, server, args, &connect)
+        }
         Command::Server(ServerCommand::Deploy(args)) => {
             server::deploy(&home, server, args, &connect)
         }

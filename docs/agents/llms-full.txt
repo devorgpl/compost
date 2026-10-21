@@ -2277,6 +2277,24 @@ ingress caddy-main
 
 The version comes from the image's `org.opencontainers.image.version` label, or the variable official images set (`CADDY_VERSION`, `PG_VERSION`, `MARIADB_VERSION`, …); `version unknown` when it has neither. `pulled` is when Docker last pulled or tagged the image, if it records that; `deployed with this image` is when a `server deploy --apply` first started the container on this image (compost keeps it in `state.yaml`). A line `newer image … pulled for <tag>, not running yet` means the tag points to another image than the container runs, e.g. after a `docker pull`: `server deploy --apply` starts it. Times are UTC.
 
+`compost server images --check` also asks each image's registry what its tag points to now, and changes nothing:
+
+```text
+ingress caddy-main
+  compost-shared-caddy-main: caddy:2-alpine, version v2.11.7
+    image d8542f48d34a, built 2026-10-05, pulled 2026-10-21 15:28
+    running since 2026-10-21 15:30, deployed with this image 2026-10-21 15:30
+    newer image for caddy:2-alpine: version v2.11.8 (running v2.11.7)
+  update: `compost server deploy --apply --pull --shared caddy-main`
+
+compost vX.Y.Z is out (this is vX.Y.Z): its exact tags and modules may be newer, see Bundled-Images in the wiki
+```
+
+- It compares the digest the registry has for the tag with the image on the server, so it also finds an image rebuilt with the same version (`version vX.Y.Z, rebuilt`), e.g. for a fix in its base system. It runs `docker buildx imagetools inspect` on the server, which needs the buildx plugin (Docker's packages install it) and uses the server's `docker login`s for private registries; each check reads two manifests per image, well within Docker Hub's limits.
+- For an image compost builds ([caddysecurebuild](#caddysecurebuild-ingress)) it checks the images in `FROM` of its `build/Dockerfile` (`newer caddy:2-alpine to build on`): by digest while they are on the server, by the version the built image inherited after [`server prune`](#disk-space) removed them.
+- An exact tag (`v1.8.1`) gets no newer image: those change with a compost release, so the last line says whether GitHub has a newer one than the compost that ran the check.
+- It says nothing about vulnerabilities: a newer image is not necessarily a security fix, and an image can have known ones while being the newest. Scan images with a tool for that, e.g. `trivy image caddy:2-alpine` or `docker scout cves caddy:2-alpine`.
+
 `up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
 `--shared <name>` (repeatable or comma-separated; `<kind>/<name>` when two kinds have a shared app with that name) deploys only the shared apps it names, and `--pull` and `--recreate` apply to them only: to update Caddy without pulling a newer Postgres, run `compost server deploy --apply --pull --shared caddy-main`. The others are left as they were last deployed, files and containers alike, and so is their part of the `compost-server.yaml` stored on the server, so apps keep linking to what runs; shared apps removed from the config are not reported. The shared apps a named one links to (Keycloak's database, a monitoring app) must already be deployed, or be named too. It needs a previous full deploy and can't be combined with `--secret`.
@@ -4601,6 +4619,7 @@ Show the image, version and age of each shared app's containers
 Usage: compost server images [OPTIONS]
 
 Options:
+      --check                Also ask the registries whether a tag has a newer image (with `docker buildx imagetools` on the server), and GitHub whether compost has a newer release. Changes nothing
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]

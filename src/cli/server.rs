@@ -63,6 +63,15 @@ pub struct ServerDeployArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ServerImagesArgs {
+    /// Also ask the registries whether a tag has a newer image (with `docker buildx
+    /// imagetools` on the server), and GitHub whether compost has a newer release.
+    /// Changes nothing
+    #[arg(long)]
+    pub check: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct ServerBackupArgs {
     /// Only this shared app (repeatable or comma-separated)
     #[arg(long, value_delimiter = ',')]
@@ -288,7 +297,12 @@ pub fn cmd(
     )
 }
 
-pub fn images(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions) -> Result<()> {
+pub fn images(
+    home: &CompostHome,
+    server: Option<&str>,
+    args: ServerImagesArgs,
+    connect: &ConnectOptions,
+) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
     let connector = connector::open(&server, home, connect)?;
@@ -296,6 +310,7 @@ pub fn images(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions
         connector.as_ref(),
         server.server_home(),
         &manager.manager_key,
+        args.check,
     )
 }
 

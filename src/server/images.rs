@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::SERVER_CONFIG_FILE;
 use super::state_file::{ImageRecord, StateFile};
+use super::updates;
 use crate::config::server::ServerConfig;
 use crate::connector::{Connector, shell_quote};
 use crate::shared::{self, ServerCtx};
@@ -251,10 +252,22 @@ pub fn projects(ctx: &ServerCtx) -> Result<Vec<Project>> {
     Ok(projects)
 }
 
-/// `compost server images`.
-pub fn report(connector: &dyn Connector, server_home: &str, manager_key: &str) -> Result<()> {
+/// `compost server images`; with `check`, also what their registries and
+/// compost's releases have that is newer.
+pub fn report(
+    connector: &dyn Connector,
+    server_home: &str,
+    manager_key: &str,
+    check: bool,
+) -> Result<()> {
     let ctx = crate::app::state::initialized_server(connector, server_home, manager_key)?;
     let state_file = StateFile::load(&ctx)?;
+    let mut checker = if check {
+        Some(updates::Checker::new(connector)?)
+    } else {
+        None
+    };
+    let mut outdated = 0;
     out!(
         "Images of the shared apps on {} (times in UTC):",
         connector.target()
@@ -277,8 +290,46 @@ pub fn report(connector: &dyn Connector, server_home: &str, manager_key: &str) -
             .shared(&project.kind, &project.name)
             .map(|r| r.images.as_slice())
             .unwrap_or_default();
+        let mut newer = false;
         for c in &containers {
             print_container(c, &images, recorded);
+            let Some(checker) = checker.as_mut() else {
+                continue;
+            };
+            let found = checker.container(&ctx, &project, c, &images)?;
+            for update in &found {
+                if let Some(line) = updates::describe(update) {
+                    out!("    {line}");
+                }
+                newer |= matches!(update, updates::Update::Newer { .. });
+            }
+            if found
+                .iter()
+                .all(|u| matches!(u, updates::Update::Current { .. }))
+            {
+                out!("    up to date with its registry");
+            }
+        }
+        if newer {
+            outdated += 1;
+            out!("  update: `{}`", updates::command(&project.name));
+        }
+    }
+    if check {
+        out!();
+        if outdated == 0 {
+            out!("No shared app has a newer image in its registry.");
+        }
+        match updates::newer_compost(connector) {
+            Ok(Some(tag)) => out!(
+                "compost {tag} is out (this is {}): its exact tags and modules may be newer, see Bundled-Images in the wiki",
+                env!("CARGO_PKG_VERSION")
+            ),
+            Ok(None) => out!(
+                "compost {} is the latest release.",
+                env!("CARGO_PKG_VERSION")
+            ),
+            Err(e) => out!("Cannot check for a newer compost release: {e:#}"),
         }
     }
     Ok(())

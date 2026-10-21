@@ -159,6 +159,7 @@ Show the image, version and age of each shared app's containers
 Usage: compost server images [OPTIONS]
 
 Options:
+      --check                Also ask the registries whether a tag has a newer image (with `docker buildx imagetools` on the server), and GitHub whether compost has a newer release. Changes nothing
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]

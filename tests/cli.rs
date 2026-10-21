@@ -144,8 +144,9 @@ fn ssh_key_file_is_checked_before_connecting() {
 /// networks that exist. Containers of a compose project run `FAKE_DOCKER_IMAGE_ID`;
 /// `FAKE_DOCKER_TAGS` lists the tags `image ls` shows, and
 /// `FAKE_DOCKER_MISSING_TAGS=1` makes pinned release images missing.
-/// `container inspect` reports `caddy:2-alpine` running `FAKE_DOCKER_IMAGE_ID`;
-/// `FAKE_DOCKER_TAGGED_ID` is the image that tag points to now.
+/// `container inspect` reports `FAKE_DOCKER_REF` (`caddy:2-alpine`) running `FAKE_DOCKER_IMAGE_ID`;
+/// `FAKE_DOCKER_TAGGED_ID` is the image that tag points to now, and
+/// `FAKE_REGISTRY_ID` and `FAKE_REGISTRY_VERSION` what the registry has.
 /// `build: local`: `FAKE_DOCKER_STALE=1` makes every image look different on
 /// the server, `FAKE_DOCKER_BUILD_FAIL=1` fails `compose build`.
 /// `FAKE_CSCLI_ALERTS` and `FAKE_CSCLI_DECISIONS` are files with what
@@ -216,8 +217,12 @@ case "$*" in
   "image inspect -f "*) if [ -n "$FAKE_DOCKER_STALE" ]; then echo "config $$"; else echo config; fi ;;
   "save "*) printf 'fake image archive' ;;
   "load -q") echo "loaded: $(gzip -dc)" >> "$FAKE_DOCKER_LOG" ;;
+  "buildx imagetools inspect "*"{{json .Manifest}}")
+    printf '{"digest":"%s"}\n' "${FAKE_REGISTRY_ID:-${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}}" ;;
+  "buildx imagetools inspect "*"{{json .Image}}")
+    printf '{"linux/amd64":{"config":{"Env":["CADDY_VERSION=%s"]}}}\n' "${FAKE_REGISTRY_VERSION:-v2.11.7}" ;;
   "container inspect "*)
-    printf '[{"Image":"%s","Config":{"Image":"caddy:2-alpine","Labels":{"com.docker.compose.service":"compost-shared-x"}},"State":{"Running":true,"StartedAt":"2026-10-02T14:03:51Z"}}]\n' \
+    printf '[{"Image":"%s","Config":{"Image":"'"${FAKE_DOCKER_REF:-caddy:2-alpine}"'","Labels":{"com.docker.compose.service":"compost-shared-x"}},"State":{"Running":true,"StartedAt":"2026-10-02T14:03:51Z"}}]\n' \
       "${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}" ;;
   "image inspect --format {{json .}} "*)
     id="${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}"
@@ -297,6 +302,13 @@ impl LocalServer {
         );
         fs::write(bin.join("crontab"), crontab).unwrap();
         fs::set_permissions(bin.join("crontab"), fs::Permissions::from_mode(0o755)).unwrap();
+        // Never GitHub: the latest release is `$FAKE_RELEASE`.
+        fs::write(
+            bin.join("curl"),
+            "#!/bin/sh\nprintf '{\"tag_name\": \"%s\"}' \"${FAKE_RELEASE:-v0.0.1}\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(bin.join("curl"), fs::Permissions::from_mode(0o755)).unwrap();
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
         let server_home = env.work.path().join("server-home");
@@ -686,6 +698,78 @@ fn server_images_shows_versions_and_newer_pulled_images() {
         .stdout(contains(
             "newer image 222222222222 pulled for caddy:2-alpine, not running yet",
         ));
+
+    // --check: the registry has the running image, then a newer one.
+    server
+        .run(&["server", "images", "--check"], &running)
+        .success()
+        .stdout(contains("up to date with its registry"))
+        .stdout(contains("No shared app has a newer image in its registry."))
+        .stdout(contains("is the latest release"));
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("docker buildx imagetools inspect caddy:2-alpine"),
+        "{log}"
+    );
+    server
+        .run(
+            &["server", "images", "--check"],
+            &[
+                ("FAKE_DOCKER_RUNNING", "1"),
+                ("FAKE_REGISTRY_ID", "sha256:3333333333333333"),
+                ("FAKE_REGISTRY_VERSION", "v2.11.8"),
+                ("FAKE_RELEASE", "v99.0.0"),
+            ],
+        )
+        .success()
+        .stdout(contains(
+            "newer image for caddy:2-alpine: version v2.11.8 (running v2.11.7)",
+        ))
+        .stdout(contains(
+            "update: `compost server deploy --apply --pull --shared caddy-main`",
+        ))
+        .stdout(contains("compost v99.0.0 is out"));
+}
+
+#[test]
+fn server_images_checks_the_images_a_built_caddy_starts_from() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  ingress:\n    - {name: caddy-main, type: caddysecurebuild}\n",
+    );
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+    let built = (
+        "FAKE_DOCKER_REF",
+        "compost-caddysecurebuild-caddy-main:0123456789ab",
+    );
+    server
+        .run(&["server", "images", "--check"], &[running[0], built])
+        .success()
+        .stdout(contains("up to date with its registry"));
+    let log = server.take_docker_log();
+    assert!(log.contains("imagetools inspect caddy:2-builder"), "{log}");
+    assert!(log.contains("imagetools inspect caddy:2-alpine"), "{log}");
+    server
+        .run(
+            &["server", "images", "--check"],
+            &[
+                running[0],
+                built,
+                ("FAKE_REGISTRY_ID", "sha256:3333333333333333"),
+                ("FAKE_REGISTRY_VERSION", "v2.11.8"),
+            ],
+        )
+        .success()
+        .stdout(contains(
+            "newer caddy:2-builder to build on: version v2.11.8 (running v2.11.7)",
+        ))
+        .stdout(contains("newer caddy:2-alpine to build on"))
+        .stdout(contains("--pull --shared caddy-main"));
 }
 
 #[test]
