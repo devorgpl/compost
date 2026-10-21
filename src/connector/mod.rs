@@ -8,6 +8,7 @@
 pub mod dry_run;
 pub mod local;
 mod ssh;
+mod trace;
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -207,8 +208,28 @@ pub struct ConnectOptions {
     pub ssh_key_file: Option<PathBuf>,
 }
 
-/// The connector configured for a server in servers.yaml.
+/// The connector configured for a server in servers.yaml, recording what
+/// it runs when the server has `trace`.
 pub fn open(
+    server: &ServerEntry,
+    home: &CompostHome,
+    options: &ConnectOptions,
+) -> Result<Box<dyn Connector>> {
+    let connector = connect(server, home, options)?;
+    if server.trace.is_none() {
+        return Ok(connector);
+    }
+    // A log that can't be written doesn't stop the command.
+    Ok(match trace::open_log(&home.trace_log(&server.name)) {
+        Ok(file) => Box::new(trace::Traced::new(connector, server.trace, file)),
+        Err(err) => {
+            eprintln!("warning: not tracing {}: {err:#}", server.name);
+            connector
+        }
+    })
+}
+
+fn connect(
     server: &ServerEntry,
     home: &CompostHome,
     options: &ConnectOptions,

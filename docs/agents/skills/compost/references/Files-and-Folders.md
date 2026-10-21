@@ -10,6 +10,7 @@
 ├── servers.yaml            servers from `server define` (and `local`, if a `dev` command defined it)
 ├── config.yaml             preferences from `compost config`
 ├── current_context         server name from `connect`
+├── logs/<server>/trace.log commands run on the server, for servers with `trace` in servers.yaml
 └── ssh/                    shared SSH connection sockets
 ```
 

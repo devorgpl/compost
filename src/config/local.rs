@@ -14,6 +14,8 @@ const SERVERS_FILE: &str = "servers.yaml";
 const CONTEXT_FILE: &str = "current_context";
 const SETTINGS_FILE: &str = "config.yaml";
 const SSH_CONTROL_DIR: &str = "ssh";
+const LOGS_DIR: &str = "logs";
+const TRACE_FILE: &str = "trace.log";
 pub const DEFAULT_SSH_USER: &str = "compostuser";
 pub const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_SERVER_HOME: &str = "~/.compost-server";
@@ -41,6 +43,40 @@ pub struct ServerEntry {
     /// Overrides the global `deploy` settings for this server.
     #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
     pub deploy: DeploySettings,
+    /// What `logs/<name>/trace.log` records of the scripts run on the server.
+    #[serde(default, skip_serializing_if = "TraceLevel::is_none")]
+    pub trace: TraceLevel,
+}
+
+/// `trace` of a server in servers.yaml. Each level records what the one
+/// before it does, and more.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TraceLevel {
+    #[default]
+    None,
+    /// Each script, when it starts.
+    Command,
+    /// Its exit status and duration, and stderr when it fails.
+    Basic,
+    /// Its stdout and stderr, and how much it got on stdin.
+    Verbose,
+}
+
+impl TraceLevel {
+    pub const NAMES: [&str; 4] = ["none", "command", "basic", "verbose"];
+
+    pub fn is_none(&self) -> bool {
+        *self == TraceLevel::None
+    }
+
+    pub fn parse(name: &str) -> Option<TraceLevel> {
+        serde_yaml_ng::from_str(name).ok()
+    }
+
+    pub fn name(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
 }
 
 /// Preferences of the operator, `config.yaml` in `COMPOST_HOME`.
@@ -195,6 +231,11 @@ impl CompostHome {
             .create(&dir)
             .with_context(|| format!("cannot create {}", dir.display()))?;
         Ok(dir)
+    }
+
+    /// `logs/<server>/trace.log`, see [`TraceLevel`].
+    pub fn trace_log(&self, server: &str) -> PathBuf {
+        self.root.join(LOGS_DIR).join(server).join(TRACE_FILE)
     }
 
     pub fn settings(&self) -> Result<Settings> {

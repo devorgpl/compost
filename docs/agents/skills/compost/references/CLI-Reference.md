@@ -1094,7 +1094,7 @@ Set and show preferences, e.g. `deploy.apply`
 Usage: compost config [OPTIONS] <COMMAND>
 
 Commands:
-  set    Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
+  set    Set a preference, e.g. `compost config set deploy.apply true`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`
   unset  Remove a preference, so the global value (or the default) applies
   show   Show the preferences
   help   Print this message or the help of the given subcommand(s)
@@ -1109,7 +1109,7 @@ Options:
 ## `compost config set`
 
 ```text
-Set a preference, e.g. `compost config set deploy.apply true` or `compost config set dev.server laptop`
+Set a preference, e.g. `compost config set deploy.apply true`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`
 
 Usage: compost config set [OPTIONS] <KEY> <VALUE>
 

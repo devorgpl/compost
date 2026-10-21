@@ -4,17 +4,19 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use crate::config::check_name;
-use crate::config::local::{CompostHome, DeploySettings};
+use crate::config::local::{CompostHome, DeploySettings, TraceLevel};
 use crate::error::config_err;
 
 const DEPLOY_APPLY: &str = "deploy.apply";
 const DEV_SERVER: &str = "dev.server";
-const KEYS: &[&str] = &[DEPLOY_APPLY, DEV_SERVER];
+const TRACE: &str = "trace";
+const KEYS: &[&str] = &[DEPLOY_APPLY, DEV_SERVER, TRACE];
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// Set a preference, e.g. `compost config set deploy.apply true` or
-    /// `compost config set dev.server laptop`
+    /// Set a preference, e.g. `compost config set deploy.apply true`,
+    /// `compost config set dev.server laptop` or
+    /// `compost config set trace basic --for-server prod`
     Set {
         key: String,
         value: String,
@@ -44,12 +46,28 @@ pub fn run(home: &CompostHome, command: ConfigCommand) -> Result<()> {
             key,
             value,
             for_server,
+        } if key == TRACE => {
+            let level = TraceLevel::parse(&value).ok_or_else(|| {
+                config_err(format!(
+                    "{TRACE}: `{value}` is not a level ({})",
+                    TraceLevel::NAMES.join(", ")
+                ))
+            })?;
+            update_trace(home, for_server.as_deref(), level)
+        }
+        ConfigCommand::Set {
+            key,
+            value,
+            for_server,
         } => {
             let value = parse_bool(&key, &value)?;
             update(home, &key, for_server.as_deref(), Some(value))
         }
         ConfigCommand::Unset { key, for_server } if key == DEV_SERVER => {
             update_dev_server(home, for_server.as_deref(), None)
+        }
+        ConfigCommand::Unset { key, for_server } if key == TRACE => {
+            update_trace(home, for_server.as_deref(), TraceLevel::None)
         }
         ConfigCommand::Unset { key, for_server } => update(home, &key, for_server.as_deref(), None),
         ConfigCommand::Show => show(home),
@@ -87,6 +105,34 @@ fn update_dev_server(
     match value {
         Some(name) => out!("{DEV_SERVER} = {name}"),
         None => out!("{DEV_SERVER} unset"),
+    }
+    Ok(())
+}
+
+/// Set `trace` of a server in servers.yaml; `none` removes it.
+fn update_trace(home: &CompostHome, server: Option<&str>, level: TraceLevel) -> Result<()> {
+    let Some(name) = server else {
+        return Err(config_err(format!(
+            "{TRACE} is set per server; add --for-server <server>"
+        )));
+    };
+    home.require_manager()?;
+    let mut servers = home.servers()?;
+    let entry = servers
+        .servers
+        .iter_mut()
+        .find(|s| s.name == name)
+        .ok_or_else(|| config_err(format!("unknown server `{name}`")))?;
+    entry.trace = level;
+    home.save_servers(&servers)?;
+    if level.is_none() {
+        out!("{TRACE} unset for {name}");
+    } else {
+        out!(
+            "{TRACE} = {} for {name}, in {}",
+            level.name(),
+            home.trace_log(name).display()
+        );
     }
     Ok(())
 }
@@ -160,6 +206,15 @@ fn show(home: &CompostHome) -> Result<()> {
         "{DEV_SERVER} = {}",
         settings.dev.server.as_deref().unwrap_or("- (default)")
     );
+    for server in home.servers()?.servers {
+        if !server.trace.is_none() {
+            out!(
+                "{TRACE} = {}  (server {})",
+                server.trace.name(),
+                server.name
+            );
+        }
+    }
     Ok(())
 }
 

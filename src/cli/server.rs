@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
-use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry};
+use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry, TraceLevel};
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector::{self, ConnectOptions};
 use crate::error::{CompostError, config_err};
@@ -119,6 +119,7 @@ pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
         connector,
         server_home: args.server_home,
         deploy: DeploySettings::default(),
+        trace: TraceLevel::None,
     };
 
     match servers.servers.iter_mut().find(|s| s.name == entry.name) {
@@ -133,6 +134,7 @@ pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
             let deploy = std::mem::take(&mut existing.deploy);
             *existing = ServerEntry {
                 deploy,
+                trace: existing.trace,
                 ..entry.clone()
             };
         }

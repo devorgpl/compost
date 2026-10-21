@@ -4317,6 +4317,56 @@ fn config_set_show_unset() {
 }
 
 #[test]
+fn trace_records_the_scripts_run_on_a_server() {
+    let env = Env::initialized_with_server();
+    let server_home = env.work.path().join("server-home");
+    env.compost(&[
+        "server",
+        "define",
+        "dev",
+        "--local",
+        "--server-home",
+        server_home.to_str().unwrap(),
+    ])
+    .success();
+    env.compost(&["config", "set", "trace", "basic"])
+        .code(2)
+        .stderr(contains("add --for-server"));
+    env.compost(&["config", "set", "trace", "all", "--for-server", "dev"])
+        .code(2)
+        .stderr(contains("none, command, basic, verbose"));
+    env.compost(&["config", "set", "trace", "basic", "--for-server", "dev"])
+        .success()
+        .stdout(contains("trace = basic for dev, in "));
+    let servers = fs::read_to_string(env.home.path().join("servers.yaml")).unwrap();
+    assert!(servers.contains("  trace: basic\n"), "{servers}");
+    env.compost(&["config", "show"])
+        .success()
+        .stdout(contains("trace = basic  (server dev)"));
+
+    // Whatever state reports, its scripts are in the log.
+    let _ = env.compost(&["-s", "dev", "server", "state"]);
+    let log = env.home.path().join("logs/dev/trace.log");
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(
+        text.contains(" compost -s dev server state (local)\n"),
+        "{text}"
+    );
+    assert!(text.contains(" $ "), "{text}");
+    assert!(text.contains("  -> exit "), "{text}");
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(&log).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+
+    env.compost(&["config", "unset", "trace", "--for-server", "dev"])
+        .success();
+    let servers = fs::read_to_string(env.home.path().join("servers.yaml")).unwrap();
+    assert!(!servers.contains("trace"), "{servers}");
+    // Another server's log stays empty.
+    assert!(!env.home.path().join("logs/prod1").exists());
+}
+
+#[test]
 fn deploy_applies_by_default_when_configured() {
     let server = LocalServer::new();
     server.write_work_file("compost-server.yaml", SERVER_CONFIG);

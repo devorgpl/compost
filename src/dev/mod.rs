@@ -4,7 +4,7 @@ pub mod shared;
 
 use anyhow::Result;
 
-use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry};
+use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry, TraceLevel};
 use crate::error::config_err;
 
 /// Name of the local server `dev` defines when there is none.
@@ -59,6 +59,7 @@ pub fn target(home: &CompostHome, flag: Option<&str>) -> Result<ServerEntry> {
         connector: ConnectorConfig::Local,
         server_home: None,
         deploy: DeploySettings::default(),
+        trace: TraceLevel::None,
     };
     servers.servers.push(server.clone());
     home.save_servers(&servers)?;

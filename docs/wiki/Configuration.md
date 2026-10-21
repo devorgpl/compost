@@ -317,6 +317,7 @@ servers:
     server_home: ~/.compost-server     # default
     deploy:
       apply: false                     # optional, see below
+    trace: basic                       # optional: none (default), command, basic, verbose; see below
   - name: dev
     connector:
       type: local
@@ -328,6 +329,7 @@ servers:
 compost config set deploy.apply true [--for-server prod]
 compost config unset deploy.apply [--for-server prod]
 compost config set dev.server laptop
+compost config set trace basic --for-server prod
 compost config show
 ```
 
@@ -335,8 +337,30 @@ compost config show
 |---|---|---|
 | `deploy.apply` | `false` | `server deploy` and `app deploy` start services without `--apply` |
 | `dev.server` | – | The local server `dev` commands use; global only. See [Local development](Local-Development.md#which-machine) |
+| `trace` | `none` | What compost records of the commands it runs on a server, in `~/.compost/logs/<server>/trace.log`; per server only (`--for-server`). See [Tracing commands](#tracing-commands) |
 
 `--apply`/`--no-apply` win over the server's value, which wins over the global one in `~/.compost/config.yaml`.
+
+### Tracing commands
+
+compost does its work on a server by running shell scripts there, over SSH or on this machine. `trace` in a server's entry of `servers.yaml` appends them to `~/.compost/logs/<server>/trace.log`, for every compost command that uses the server:
+
+| Level | Records |
+|---|---|
+| `none` | Nothing (default) |
+| `command` | Each script, with the time it started |
+| `basic` | Also its exit status and how long it took, and its stderr when it failed |
+| `verbose` | Also its stdout and stderr (the first 64 KiB of each), and how many bytes it got on stdin or streamed out |
+
+Each compost command starts with a line naming it, its process id and the server:
+
+```
+2026-10-21T12:33:03.072+02:00 3335076 compost server deploy --apply (ssh compostuser@203.0.113.10:22)
+2026-10-21T12:33:03.251+02:00 $ docker version --format '{{.Server.Version}}' && docker compose version --short
+  -> exit 0 in 0.18s
+```
+
+What compost sends on stdin is never recorded: file contents and secrets go to the server that way, not in the scripts. With `verbose`, though, the log holds what the server printed, which includes files compost reads back, secrets among them. The log is readable only by you (mode `0600`), but don't share it. Over 10 MiB, it's renamed to `trace.log.1` (replacing the older one) when a command starts. `--verbose` prints the same scripts on stderr for one command.
 
 ## Environment variables
 
