@@ -153,7 +153,7 @@ Caddy runs as the server user, so its files can be backed up and removed without
 
 Caddy as above, built on the server with request filtering, next to a [CrowdSec](https://www.crowdsec.net/) agent:
 
-- **Bans.** The agent reads Caddy's access log and bans addresses that attack, e.g. a burst of more than 5 POST requests answered 401 or 403 (brute-force logins; one is forgotten every 10 seconds), path traversal, SQL injection probes or scans for admin pages. It also gets CrowdSec's community blocklist. A banned address gets 403 on every site that enforces bans, for `ban_duration`.
+- **Bans.** The agent reads Caddy's access log and bans addresses that attack, e.g. a burst of more than 5 POST requests answered 401 or 403 (brute-force logins; one is forgotten every 10 seconds), path traversal, SQL injection probes or scans for admin pages. It also gets CrowdSec's community blocklist. A banned address gets 403 on every site that enforces bans, for `ban_duration`, or has its connections closed ([`ban_action: drop`](#dropping-banned-connections)).
 - **AppSec.** Caddy sends every request to CrowdSec's AppSec component first, which blocks known exploits (CrowdSec's virtual patching and generic rules) with 403. Optionally, it also checks the OWASP Core Rule Set, out of band: a match doesn't block the request, but repeated matches ban the address.
 - **Rate limits.** Zones you define: at most `events` matching requests per address within `window`; more get 429.
 
@@ -172,6 +172,7 @@ shared:
           crowdsec:
             whitelist: [203.0.113.0/24]   # never banned: your office, monitoring
             ban_duration: 4h
+            ban_action: 403               # or drop: close banned addresses' connections
             ignore:                       # requests of every site CrowdSec never counts
               - {paths: [/healthz], methods: [GET]}
             simulated_scenarios: []       # scenarios that only raise alerts, never ban
@@ -196,6 +197,7 @@ shared:
 | `image` | – | Not accepted: the image is built |
 | `security.crowdsec.whitelist` | `[]` | IP addresses and networks (`203.0.113.0/24`) that are never banned. CrowdSec never bans private addresses either (`10.0.0.0/8`, `192.168.0.0/16`, …) |
 | `security.crowdsec.ban_duration` | `4h` | How long a ban lasts, e.g. `30m`, `1h30m` |
+| `security.crowdsec.ban_action` | `403` | What a banned address gets: `403` on every request to a site that enforces bans, or `drop`: Caddy closes its connections before TLS or HTTP (see [Dropping banned connections](#dropping-banned-connections)) |
 | `security.crowdsec.collections` | `[]` | Hub collections installed besides `crowdsecurity/caddy`, `crowdsecurity/base-http-scenarios`, `crowdsecurity/appsec-virtual-patching` and `crowdsecurity/appsec-generic-rules`, e.g. `crowdsecurity/wordpress` |
 | `security.crowdsec.scenarios` | `[]` | Hub scenarios installed besides those of the collections |
 | `security.crowdsec.ignore[]` | `[]` | Requests of every site CrowdSec never counts towards a ban: a rule, or a [preset](#false-positives) name such as `matrix` |
@@ -260,6 +262,8 @@ compost server cmd caddy-main.check 198.51.100.7          # the ban, with its al
 compost server cmd caddy-main.alert 12                   # each request: site, method, path, status
 ```
 
+With [`ban_action: drop`](#dropping-banned-connections), a user banned by mistake sees no 403, only timeouts or reset connections on every site, so they can't tell you it's a ban: `caddy-main.check <their address>` is how to find out.
+
 Then tell CrowdSec which requests not to count, with `ignore` rules. A rule matches requests that match all of its keys (`paths`, `methods`, `statuses`). In an app's ingress entry or a site's `security`, it only applies to that entry's domains:
 
 ```yaml
@@ -298,6 +302,23 @@ When you switch an existing server to this type, its users' normal traffic may l
 4. When a few days pass without false positives, empty `simulated_scenarios` and deploy.
 
 `defaults.bans: false` is no substitute: CrowdSec still bans, and the addresses are blocked as soon as you turn bans back on, for what's left of `ban_duration`.
+
+#### Dropping banned connections
+
+A 403 tells a scanner it has been noticed, which is its cue to switch addresses. With `ban_action: drop`, Caddy closes a banned address's connections on the HTTP and HTTPS ports before TLS or HTTP, so the server looks down to it:
+
+```yaml
+security:
+  crowdsec:
+    ban_action: drop
+```
+
+- It applies to bans only: this server's and the community blocklist's. AppSec still answers a blocked request with 403, since it judges one request, not the address.
+- The connection is closed before Caddy knows which site it's for, so every site enforces bans: `server deploy` refuses `defaults.bans: false` or a site with `bans: false`, and `app deploy` refuses an entry with `bans: false`. An app deployed with it already makes `server deploy` fail: deploy it without it first.
+- HTTP/3 (QUIC) connections aren't closed: a banned client that uses HTTP/3 still gets 403.
+- Dropped connections never reach the access log, so they aren't in the monitoring app or in what CrowdSec reads. Bans, `server state` and the `bans` notifications come from the agent and work as before.
+- Whitelisted and private addresses are never banned, so never dropped. SSH and other ports aren't touched: `caddy-main.unban` works for an admin who banned themselves.
+- It needs the bouncer's layer4 module, so switching to `drop` (or back) changes `build/Dockerfile`, and the next `server deploy --apply` builds the image again.
 
 #### AppSec and request bodies
 

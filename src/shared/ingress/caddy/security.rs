@@ -19,6 +19,9 @@ const MODULES: [&str; 3] = [
     "github.com/hslatman/caddy-crowdsec-bouncer/appsec@v0.14.1",
     "github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db",
 ];
+/// The bouncer's connection matcher, with caddy-l4: built only for
+/// `ban_action: drop`, so other servers keep their image.
+const LAYER4_MODULE: &str = "github.com/hslatman/caddy-crowdsec-bouncer/layer4@v0.14.1";
 
 pub const CROWDSEC_IMAGE: &str = "crowdsecurity/crowdsec:v1.8.1";
 
@@ -62,6 +65,38 @@ pub struct Crowdsec {
     pub simulated_scenarios: Vec<String>,
     /// Requests of every site CrowdSec doesn't count.
     pub ignore: Vec<IgnoreRule>,
+    /// What a banned address gets.
+    pub ban_action: BanAction,
+}
+
+/// `security.crowdsec.ban_action`. AppSec blocks are a 403 either way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BanAction {
+    /// Sites that enforce bans answer every request with 403.
+    #[default]
+    Forbidden,
+    /// Caddy closes the connection before TLS or HTTP. HTTP/3 doesn't go
+    /// through listener wrappers, so it still gets the 403.
+    Drop,
+}
+
+// By hand: `403` is a number in YAML, `drop` a string.
+impl<'de> Deserialize<'de> for BanAction {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let text = match serde_yaml_ng::Value::deserialize(deserializer)? {
+            serde_yaml_ng::Value::String(text) => text,
+            serde_yaml_ng::Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        };
+        match text.as_str() {
+            "403" => Ok(BanAction::Forbidden),
+            "drop" => Ok(BanAction::Drop),
+            _ => Err(D::Error::custom(format!(
+                "`{text}` is not a ban action: 403 or drop"
+            ))),
+        }
+    }
 }
 
 impl Default for Crowdsec {
@@ -73,6 +108,7 @@ impl Default for Crowdsec {
             scenarios: Vec::new(),
             simulated_scenarios: Vec::new(),
             ignore: Vec::new(),
+            ban_action: BanAction::default(),
         }
     }
 }
@@ -185,6 +221,10 @@ impl ServerSecurity {
             }
         }
         validate_ignore("security.crowdsec.ignore", &self.crowdsec.ignore, false)?;
+        ensure!(
+            !self.drops() || self.defaults.bans,
+            "security.defaults.bans: false can't be kept with security.crowdsec.ban_action: drop, which drops banned connections before Caddy knows the site"
+        );
         validate_rate_limits("security.rate_limits", &self.rate_limits)?;
         if let Some(names) = &self.defaults.rate_limits {
             let mut seen = HashSet::new();
@@ -206,8 +246,17 @@ impl ServerSecurity {
         self.rate_limits.iter().find(|zone| zone.name == name)
     }
 
-    /// A zone a site's `security` names must be defined here.
+    fn drops(&self) -> bool {
+        self.crowdsec.ban_action == BanAction::Drop
+    }
+
+    /// A zone a site's `security` names must be defined here, and with
+    /// `drop` every site enforces bans.
     pub fn check_link(&self, security: &LinkSecurity) -> Result<()> {
+        ensure!(
+            !self.drops() || security.bans != Some(false),
+            "security.bans: false can't be kept: the ingress has security.crowdsec.ban_action: drop, which drops banned connections before Caddy knows the site"
+        );
         for name in security.zone_names() {
             ensure!(
                 self.zone(name).is_some(),
@@ -267,6 +316,26 @@ impl ServerSecurity {
         }
         lines.push("\tticker_interval 15s".to_string());
         lines.push("}".to_string());
+        // Before TLS and HTTP: a banned address's connection is closed. A
+        // route needs `close`; without a handler it goes on to HTTP.
+        if self.drops() {
+            lines.extend(
+                [
+                    "servers {",
+                    "\tlistener_wrappers {",
+                    "\t\tlayer4 {",
+                    "\t\t\t@compost_banned crowdsec",
+                    "\t\t\troute @compost_banned {",
+                    "\t\t\t\tclose",
+                    "\t\t\t}",
+                    "\t\t}",
+                    "\t\ttls",
+                    "\t}",
+                    "}",
+                ]
+                .map(str::to_string),
+            );
+        }
         lines
     }
 
@@ -360,11 +429,15 @@ fn is_hub_name(name: &str) -> bool {
         .is_some_and(|(owner, item)| part(owner) && part(item))
 }
 
-/// The Dockerfile that builds Caddy with the modules.
-pub fn dockerfile(version: u32) -> Result<String> {
+/// The Dockerfile that builds Caddy with the modules the security needs.
+pub fn dockerfile(version: u32, security: &ServerSecurity) -> Result<String> {
+    let mut modules = MODULES.to_vec();
+    if security.drops() {
+        modules.push(LAYER4_MODULE);
+    }
     render_template(
         include_str!("templates/Dockerfile.j2"),
-        context! { version, modules => MODULES },
+        context! { version, modules },
     )
 }
 
@@ -679,7 +752,7 @@ mod tests {
 
     #[test]
     fn dockerfile_pins_the_modules() {
-        let dockerfile = dockerfile(2).unwrap();
+        let dockerfile = dockerfile(2, &security("{}")).unwrap();
         assert!(
             dockerfile.contains("FROM caddy:2-builder AS builder"),
             "{dockerfile}"
@@ -691,5 +764,57 @@ mod tests {
                 "{dockerfile}"
             );
         }
+        assert!(!dockerfile.contains("layer4"), "{dockerfile}");
+        let dropping = super::dockerfile(2, &security("{crowdsec: {ban_action: drop}}")).unwrap();
+        assert!(
+            dropping.contains(&format!("--with {LAYER4_MODULE}")),
+            "{dropping}"
+        );
+    }
+
+    #[test]
+    fn drop_closes_banned_connections_before_tls() {
+        let options = |text: &str| security(text).options("crowdsec").join("\n");
+        for text in [
+            "{}",
+            "{crowdsec: {ban_action: 403}}",
+            "{crowdsec: {ban_action: '403'}}",
+        ] {
+            assert_eq!(security(text).crowdsec.ban_action, BanAction::Forbidden);
+            assert!(!options(text).contains("listener_wrappers"), "{text}");
+        }
+        let dropping = options("{crowdsec: {ban_action: drop}}");
+        assert!(
+            dropping.ends_with(
+                "}\nservers {\n\tlistener_wrappers {\n\t\tlayer4 {\n\t\t\t@compost_banned crowdsec\n\t\t\troute @compost_banned {\n\t\t\t\tclose\n\t\t\t}\n\t\t}\n\t\ttls\n\t}\n}"
+            ),
+            "{dropping}"
+        );
+        let err = serde_yaml_ng::from_str::<ServerSecurity>("{crowdsec: {ban_action: 404}}")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`404` is not a ban action"), "{err}");
+    }
+
+    #[test]
+    fn drop_needs_every_site_to_enforce_bans() {
+        let server = security("{crowdsec: {ban_action: drop}}");
+        server.validate().unwrap();
+        let link = |text: &str| serde_yaml_ng::from_str::<LinkSecurity>(text).unwrap();
+        server.check_link(&link("{bans: true}")).unwrap();
+        server.check_link(&link("{appsec: false}")).unwrap();
+        let err = server
+            .check_link(&link("{bans: false}"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ban_action: drop"), "{err}");
+        security("{defaults: {bans: false}}")
+            .check_link(&link("{bans: false}"))
+            .unwrap();
+        let err = security("{crowdsec: {ban_action: drop}, defaults: {bans: false}}")
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("security.defaults.bans: false"), "{err}");
     }
 }

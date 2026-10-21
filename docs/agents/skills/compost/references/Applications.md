@@ -240,7 +240,7 @@ services:
           - matrix               # a preset: matrix, registry or s3
 ```
 
-`app deploy` fails when a named zone isn't defined on the server, or when the server's ingress is plain `caddy`. A blocked request gets 403, a rate-limited one 429. `ignore` is for apps whose own clients get many 4xx answers, which CrowdSec would take for a scan and ban, e.g. Matrix clients, registries and S3 storage, which have presets; see [False positives](Servers-and-Shared-Apps.md#false-positives).
+`app deploy` fails when a named zone isn't defined on the server, when the server's ingress is plain `caddy`, or with `bans: false` when the server drops banned connections ([`ban_action: drop`](Servers-and-Shared-Apps.md#dropping-banned-connections)). A blocked request gets 403, a rate-limited one 429. `ignore` is for apps whose own clients get many 4xx answers, which CrowdSec would take for a scan and ban, e.g. Matrix clients, registries and S3 storage, which have presets; see [False positives](Servers-and-Shared-Apps.md#false-positives).
 
 ## Database links
 

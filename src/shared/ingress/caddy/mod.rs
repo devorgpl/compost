@@ -360,8 +360,8 @@ impl IngressType for Caddy {
         let image = match &security {
             // Built on the server; a changed Dockerfile gets a new tag, which
             // `docker compose up` builds.
-            Some(_) => {
-                let dockerfile = security::dockerfile(version)?;
+            Some(security) => {
+                let dockerfile = security::dockerfile(version, security)?;
                 let tag = format!(
                     "compost-{SECURE_TYPE}-{}:{}",
                     config.name,
@@ -1320,6 +1320,41 @@ mod tests {
         );
         let err = render("{name: c, type: caddy}").unwrap_err();
         assert!(err.contains("needs type caddysecurebuild"), "{err}");
+
+        // `drop` can't keep an app's `bans: false`.
+        std::fs::write(
+            records.join("blog-prod-web.yaml"),
+            "{app: blog, prefix: prod, entry: web, domains: [blog.example.com], routes: [], security: {bans: false}}",
+        )
+        .unwrap();
+        let zones = "rate_limits: [{name: login, events: 5, window: 1m}]";
+        render(&format!(
+            "{{name: c, type: caddysecurebuild, configuration: {{security: {{{zones}}}}}}}"
+        ))
+        .unwrap();
+        let err = render(&format!("{{name: c, type: caddysecurebuild, configuration: {{security: {{crowdsec: {{ban_action: drop}}, {zones}}}}}}}"))
+            .unwrap_err();
+        assert!(
+            err.contains("blog/prod (web) is deployed with this security: security.bans: false"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn drop_refuses_sites_without_bans() {
+        let err = validate(
+            "{name: c, type: caddysecurebuild, configuration: {security: {crowdsec: {ban_action: drop}}, sites: [{name: a, domains: [a.com], config: x, security: {bans: false}}]}}",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("sites[a]: security.bans: false"),
+            "{err:#}"
+        );
+        let rendered = render(
+            "{name: c, type: caddysecurebuild, configuration: {security: {crowdsec: {ban_action: drop}}}}",
+        );
+        assert!(file(&rendered, "build/Dockerfile").contains("caddy-crowdsec-bouncer/layer4"));
+        assert!(file(&rendered, "conf/Caddyfile").contains("\t\tlayer4 {\n"));
     }
 
     #[test]

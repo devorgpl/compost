@@ -104,7 +104,7 @@ In the `environment` of every link below, a variable gets one of the link's valu
 | `max_body_size` | – | Largest request body, e.g. `20MB`; larger requests get 413 |
 | `headers.set` | `{}` | Response headers set on every route |
 | `headers.remove` | `[]` | Response headers removed, e.g. `[Server]` |
-| `security.bans` | server default | Block addresses CrowdSec banned. Needs a `caddysecurebuild` ingress, like every `security` key |
+| `security.bans` | server default | Block addresses CrowdSec banned. Needs a `caddysecurebuild` ingress, like every `security` key. `false` is refused when the server has `security.crowdsec.ban_action: drop` |
 | `security.appsec` | server default | Check requests with CrowdSec AppSec |
 | `security.rate_limits` | server default | Rate-limit zones of the server, by name; `[]` for none |
 | `security.own_rate_limits[]` | `[]` | Zones of this entry: `name`, `paths`, `methods`, `events`, `window` (see [caddysecurebuild](Servers-and-Shared-Apps.md#caddysecurebuild-ingress)) |
