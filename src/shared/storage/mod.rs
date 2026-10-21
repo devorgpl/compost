@@ -27,7 +27,7 @@ pub const KIND: &str = "storage";
 const S3_PORT: u16 = 3900;
 const DEFAULT_REGION: &str = "garage";
 /// Image tags by major version.
-const GARAGE_TAGS: &[(u32, &str)] = &[(2, "v2.3.0")];
+const GARAGE_TAGS: &[(u32, &str)] = &[(2, "v2.4.1")];
 const DEFAULT_VERSION: u32 = 2;
 const BACKUP_ITEM: &str = "garage.tar";
 const BACKUP_DIRS: [&str; 3] = ["meta", "data", "secrets"];

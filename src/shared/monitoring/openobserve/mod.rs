@@ -22,8 +22,8 @@ pub struct OpenObserve;
 
 const DEFAULT_VERSION: u32 = 1;
 /// Image tags by major version.
-const IMAGE_TAGS: &[(u32, &str)] = &[(1, "v1.1.0")];
-const COLLECTOR_IMAGE: &str = "otel/opentelemetry-collector-contrib:0.162.0";
+const IMAGE_TAGS: &[(u32, &str)] = &[(1, "v1.1.2")];
+const COLLECTOR_IMAGE: &str = "otel/opentelemetry-collector-contrib:0.163.2";
 const SERVICE: &str = "openobserve";
 const HTTP_PORT: u16 = 5080;
 const DEFAULT_FORWARD_PORT: u16 = 24224;
@@ -477,7 +477,7 @@ mod tests {
             let rendered = render(&home, O2).unwrap();
             let compose = file(&rendered, "compose.yaml");
             assert!(
-                compose.contains("image: openobserve/openobserve:v1.1.0\n"),
+                compose.contains("image: openobserve/openobserve:v1.1.2\n"),
                 "{compose}"
             );
             assert!(compose.contains(r#""127.0.0.1:24224:24224""#), "{compose}");

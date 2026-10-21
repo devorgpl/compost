@@ -4278,7 +4278,7 @@ fn storage_links_get_a_garage_bucket_or_an_external_one() {
         .success();
     let dir = server.server_home.join("shared/storage/storage");
     let compose = fs::read_to_string(dir.join("compose.yaml")).unwrap();
-    assert!(compose.contains("image: dxflrs/garage:v2.3.0"), "{compose}");
+    assert!(compose.contains("image: dxflrs/garage:v2.4.1"), "{compose}");
     assert!(
         compose.contains("user: \""),
         "runs as the server user: {compose}"

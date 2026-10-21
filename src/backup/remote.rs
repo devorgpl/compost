@@ -14,7 +14,7 @@ use crate::server::secrets as server_secrets;
 use crate::shared::ServerCtx;
 
 /// The rclone image, unless the target sets `image`.
-pub const RCLONE_IMAGE: &str = "rclone/rclone:1.68.2";
+pub const RCLONE_IMAGE: &str = "rclone/rclone:1.75.2";
 /// Name of the remote in rclone's configuration (`RCLONE_CONFIG_<NAME>_…`).
 const REMOTE: &str = "remote";
 

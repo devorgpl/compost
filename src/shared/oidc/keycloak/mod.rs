@@ -22,7 +22,7 @@ pub struct Keycloak;
 
 const DEFAULT_VERSION: u32 = 26;
 /// Image tags by major version: the registry has no tags like `26`.
-const IMAGE_TAGS: &[(u32, &str)] = &[(26, "26.6")];
+const IMAGE_TAGS: &[(u32, &str)] = &[(26, "26.8")];
 /// The database Keycloak needs (postgres features used since Keycloak 26).
 const DATABASE_TYPE: &str = "postgres";
 const DATABASE_VERSION: &str = ">=18";
@@ -658,7 +658,7 @@ mod tests {
             let rendered = render(&home, KC).unwrap();
             let compose = file(&rendered, "compose.yaml");
             assert!(
-                compose.contains("image: quay.io/keycloak/keycloak:26.6\n"),
+                compose.contains("image: quay.io/keycloak/keycloak:26.8\n"),
                 "{compose}"
             );
             assert!(

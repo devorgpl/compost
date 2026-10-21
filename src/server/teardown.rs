@@ -14,7 +14,7 @@ use crate::shared::{self, ServerCtx, project_name, shared_dir};
 
 /// Deletes the folder's files that belong to other users (e.g. a database's
 /// data) as root, in a container.
-pub const CLEANUP_IMAGE: &str = "alpine:3.20";
+pub const CLEANUP_IMAGE: &str = "alpine:3.24";
 
 pub struct Options {
     pub yes: bool,

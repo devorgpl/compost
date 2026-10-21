@@ -24,9 +24,9 @@ pub const KIND: &str = "mail";
 const TYPE: &str = "mailpit";
 const DEFAULT_VERSION: u32 = 1;
 /// Image tags by major version of Mailpit.
-const IMAGE_TAGS: &[(u32, &str)] = &[(1, "v1.31.3")];
+const IMAGE_TAGS: &[(u32, &str)] = &[(1, "v1.31.6")];
 const SES_IMAGE: &str = "ghcr.io/domdomegg/aws-ses-v2-local:2.10.2";
-const MOTO_IMAGE: &str = "motoserver/moto:5.2.3";
+const MOTO_IMAGE: &str = "motoserver/moto:5.2.4";
 const SMTP_PORT: u16 = 1025;
 const UI_PORT: u16 = 8025;
 const SES_PORT: u16 = 8005;
@@ -621,7 +621,7 @@ mod tests {
         let plain = render("{name: mail, type: mailpit}");
         let compose = file(&plain, "compose.yaml");
         for expected in [
-            "image: axllent/mailpit:v1.31.3\n",
+            "image: axllent/mailpit:v1.31.6\n",
             "image: ghcr.io/domdomegg/aws-ses-v2-local:2.10.2\n",
             r#"SMTP_TRANSPORT: '{"host":"compost-shared-mail","port":1025,"secure":false,"ignoreTLS":true}'"#,
             "aliases: [mail-ses]",
@@ -638,7 +638,7 @@ mod tests {
             render("{name: mail, type: mailpit, configuration: {moto: true, host_port: 18005}}");
         let compose = file(&full, "compose.yaml");
         for expected in [
-            "image: motoserver/moto:5.2.3\n",
+            "image: motoserver/moto:5.2.4\n",
             "aliases: [mail-aws]",
             r#"ports: ["127.0.0.1:18005:8005"]"#,
             r#"ports: ["127.0.0.1:18006:1025"]"#,

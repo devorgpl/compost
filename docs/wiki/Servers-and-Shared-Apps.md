@@ -458,7 +458,7 @@ shared:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `version` | `2` | Major version; compost pins the image (`dxflrs/garage:v2.3.0`) |
+| `version` | `2` | Major version; compost pins the image (`dxflrs/garage:v2.4.1`) |
 | `image` | – | Another image |
 | `configuration.url` | – | Public URL of the S3 API, served by the ingress; apps get it as `s3_public_endpoint` |
 | `configuration.region` | `garage` | Region name clients sign requests with |
@@ -504,7 +504,7 @@ shared:
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `26` | Major version |
-| `image` | `quay.io/keycloak/keycloak:26.6` for 26 | Required for other versions |
+| `image` | `quay.io/keycloak/keycloak:26.8` for 26 | Required for other versions |
 | `configuration.url` | required | Public URL, `https://<domain>` or `http://<domain>[:port]`, no path |
 | `configuration.admin_user` | `admin` | Administrator in realm `master` |
 | `configuration.admin_password` | generated | Secret. Only used on the first start; can't change later |

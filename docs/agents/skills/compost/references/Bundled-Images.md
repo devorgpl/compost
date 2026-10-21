@@ -12,8 +12,8 @@ The Note column says when an image is used and which key replaces it.
 
 | Type | What | Image or module | Tag | Note |
 |---|---|---|---|---|
-| `communication/webhook, slack, mattermost, discord, matrix, email` | image | `compost-communication:baf7f414075f` | built | built on the server; `image` |
-| `communication/webhook, slack, mattermost, discord, matrix, email` | build base | `alpine:3.20` | moving tag |  |
+| `communication/webhook, slack, mattermost, discord, matrix, email` | image | `compost-communication:532488d1109b` | built | built on the server; `image` |
+| `communication/webhook, slack, mattermost, discord, matrix, email` | build base | `alpine:3.24` | moving tag |  |
 | `database/postgres` | image | `postgres:<version>` | moving tag | `version` is required; `image` |
 | `database/mariadb` | image | `mariadb:11` | moving tag | `image`; `version` sets the major |
 | `database/mysql` | image | `mysql:8` | moving tag | `image`; `version` sets the major |
@@ -28,18 +28,18 @@ The Note column says when an image is used and which key replaces it.
 | `ingress/caddysecurebuild` | crowdsec | `crowdsecurity/crowdsec:v1.8.1` | exact tag |  |
 | `keyvalue/valkey` | image | `valkey/valkey:9` | moving tag | `image`; `version` sets the major |
 | `keyvalue/redis` | image | `redis:8` | moving tag | `image`; `version` sets the major |
-| `mail/mailpit` | image | `axllent/mailpit:v1.31.3` | exact tag | `image` |
+| `mail/mailpit` | image | `axllent/mailpit:v1.31.6` | exact tag | `image` |
 | `mail/mailpit` | ses | `ghcr.io/domdomegg/aws-ses-v2-local:2.10.2` | exact tag | `configuration.ses_image` |
-| `mail/mailpit` | moto | `motoserver/moto:5.2.3` | exact tag | with `moto: true`; `configuration.moto_image` |
-| `monitoring/openobserve` | image | `openobserve/openobserve:v1.1.0` | exact tag | `image` |
-| `monitoring/openobserve` | collector | `otel/opentelemetry-collector-contrib:0.162.0` | exact tag | `configuration.collector_image` |
-| `oidc/keycloak` | image | `quay.io/keycloak/keycloak:26.6` | moving tag | `image` |
-| `storage/garage` | image | `dxflrs/garage:v2.3.0` | exact tag | `image` |
-| `storage/garage` | rclone | `rclone/rclone:1.68.2` | exact tag | for bucket commands |
-| `storage/s3` | rclone | `rclone/rclone:1.68.2` | exact tag | for bucket commands |
+| `mail/mailpit` | moto | `motoserver/moto:5.2.4` | exact tag | with `moto: true`; `configuration.moto_image` |
+| `monitoring/openobserve` | image | `openobserve/openobserve:v1.1.2` | exact tag | `image` |
+| `monitoring/openobserve` | collector | `otel/opentelemetry-collector-contrib:0.163.2` | exact tag | `configuration.collector_image` |
+| `oidc/keycloak` | image | `quay.io/keycloak/keycloak:26.8` | moving tag | `image` |
+| `storage/garage` | image | `dxflrs/garage:v2.4.1` | exact tag | `image` |
+| `storage/garage` | rclone | `rclone/rclone:1.75.2` | exact tag | for bucket commands |
+| `storage/s3` | rclone | `rclone/rclone:1.75.2` | exact tag | for bucket commands |
 | `workflow/temporal` | image | `temporalio/server:1.32.1` | exact tag | `image` |
 | `workflow/temporal` | admin tools | `temporalio/admin-tools:1.32.1` | exact tag | `configuration.admin_tools_image` |
 | `workflow/temporal` | ui | `temporalio/ui:2.56.0` | exact tag | with `ui`; `configuration.ui.image` |
-| `compost` | rclone | `rclone/rclone:1.68.2` | exact tag | backups to S3 and other targets; a target's `image` |
+| `compost` | rclone | `rclone/rclone:1.75.2` | exact tag | backups to S3 and other targets; a target's `image` |
 | `compost` | volume helper | `busybox:stable` | moving tag | copies app volumes in backups and restores |
-| `compost` | cleanup | `alpine:3.20` | moving tag | `dev reset-all` deletes files of other users with it |
+| `compost` | cleanup | `alpine:3.24` | moving tag | `dev reset-all` deletes files of other users with it |
