@@ -462,6 +462,19 @@ fn server_deploy_keeps_caddy_running_when_it_rejects_the_new_configuration() {
     let validate = log.find("--entrypoint caddy").expect("validated");
     let up = log.find(" up -d").expect("started");
     assert!(validate < up, "{log}");
+
+    // Unchanged files, but --pull may bring another Caddy: validated with it.
+    server
+        .run(
+            &["server", "deploy", "--apply", "--pull"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    let log = server.take_docker_log();
+    let pull = log.find(" build --pull").expect("rebuilt");
+    let validate = log.find("--entrypoint caddy").expect("validated");
+    let up = log.find(" up -d").expect("started");
+    assert!(pull < validate && validate < up, "{log}");
 }
 
 #[test]

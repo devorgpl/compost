@@ -747,7 +747,8 @@ fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()>
             project = shell_quote(&project)
         ))?;
     }
-    if plan.changed || recreate {
+    // A pulled image is new too, even when the files are not.
+    if plan.changed || recreate || pull {
         plan.kind.check_before_start(ctx, plan.app)?;
     }
     let recreate = if recreate { " --force-recreate" } else { "" };
