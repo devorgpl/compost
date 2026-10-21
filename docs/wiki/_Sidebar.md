@@ -15,6 +15,7 @@ Use
 - [Secrets](Secrets.md)
 - [Backup and restore](Backup-and-Restore.md)
 - [Notifications](Notifications.md)
+- [Updates](Updates.md)
 - [Admin commands](Admin-Commands.md)
 
 Reference

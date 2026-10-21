@@ -47,6 +47,7 @@ Your compose file is never changed. compost adds networks and variables in an ov
 | | [Backup and restore](Backup-and-Restore.md) | |
 | [Migrating to compost](Migration.md) | [Notifications](Notifications.md) | [AI agents](AI-Agents.md) |
 | [Facts and limits](Facts.md) | [Admin commands](Admin-Commands.md) | |
+| | [Updates](Updates.md) | |
 
 ## Requirements
 
