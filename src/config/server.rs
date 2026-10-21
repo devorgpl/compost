@@ -305,6 +305,9 @@ pub enum TargetConfig {
         /// rclone's S3 provider, e.g. `AWS`, `Minio`, `Cloudflare`. Default `Other`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider: Option<String>,
+        /// Where the credentials come from. Default `keys`.
+        #[serde(default, skip_serializing_if = "S3Credentials::is_keys")]
+        credentials: S3Credentials,
         /// Secret.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         access_key_id: Option<String>,
@@ -315,6 +318,23 @@ pub enum TargetConfig {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<String>,
     },
+}
+
+/// Where an S3 target's credentials come from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum S3Credentials {
+    /// `access_key_id` and `secret_access_key`, stored on the server.
+    #[default]
+    Keys,
+    /// The server's environment: on EC2, its instance role (rclone's `env_auth`).
+    Instance,
+}
+
+impl S3Credentials {
+    fn is_keys(&self) -> bool {
+        *self == Self::Keys
+    }
 }
 
 impl BackupSettings {

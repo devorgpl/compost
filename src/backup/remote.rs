@@ -7,7 +7,7 @@ use std::fmt;
 use anyhow::{Context, Result};
 use serde_yaml_ng::Value;
 
-use crate::config::server::TargetConfig;
+use crate::config::server::{S3Credentials, TargetConfig};
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
 use crate::server::secrets as server_secrets;
@@ -30,6 +30,10 @@ pub struct Remote {
     env: Vec<(String, String)>,
     /// Absolute folder for short-lived files on the server.
     tmp: String,
+    /// Run rclone in the host's network, to reach the instance metadata
+    /// service: with IMDSv2's default hop limit of 1, a bridge-network
+    /// container gets no token.
+    host_network: bool,
 }
 
 // By hand: the credentials must not show up in debug output.
@@ -50,7 +54,9 @@ impl fmt::Display for Remote {
 
 impl Remote {
     /// The target `name`. Credentials missing from the config (the stored one
-    /// has none) come from the secrets stored with `server deploy --secret`.
+    /// has none) come from the secrets stored with `server deploy --secret`;
+    /// with `credentials: instance`, rclone finds them in the server's
+    /// environment and any keys are ignored.
     pub fn new(ctx: &ServerCtx, name: &str, target: &TargetConfig) -> Result<Self> {
         let TargetConfig::S3 {
             bucket,
@@ -58,6 +64,7 @@ impl Remote {
             endpoint,
             region,
             provider,
+            credentials,
             access_key_id,
             secret_access_key,
             image,
@@ -65,30 +72,6 @@ impl Remote {
         else {
             anyhow::bail!("backup target `{name}` is not a remote target");
         };
-        let stored = match (access_key_id, secret_access_key) {
-            (Some(_), Some(_)) => None,
-            _ => stored_target(ctx, name)?,
-        };
-        let from_stored = |key: &str| {
-            stored
-                .as_ref()
-                .and_then(|t| t.get(key))
-                .and_then(Value::as_str)
-                .map(String::from)
-        };
-        let key_id = access_key_id
-            .clone()
-            .or_else(|| from_stored("access_key_id"));
-        let secret = secret_access_key
-            .clone()
-            .or_else(|| from_stored("secret_access_key"));
-        let (Some(key_id), Some(secret)) = (key_id, secret) else {
-            return Err(config_err(format!(
-                "backup target `{name}`: access_key_id and secret_access_key are not stored on the server; \
-                 put them in the secrets file and run `compost server deploy --secret <file>`"
-            )));
-        };
-
         let var = |key: &str| format!("RCLONE_CONFIG_{}_{key}", REMOTE.to_uppercase());
         let mut env = vec![
             (var("TYPE"), "s3".to_string()),
@@ -96,11 +79,23 @@ impl Remote {
                 var("PROVIDER"),
                 provider.clone().unwrap_or_else(|| "Other".into()),
             ),
-            (var("ACCESS_KEY_ID"), key_id),
-            (var("SECRET_ACCESS_KEY"), secret),
             // Uploads must not need the right to create buckets.
             (var("NO_CHECK_BUCKET"), "true".to_string()),
         ];
+        match credentials {
+            // The AWS SDK's chain: on EC2, the instance role.
+            S3Credentials::Instance => env.push((var("ENV_AUTH"), "true".to_string())),
+            S3Credentials::Keys => {
+                let (key_id, secret) = keys(
+                    ctx,
+                    name,
+                    access_key_id.as_ref(),
+                    secret_access_key.as_ref(),
+                )?;
+                env.push((var("ACCESS_KEY_ID"), key_id));
+                env.push((var("SECRET_ACCESS_KEY"), secret));
+            }
+        }
         if let Some(endpoint) = endpoint {
             env.push((var("ENDPOINT"), endpoint.clone()));
         }
@@ -123,6 +118,7 @@ impl Remote {
             image: image.clone().unwrap_or_else(|| RCLONE_IMAGE.into()),
             env,
             tmp: ctx.path("tmp"),
+            host_network: *credentials == S3Credentials::Instance,
         })
     }
 
@@ -147,9 +143,14 @@ impl Remote {
         let mount = mount
             .map(|dir| format!(" -v {}:/data", shell_quote(dir)))
             .unwrap_or_default();
+        let network = if self.host_network {
+            " --network host"
+        } else {
+            ""
+        };
         let env_file = shell_quote(&env_file);
         let output = connector.exec(&format!(
-            "docker run --rm --user \"$(id -u):$(id -g)\" --env-file {env_file}{mount} {} {args}; \
+            "docker run --rm --user \"$(id -u):$(id -g)\"{network} --env-file {env_file}{mount} {} {args}; \
              status=$?; rm -f -- {env_file}; exit $status",
             shell_quote(&self.image)
         ));
@@ -234,6 +235,41 @@ impl Remote {
     }
 }
 
+/// The access key of target `name`: from the config, else from the secrets
+/// stored on the server.
+fn keys(
+    ctx: &ServerCtx,
+    name: &str,
+    access_key_id: Option<&String>,
+    secret_access_key: Option<&String>,
+) -> Result<(String, String)> {
+    let stored = match (access_key_id, secret_access_key) {
+        (Some(_), Some(_)) => None,
+        _ => stored_target(ctx, name)?,
+    };
+    let from_stored = |key: &str| {
+        stored
+            .as_ref()
+            .and_then(|t| t.get(key))
+            .and_then(Value::as_str)
+            .map(String::from)
+    };
+    let key_id = access_key_id
+        .cloned()
+        .or_else(|| from_stored("access_key_id"));
+    let secret = secret_access_key
+        .cloned()
+        .or_else(|| from_stored("secret_access_key"));
+    let (Some(key_id), Some(secret)) = (key_id, secret) else {
+        return Err(config_err(format!(
+            "backup target `{name}`: access_key_id and secret_access_key are not stored on the server; \
+             put them in the secrets file and run `compost server deploy --secret <file>`, \
+             or set `credentials: instance` to use the server's instance role"
+        )));
+    };
+    Ok((key_id, secret))
+}
+
 /// `backup.targets.<name>` of the secrets stored with `server deploy --secret`.
 fn stored_target(ctx: &ServerCtx, name: &str) -> Result<Option<Value>> {
     let Some(text) = ctx.read(server_secrets::PATH)? else {
@@ -297,5 +333,22 @@ mod tests {
             Some("https://s3.example.com")
         );
         assert!(!format!("{remote:?}").contains("s3cr3t"));
+        assert!(!remote.host_network);
+    }
+
+    #[test]
+    fn instance_credentials() {
+        let home = tempfile::TempDir::new().unwrap();
+        let connector = Local { verbose: false };
+        let ctx = ServerCtx {
+            connector: &connector,
+            home: home.path().display().to_string(),
+        };
+        let config = target("{type: s3, bucket: b, provider: AWS, credentials: instance}");
+        let remote = Remote::new(&ctx, "offsite", &config).unwrap();
+        let keys: Vec<&str> = remote.env.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"RCLONE_CONFIG_REMOTE_ENV_AUTH"), "{keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("ACCESS_KEY")), "{keys:?}");
+        assert!(remote.host_network);
     }
 }

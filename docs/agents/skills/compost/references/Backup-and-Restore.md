@@ -50,7 +50,8 @@ An archive for an `s3` target is packed on the server as for `server`, copied to
 | `endpoint` | AWS | URL of an S3-compatible service, e.g. Backblaze B2, Cloudflare R2, Hetzner, MinIO, Garage |
 | `region` | – | Region, where the service needs one |
 | `provider` | `Other` | rclone's S3 provider, e.g. `AWS`, `Minio`, `Cloudflare`, for provider-specific behavior |
-| `access_key_id`, `secret_access_key` | required | Credentials; secrets, see below |
+| `credentials` | `keys` | `keys`: the two keys below. `instance`: none; rclone takes them from the server's environment, e.g. the EC2 instance role (see below) |
+| `access_key_id`, `secret_access_key` | required with `keys` | Credentials; secrets, see below |
 | `image` | `rclone/rclone` of a fixed version | Another rclone image, e.g. from a mirror |
 
 The credentials go in the secrets file, and must be stored on the server, since backups and restores read them there:
@@ -67,6 +68,24 @@ compost server deploy --apply --secret .compost-server.secrets.yaml
 ```
 
 They are left out of the stored `compost-server.yaml` and reach rclone in a file readable only by the server user, never on a command line. The key needs to list, read, write and delete objects in that folder; compost doesn't create the bucket.
+
+#### EC2 instance role
+
+A server on AWS EC2 with an instance profile needs no keys: give the role those rights on the bucket and set `credentials: instance`.
+
+```yaml
+# compost-server.yaml
+backup:
+  targets:
+    offsite:
+      type: s3
+      bucket: acme-backups
+      provider: AWS
+      region: eu-central-1
+      credentials: instance
+```
+
+rclone then runs with `env_auth` and the host's network (`--network host`), so it reaches the instance metadata service (IMDSv2) despite its default hop limit of 1. Keys in the config or stored on the server are not used.
 
 `app backup --all` without a profile writes one archive, to `--target` or the server's `backup.target`; an app's own `backup.target` applies to backups of that app alone and to profiles.
 
@@ -166,7 +185,7 @@ backup:
     weekly: {schedule: off}            # only `backup run weekly` or `--profile weekly`
 ```
 
-**How it runs.** When any profile has a schedule, `server deploy`, `app deploy` and `server restore` put the same version of compost at `~/.compost-server/bin/compost` and add a line to the server user's crontab that runs `compost backup tick` every five minutes. The tick runs every backup whose time has come since its last run, one after another, as `app backup --profile` and `server backup --profile` would: the same archive names, targets and `keep`. It needs nothing from your machine; S3 credentials must be stored on the server (`server deploy --secret`). Its output goes to `~/.compost-server/logs/backup.log`.
+**How it runs.** When any profile has a schedule, `server deploy`, `app deploy` and `server restore` put the same version of compost at `~/.compost-server/bin/compost` and add a line to the server user's crontab that runs `compost backup tick` every five minutes. The tick runs every backup whose time has come since its last run, one after another, as `app backup --profile` and `server backup --profile` would: the same archive names, targets and `keep`. It needs nothing from your machine; S3 credentials must be stored on the server (`server deploy --secret`), unless the target uses [the instance role](#ec2-instance-role). Its output goes to `~/.compost-server/logs/backup.log`.
 
 - **New schedules** wait for their first time; they don't run at once.
 - **Missed times**, e.g. while the server was off, are caught up once at the next tick, if they are less than a month old.

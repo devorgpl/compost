@@ -257,6 +257,7 @@ backup:
   targets:
     nas: {type: server, path: /mnt/nas/compost}   # another folder on the server
     offsite: {type: s3, bucket: acme-backups, path: prod, endpoint: https://s3.example.com}   # credentials in the secrets file
+    aws: {type: s3, bucket: acme-backups, provider: AWS, region: eu-central-1, credentials: instance}   # EC2 instance role, no keys
   profiles:
     daily: {include: [links], keep: 7, target: nas, schedule: "0 3 * * *"}
     predeploy: {keep: 3, server: false}
