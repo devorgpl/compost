@@ -264,6 +264,7 @@ pub fn restore(
         pull: false,
         recreate: false,
         secrets: None,
+        shared: &[],
     };
     let providers = without_consumers(&config, &selected)?;
     let later = providers.shared_apps().count() != config.shared_apps().count()

@@ -678,6 +678,7 @@ fn shared_apps(
         pull: false,
         recreate: false,
         secrets: None,
+        shared: &[],
     };
     server_deploy::deploy(
         connector,

@@ -55,6 +55,11 @@ pub struct ServerDeployArgs {
     /// and deploy with, replacing the stored one; later deploys use it without the file
     #[arg(long, value_name = "FILE")]
     pub secret: Option<PathBuf>,
+    /// Only this shared app (repeatable or comma-separated; `kind/name` when two kinds
+    /// have one with the name): the others, and their part of the stored configuration,
+    /// stay as they were deployed. `--pull` and `--recreate` apply to it only
+    #[arg(long, value_delimiter = ',', conflicts_with = "secret")]
+    pub shared: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -403,6 +408,7 @@ pub fn deploy(
     let ServerDeployArgs {
         deploy: args,
         secret,
+        shared,
     } = args;
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
@@ -459,6 +465,7 @@ pub fn deploy(
         pull: args.pull,
         recreate: args.recreate,
         secrets: text.as_deref(),
+        shared: &shared,
     };
     deploy::deploy(
         connector.as_ref(),

@@ -36,6 +36,9 @@ pub struct Options<'a> {
     pub recreate: bool,
     /// Overlay stored as the shared apps' secrets (`--secret`).
     pub secrets: Option<&'a str>,
+    /// Only these shared apps (`--shared`); all when empty. The others are left
+    /// as they were deployed, and so is their part of the stored config.
+    pub shared: &'a [String],
 }
 
 /// One shared app, rendered and ready to be written to the server.
@@ -53,6 +56,8 @@ struct Plan<'a> {
     compose_changed: bool,
     /// Links to other shared apps, if it has any.
     consumer: Option<Consumer>,
+    /// Deployed by this run (`--shared`, else every one).
+    selected: bool,
 }
 
 impl Plan<'_> {
@@ -96,7 +101,7 @@ pub fn deploy(
     // 2. Render everything before changing anything on the server.
     let mut plans = render_all(&ctx, config, &StateFile::load(&ctx)?)?;
     check_command_services(config, &plans)?;
-    let effective = serde_yaml_ng::to_string(&config.without_secrets()?)?;
+    select(config, &mut plans, options.shared)?;
 
     if options.dry_run {
         return dry_run(&ctx, report.status, &plans, config, options);
@@ -104,6 +109,9 @@ pub fn deploy(
 
     // 3. Initialize and lock.
     let initialize = report.status == Status::Uninitialized;
+    if initialize && !options.shared.is_empty() {
+        return Err(no_deployed_config());
+    }
     if initialize {
         connector.exec(&format!("mkdir -p -- {}", shell_quote(&ctx.home)))?;
     }
@@ -123,11 +131,12 @@ pub fn deploy(
         Some(text) => ServerConfig::parse(&text).ok(),
         None => None,
     };
+    let effective = stored_config(config, previous.as_ref(), &plans)?;
 
     // 4. Write networks and files.
     check_existing_networks(connector, &plans)?;
     create_networks(connector, &plans)?;
-    for plan in &mut plans {
+    for plan in plans.iter_mut().filter(|p| p.selected) {
         let compose_path = compose_path(plan);
         plan.compose_changed = write_files(&ctx, &plan.rendered, &compose_path)?;
         if let Some(consumer) = &plan.consumer {
@@ -155,7 +164,13 @@ pub fn deploy(
         let change = if plan.changed { "updated" } else { "unchanged" };
         out!("  {:<10} {:<16} {change}", plan.kind_name(), plan.app.name);
     }
-    for (kind, name, was_external) in orphans(&state_file, &plans, previous.as_ref()) {
+    // A deploy of some shared apps leaves the others alone, removed ones too.
+    let orphans = if options.shared.is_empty() {
+        orphans(&state_file, &plans, previous.as_ref())
+    } else {
+        Vec::new()
+    };
+    for (kind, name, was_external) in orphans {
         if was_external && forget_external(&ctx, &kind, &name)? {
             state_file.remove_shared(&kind, &name);
             out!("  {kind:<10} {name:<16} removed: external, compost only forgets it");
@@ -189,7 +204,7 @@ pub fn deploy(
     if let Some(previous) = &previous {
         remove_dropped_links(&ctx, previous, &plans)?;
     }
-    for plan in &plans {
+    for plan in plans.iter().filter(|p| p.selected) {
         let kind = plan.kind_name();
         let deployed = state_file
             .shared(kind, &plan.app.name)
@@ -236,6 +251,7 @@ fn render_all<'a>(
             was_deployed: false,
             compose_changed: true,
             consumer: config.consumer(kind_name, app)?,
+            selected: true,
         };
         plan.compare(state_file);
         plans.push(plan);
@@ -302,9 +318,84 @@ fn hash_rendered(rendered: &Rendered) -> String {
     format!("sha256:{hex}")
 }
 
+/// Mark the shared apps named with `--shared` as the ones to deploy; with none
+/// named, all are.
+fn select(config: &ServerConfig, plans: &mut [Plan], names: &[String]) -> Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut wanted = Vec::new();
+    for name in names {
+        let (kind, app) = config
+            .find_shared(name)
+            .map_err(|e| config_err(format!("--shared {name}: {e}")))?;
+        wanted.push((kind, app.name.as_str()));
+    }
+    for plan in plans {
+        plan.selected = wanted
+            .iter()
+            .any(|(kind, name)| *kind == plan.kind_name() && *name == plan.app.name);
+    }
+    Ok(())
+}
+
+fn no_deployed_config() -> anyhow::Error {
+    config_err(
+        "--shared: the server has no deployed compost-server.yaml yet; deploy all shared apps first",
+    )
+}
+
+/// The config stored on the server, without secrets. With `--shared`, it is
+/// the previously deployed one with the selected shared apps replaced, and
+/// every shared app they link to must be in it.
+fn stored_config(
+    config: &ServerConfig,
+    previous: Option<&ServerConfig>,
+    plans: &[Plan],
+) -> Result<String> {
+    let config = config.without_secrets()?;
+    if plans.iter().all(|p| p.selected) {
+        return Ok(serde_yaml_ng::to_string(&config)?);
+    }
+    let mut stored = previous.ok_or_else(no_deployed_config)?.clone();
+    for plan in plans.iter().filter(|p| p.selected) {
+        let kind = plan.kind_name();
+        let app = config
+            .shared
+            .get(kind)
+            .and_then(|apps| apps.iter().find(|a| a.name == plan.app.name))
+            .context("selected shared apps are in the config")?
+            .clone();
+        let apps = stored.shared.entry(kind.to_string()).or_default();
+        match apps.iter_mut().find(|a| a.name == app.name) {
+            Some(old) => *old = app,
+            None => apps.push(app),
+        }
+    }
+    for plan in plans.iter().filter(|p| p.selected) {
+        for link in plan.consumer.iter().flat_map(|c| &c.links) {
+            let deployed = stored
+                .shared
+                .get(link.kind.name())
+                .is_some_and(|apps| apps.iter().any(|a| a.name == link.shared.name));
+            if !deployed {
+                return Err(config_err(format!(
+                    "--shared: {} {} uses {} {}, which is not deployed; add it to --shared",
+                    plan.kind_name(),
+                    plan.app.name,
+                    link.kind.name(),
+                    link.shared.name
+                )));
+            }
+        }
+    }
+    Ok(serde_yaml_ng::to_string(&stored)?)
+}
+
 fn all_networks(plans: &[Plan]) -> Vec<String> {
     let mut networks: Vec<String> = plans
         .iter()
+        .filter(|plan| plan.selected)
         .flat_map(|plan| plan.rendered.networks.iter().cloned())
         .collect();
     networks.sort();
@@ -325,7 +416,7 @@ fn create_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<()> {
 /// Networks of containers compost does not manage must exist: creating one
 /// would take it away from the compose project that should own it.
 fn check_existing_networks(connector: &dyn Connector, plans: &[Plan]) -> Result<()> {
-    for plan in plans {
+    for plan in plans.iter().filter(|p| p.selected) {
         for network in &plan.rendered.existing_networks {
             let exists = connector
                 .exec(&format!(
@@ -551,9 +642,10 @@ fn for_each_dropped_link(
             continue;
         };
         // A shared app removed from the config is left as it is, links included.
+        // So is one this deploy leaves out (`--shared`).
         let Some(plan) = plans
             .iter()
-            .find(|p| p.kind_name() == kind_name && p.app.name == app.name)
+            .find(|p| p.selected && p.kind_name() == kind_name && p.app.name == app.name)
         else {
             continue;
         };
@@ -676,6 +768,7 @@ fn dry_run(
         Some(text) => ServerConfig::parse(&text).ok(),
         None => None,
     };
+    let stored = stored_config(config, previous.as_ref(), plans)?;
     let dry = DryRun::new(ctx.connector);
     let dry_ctx = ServerCtx {
         connector: &dry,
@@ -701,7 +794,8 @@ fn dry_run(
             out!("  network {network}: created");
         }
     }
-    for plan in plans {
+    let selected: Vec<&Plan> = plans.iter().filter(|p| p.selected).collect();
+    for plan in &selected {
         for network in &plan.rendered.existing_networks {
             if !network_exists(network)? {
                 out!(
@@ -713,7 +807,7 @@ fn dry_run(
         }
     }
 
-    for plan in plans {
+    for plan in selected {
         let (changes, compose_changed) = plan_changes(ctx, &dry, &dry_ctx, plan, options.diff)?;
         let action = shared_action(
             &state_file,
@@ -749,7 +843,12 @@ fn dry_run(
             Ok(())
         })?;
     }
-    for (kind, name, was_external) in orphans(&state_file, plans, previous.as_ref()) {
+    let orphans = if options.shared.is_empty() {
+        orphans(&state_file, plans, previous.as_ref())
+    } else {
+        Vec::new()
+    };
+    for (kind, name, was_external) in orphans {
         let what = if !was_external {
             "orphaned: not in the configuration any more, left as it is"
         } else if has_links(ctx, &kind, &name)? {
@@ -760,10 +859,7 @@ fn dry_run(
         out!("  {kind:<10} {name:<16} {what}");
     }
 
-    let mut files = vec![RenderedFile::new(
-        SERVER_CONFIG_FILE.to_string(),
-        serde_yaml_ng::to_string(&config.without_secrets()?)?,
-    )];
+    let mut files = vec![RenderedFile::new(SERVER_CONFIG_FILE.to_string(), stored)];
     if let Some(text) = options.secrets {
         files.push(RenderedFile::secret(
             secrets::PATH.to_string(),

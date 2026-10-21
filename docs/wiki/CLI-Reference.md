@@ -169,6 +169,7 @@ Options:
       --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
       --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
       --secret <FILE>        Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
+      --shared <SHARED>      Only this shared app (repeatable or comma-separated; `kind/name` when two kinds have one with the name): the others, and their part of the stored configuration, stay as they were deployed. `--pull` and `--recreate` apply to it only
   -h, --help                 Print help
 ```
 

@@ -553,6 +553,88 @@ fn server_deploy_then_apply() {
 }
 
 #[test]
+fn server_deploy_only_selected_shared_apps() {
+    let server = LocalServer::new();
+    server.write_work_file("compost-server.yaml", SERVER_CONFIG);
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+
+    // Nothing deployed yet: there is no config to keep the others from.
+    server
+        .run(
+            &["server", "deploy", "--apply", "--shared", "caddy-main"],
+            &running,
+        )
+        .code(2)
+        .stderr(contains("deploy all shared apps first"));
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    server.take_docker_log();
+    server
+        .run(&["server", "deploy", "--dry-run", "--shared", "nope"], &[])
+        .code(2)
+        .stderr(contains("--shared nope: no shared app `nope`"));
+
+    // Postgres changed, but only Caddy is deployed, pulled and recreated.
+    server.write_work_file(
+        "compost-server.yaml",
+        &SERVER_CONFIG.replace("version: 16}", "version: 16, image: 'postgres:16.9'}"),
+    );
+    server
+        .run(
+            &[
+                "server",
+                "deploy",
+                "--dry-run",
+                "--pull",
+                "--apply",
+                "--shared",
+                "caddy-main",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("ingress    caddy-main       pulled"))
+        .stdout(contains("database   postgres16").not());
+    server
+        .run(
+            &[
+                "server",
+                "deploy",
+                "--apply",
+                "--pull",
+                "--recreate",
+                "--shared",
+                "ingress/caddy-main",
+            ],
+            &running,
+        )
+        .success()
+        .stdout(contains("starting ingress caddy-main ... running"))
+        .stdout(contains("database   postgres16       updated").not())
+        .stdout(contains("starting database").not());
+    let log = server.take_docker_log();
+    assert!(log.contains("compost-ingress-caddy-main pull -q"), "{log}");
+    assert!(
+        log.contains(
+            "compost-ingress-caddy-main up -d --quiet-pull --remove-orphans --force-recreate"
+        ),
+        "{log}"
+    );
+    assert!(!log.contains("-p compost-database-postgres16"), "{log}");
+    let stored = server.read_server_file("compost-server.yaml");
+    assert!(!stored.contains("postgres:16.9"), "{stored}");
+
+    // A full deploy takes the change.
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success()
+        .stdout(contains("database   postgres16       updated"));
+    let stored = server.read_server_file("compost-server.yaml");
+    assert!(stored.contains("postgres:16.9"), "{stored}");
+}
+
+#[test]
 fn caddy_joins_existing_networks_and_serves_sites() {
     let server = LocalServer::new();
     let config = |sites: &str| {
