@@ -42,6 +42,7 @@ just            # list recipes
 just ci         # formatting, clippy, tests, docs check: run before committing
 just try init   # run compost with a throwaway home in target/
 just docs       # regenerate CLI-Reference.md and docs/agents after changing commands, options or docs/wiki
+just outdated   # newer versions of the images and Go modules compost pins, with the lines that set them
 ```
 
 User-visible changes update the matching page in [`docs/wiki`](docs/wiki/Home.md) in the same commit.

@@ -79,6 +79,10 @@ dist:
 bump version:
     scripts/bump-version.sh {{version}}
 
+# Newer versions of the images and Go modules compost pins (needs curl, jq)
+outdated:
+    scripts/outdated.sh
+
 # Release notes for a tag, e.g. `just release-notes v0.1.0`
 release-notes tag:
     scripts/release-notes.sh {{tag}}

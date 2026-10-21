@@ -9,8 +9,11 @@ use crate::shared::{self, Bundled};
 #[derive(Debug, Args)]
 pub struct ImagesArgs {
     /// Print a Markdown table, as on the wiki page Bundled-Images
-    #[arg(long)]
+    #[arg(long, conflicts_with = "tsv")]
     pub markdown: bool,
+    /// One line per image or module: what, reference, tag (for scripts/outdated.sh)
+    #[arg(long, hide = true)]
+    pub tsv: bool,
 }
 
 /// Images compost runs itself, outside any shared app.
@@ -70,6 +73,14 @@ fn tag(bundled: &Bundled) -> &'static str {
 
 pub fn run(args: ImagesArgs) -> Result<()> {
     let groups = groups()?;
+    if args.tsv {
+        for (_, bundled) in &groups {
+            for b in bundled {
+                out!("{}\t{}\t{}", b.what, b.reference, tag(b));
+            }
+        }
+        return Ok(());
+    }
     if args.markdown {
         out!("| Type | What | Image or module | Tag | Note |");
         out!("|---|---|---|---|---|");
