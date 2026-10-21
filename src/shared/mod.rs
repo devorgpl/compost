@@ -387,6 +387,13 @@ pub trait Kind: Sync {
         Duration::from_secs(60)
     }
 
+    /// Check the new files of a shared app before `server deploy` starts or
+    /// recreates it: an error stops the deploy and leaves the running one
+    /// alone.
+    fn check_before_start(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Result<()> {
+        Ok(())
+    }
+
     /// Apply changed configuration files to the running shared app without
     /// recreating it. Called when files other than its compose files changed.
     /// `Ok(false)`: not supported or not running, so deploy recreates it.

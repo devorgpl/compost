@@ -76,7 +76,7 @@ compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [-
 1. validates the config (exit 2 on errors, before anything touches the server);
 2. creates compost's folder and the Docker networks;
 3. renders each shared app's files and uploads them, generating missing passwords;
-4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
+4. with `--apply`: starts every shared app with `docker compose up -d` and waits until it runs, then prints `server state`. A container counts as running once it has run 5 seconds without restarting, so one that exits right after starting fails the deploy, with its last log lines. A shared app starts after the shared apps it needs running (Keycloak after its database and Caddy); links to a monitoring app don't count, so Caddy can send its logs to the OpenObserve it serves.
 
 Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, compared with the server: networks to create, the files of each shared app that would be added, changed or removed (files with secrets only named), dropped links and shared apps left out of the config, and what `--apply` would do with each shared app: `created`, `recreated` (its compose files or override changed, `--recreate`, or its last deploy didn't finish), `reloaded without a restart` (Caddy, when only its other files changed), `pulled` (`--pull`) or `unchanged`. `--diff` adds the changed lines of files without secrets. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
@@ -147,7 +147,7 @@ shared:
 
 With [`monitoring`](#monitoring-shared-apps), Caddy also serves its Prometheus metrics (requests, durations, sizes per host) on port 9180 inside its container, not published on the host, and the collector scrapes them. This needs Caddy 2.8 or newer; the default image is. With `monitoring.traces: true` it also traces every request, see [Request tracing](#request-tracing).
 
-Caddy runs as the server user, so its files can be backed up and removed without root. Hosts and paths no app uses get a 404. When an app is deployed, Caddy is reloaded, not restarted; a site that fails `caddy validate` is rolled back and fails the deploy.
+Caddy runs as the server user, so its files can be backed up and removed without root. Hosts and paths no app uses get a 404. When an app is deployed, Caddy is reloaded, not restarted; a site that fails `caddy validate` is rolled back and fails the deploy. Before `server deploy` starts or recreates a changed Caddy, it runs `caddy validate` on the new files in a throwaway container of the new image: if Caddy rejects them, the deploy stops with Caddy's error and the running Caddy keeps serving with its previous configuration. Fix the configuration and deploy again; until then, restarting the container would load the rejected files.
 
 ### caddysecurebuild (`ingress`)
 

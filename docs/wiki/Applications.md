@@ -652,7 +652,7 @@ A deploy:
 2. checks the server and picks a shared app for each link (exit 3 if none matches, or a domain is taken); with `--apply` and `deployment.backup` (or `--backup <profile>`), backs up the deployed instance with that [profile](Backup-and-Restore.md#before-a-deploy), and stops if the backup fails;
 3. uploads the sources: the whole folder with `build: true` or `attach_sources: true`, otherwise only the compose file. Left out: `.git/`, files given with `-f`, `.compost-*.yaml`, `.compost.*.yaml` and patterns in `.compostignore` (gitignore syntax);
 4. writes the override file and link records. **Without `--apply` it stops here.**
-5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`), sends the images built on this machine (with `build: local`, built before step 3; see [Building images](#building-images)) or runs `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
+5. with `--apply`: creates databases, users and realms; runs `docker compose build` (with `build: true`), sends the images built on this machine (with `build: local`, built before step 3; see [Building images](#building-images)) or runs `pull`; then `up -d --remove-orphans`; waits up to 60 s until every service runs (or is healthy) or has exited with code 0, and has run 5 seconds without restarting; removes dropped links; updates Caddy's routes; records a [release](#releases-and-rollback).
 
 The result is shown as by `app state`. Running the same deploy again keeps data and passwords and doesn't recreate unchanged containers.
 

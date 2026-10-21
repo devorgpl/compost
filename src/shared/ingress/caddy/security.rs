@@ -19,9 +19,13 @@ const MODULES: [&str; 3] = [
     "github.com/hslatman/caddy-crowdsec-bouncer/appsec@v0.14.1",
     "github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db",
 ];
-/// The bouncer's connection matcher, with caddy-l4: built only for
-/// `ban_action: drop`, so other servers keep their image.
-const LAYER4_MODULE: &str = "github.com/hslatman/caddy-crowdsec-bouncer/layer4@v0.14.1";
+/// The bouncer's connection matcher and caddy-l4's `close` handler, at the
+/// caddy-l4 version the bouncer requires: built only for `ban_action: drop`,
+/// so other servers keep their image.
+const LAYER4_MODULES: [&str; 2] = [
+    "github.com/hslatman/caddy-crowdsec-bouncer/layer4@v0.14.1",
+    "github.com/mholt/caddy-l4/modules/l4close@v0.1.1",
+];
 
 pub const CROWDSEC_IMAGE: &str = "crowdsecurity/crowdsec:v1.8.1";
 
@@ -316,15 +320,16 @@ impl ServerSecurity {
         }
         lines.push("\tticker_interval 15s".to_string());
         lines.push("}".to_string());
-        // Before TLS and HTTP: a banned address's connection is closed. A
-        // route needs `close`; without a handler it goes on to HTTP.
+        // Before TLS and HTTP: a banned address's connection is closed. The
+        // bouncer's matcher matches allowed addresses, hence `not`; a route
+        // needs `close`, without a handler it goes on to HTTP.
         if self.drops() {
             lines.extend(
                 [
                     "servers {",
                     "\tlistener_wrappers {",
                     "\t\tlayer4 {",
-                    "\t\t\t@compost_banned crowdsec",
+                    "\t\t\t@compost_banned not crowdsec",
                     "\t\t\troute @compost_banned {",
                     "\t\t\t\tclose",
                     "\t\t\t}",
@@ -433,7 +438,7 @@ fn is_hub_name(name: &str) -> bool {
 pub fn dockerfile(version: u32, security: &ServerSecurity) -> Result<String> {
     let mut modules = MODULES.to_vec();
     if security.drops() {
-        modules.push(LAYER4_MODULE);
+        modules.extend(LAYER4_MODULES);
     }
     render_template(
         include_str!("templates/Dockerfile.j2"),
@@ -766,10 +771,9 @@ mod tests {
         }
         assert!(!dockerfile.contains("layer4"), "{dockerfile}");
         let dropping = super::dockerfile(2, &security("{crowdsec: {ban_action: drop}}")).unwrap();
-        assert!(
-            dropping.contains(&format!("--with {LAYER4_MODULE}")),
-            "{dropping}"
-        );
+        for module in LAYER4_MODULES {
+            assert!(dropping.contains(&format!("--with {module}")), "{dropping}");
+        }
     }
 
     #[test]
@@ -786,7 +790,7 @@ mod tests {
         let dropping = options("{crowdsec: {ban_action: drop}}");
         assert!(
             dropping.ends_with(
-                "}\nservers {\n\tlistener_wrappers {\n\t\tlayer4 {\n\t\t\t@compost_banned crowdsec\n\t\t\troute @compost_banned {\n\t\t\t\tclose\n\t\t\t}\n\t\t}\n\t\ttls\n\t}\n}"
+                "}\nservers {\n\tlistener_wrappers {\n\t\tlayer4 {\n\t\t\t@compost_banned not crowdsec\n\t\t\troute @compost_banned {\n\t\t\t\tclose\n\t\t\t}\n\t\t}\n\t\ttls\n\t}\n}"
             ),
             "{dropping}"
         );

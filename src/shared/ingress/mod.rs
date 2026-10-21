@@ -105,6 +105,11 @@ pub trait IngressType: Sync {
         Ok(false)
     }
 
+    /// See [`Kind::check_before_start`].
+    fn check_before_start(&self, _ctx: &ServerCtx, _config: &SharedAppConfig) -> Result<()> {
+        Ok(())
+    }
+
     /// Whether `reload_shared` can apply changed files, for `--dry-run`.
     fn reloads(&self) -> bool {
         false
@@ -169,6 +174,10 @@ impl Kind for IngressKind {
 
     fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
         find_type(&config.type_name)?.reload_shared(ctx, config)
+    }
+
+    fn check_before_start(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<()> {
+        find_type(&config.type_name)?.check_before_start(ctx, config)
     }
 
     fn state_lines(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Vec<String> {

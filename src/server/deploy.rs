@@ -647,6 +647,9 @@ fn start(ctx: &ServerCtx, plan: &Plan, pull: bool, recreate: bool) -> Result<()>
             project = shell_quote(&project)
         ))?;
     }
+    if plan.changed || recreate {
+        plan.kind.check_before_start(ctx, plan.app)?;
+    }
     let recreate = if recreate { " --force-recreate" } else { "" };
     // --remove-orphans: a service that was renamed (e.g. `postgres` before
     // services were named `compost-shared-<name>`) must not keep running.

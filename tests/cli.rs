@@ -156,6 +156,7 @@ case "$*" in
   "image ls --no-trunc "*)
     printf 'sha256:aa\told/app:1\t200MB\nsha256:1111111111111111\tnginx:1\t50MB\n'
     printf 'sha256:bb\tcompost-release/myapp-staging:1-web\t200MB\nsha256:cc\t<none>:<none>\t10MB\n' ;;
+  "inspect --format {{index .Config.Labels"*) echo "app ${FAKE_DOCKER_RESTARTS:-0} ${FAKE_DOCKER_STARTED:-2020-01-01T00:00:00Z}" ;;
   "inspect --format "*) echo sha256:1111111111111111 ;;
   "image prune -f") echo "Total reclaimed space: 10MB" ;;
   "builder prune -f") echo "Total reclaimed space: 300MB" ;;
@@ -166,11 +167,14 @@ case "$*" in
     for s in ${FAKE_DOCKER_SERVICES:-app}; do
       grep -qx "$s" "$FAKE_DOCKER_LOG.stopped" 2>/dev/null || echo "$s"
     done ;;
+  "compose "*" ps -q") echo c0ffee ;;
   "compose "*" ps "*) echo "app running 0 healthy" ;;
   "compose "*" stop"*)
     names="${*##* stop}"; [ -n "$names" ] || names="${FAKE_DOCKER_SERVICES:-app}"
     for s in $names; do echo "$s" >> "$FAKE_DOCKER_LOG.stopped"; done ;;
   "compose "*" start "*) rm -f "$FAKE_DOCKER_LOG.stopped" ;;
+  "compose "*" run "*"--entrypoint caddy "*" validate "*)
+    [ -z "$FAKE_CADDY_INVALID" ] || { echo "module not registered: layer4.handlers.close" >&2; exit 1; } ;;
   "compose "*" run "*" failing-job"*) echo "job failed" >&2; exit 1 ;;
   "compose "*" run "*" exit-7"*) exit 7 ;;
   "compose "*" run "*) echo "job output" ;;
@@ -406,6 +410,37 @@ fn server_deploy_dry_run_changes_nothing() {
             "added    shared/database/postgres16/secrets/postgres.env  (secret, not shown)",
         ));
     assert!(!server.server_home.exists());
+}
+
+#[test]
+fn server_deploy_keeps_caddy_running_when_it_rejects_the_new_configuration() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  ingress:\n    - {name: caddy-main, type: caddysecurebuild}\n",
+    );
+    server
+        .run(&["server", "deploy", "--apply"], &[("FAKE_CADDY_INVALID", "1")])
+        .failure()
+        .stdout(contains("starting ingress caddy-main ... failed"))
+        .stderr(contains("ingress caddy-main did not start: Caddy rejected the new configuration; the running Caddy keeps the previous one"))
+        .stderr(contains("module not registered"));
+    let log = server.take_docker_log();
+    let build = log.find(" build -q").expect("built first");
+    let validate = log.find("--entrypoint caddy").expect("validated");
+    assert!(build < validate, "{log}");
+    assert!(!log.contains(" up -d"), "{log}");
+
+    server
+        .run(
+            &["server", "deploy", "--apply"],
+            &[("FAKE_DOCKER_RUNNING", "1")],
+        )
+        .success();
+    let log = server.take_docker_log();
+    let validate = log.find("--entrypoint caddy").expect("validated");
+    let up = log.find(" up -d").expect("started");
+    assert!(validate < up, "{log}");
 }
 
 #[test]

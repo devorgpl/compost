@@ -509,6 +509,26 @@ impl IngressType for Caddy {
         }
     }
 
+    /// Check the new files in a throwaway container of the new image, with
+    /// the service's mounts and environment: the running Caddy keeps its
+    /// configuration until the check passes. A built image is built first.
+    fn check_before_start(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<()> {
+        let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
+        let project = shell_quote(&project_name(KIND, &config.name));
+        let service = shell_quote(&service_name(&config.name));
+        if self.secure {
+            ctx.connector
+                .exec(&format!("cd {dir} && docker compose -p {project} build -q"))
+                .context("could not build Caddy; the running Caddy is left as it is")?;
+        }
+        ctx.connector
+            .exec(&format!(
+                "cd {dir} && docker compose -p {project} run --rm --no-deps -T --entrypoint caddy {service} validate --config /etc/caddy/Caddyfile --adapter caddyfile"
+            ))
+            .context("Caddy rejected the new configuration; the running Caddy keeps the previous one until it restarts")?;
+        Ok(())
+    }
+
     /// Validate the configuration files, then reload them without a restart.
     fn reload_shared(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<bool> {
         let dir = shell_quote(&ctx.path(&shared_dir(KIND, &config.name)));
