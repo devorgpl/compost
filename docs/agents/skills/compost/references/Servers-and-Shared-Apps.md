@@ -115,6 +115,7 @@ shared:
 | `image` | `caddy:<version>-alpine` | |
 | `configuration.http_port` | `80` | Host port |
 | `configuration.https_port` | `443` | Host port, TCP and UDP |
+| `configuration.bind` | every interface | Host address the ports are published on, e.g. `127.0.0.1` to reach Caddy only from the server itself while it runs next to another proxy ([Migration](Migration.md#trying-caddy-next-to-the-old-proxy)). An IPv4 or IPv6 address |
 | `configuration.tls` | `auto` | How sites get certificates: `auto`, `internal` or `off`, see [TLS](#tls) |
 | `configuration.acme_email` | – | Contact for the ACME account. Only with `tls: auto` |
 | `configuration.networks` | `[]` | Existing Docker networks Caddy joins too, so `sites` can reach containers compost doesn't manage. Never created: `server deploy` fails if one is missing |
@@ -142,6 +143,8 @@ shared:
 | `auto` | From Let's Encrypt, renewed by Caddy. Every domain needs public DNS pointing to the server and port 80 or 443 reachable from the internet before the first deploy. HTTP redirects to HTTPS | `http_port` and `https_port` |
 | `internal` | Signed by Caddy's own local CA. Browsers warn unless they trust its root certificate, `data/caddy/pki/authorities/local/root.crt` in the Caddy folder. For test servers and domains without public DNS | `http_port` and `https_port` |
 | `off` | None: sites are served over plain HTTP. For a local machine, or behind another proxy that terminates TLS | `http_port` only; `https_port` is not published |
+
+With `tls: auto`, Let's Encrypt must reach `http_port` or `https_port` from the internet: with `bind: 127.0.0.1`, that only works when something else on the server forwards those connections to Caddy unchanged. Otherwise use `internal` or `off` while Caddy is bound to the server itself.
 
 `acme_email` is the contact Let's Encrypt uses for expiry warnings; compost refuses the config when it is set with any `tls` other than `auto`. Certificates are kept in `data/` (see [Files and folders](Files-and-Folders.md)) and are part of `server backup`, so a restored server doesn't request them again.
 

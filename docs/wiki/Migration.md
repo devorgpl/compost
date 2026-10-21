@@ -91,6 +91,29 @@ Traefik labels such as ``traefik.http.routers.shop.rule=Host(`shop.example.com`)
 
 </details>
 
+### Trying Caddy next to the old proxy
+
+Optionally, run Caddy first on other ports, published only on the server itself, while the old proxy keeps 80 and 443. Without `bind`, those ports are open to the internet, and with `tls: off` every site would be served there over plain HTTP. Let's Encrypt can't reach Caddy there, so use Caddy's own certificates:
+
+```yaml
+      configuration:
+        http_port: 8080
+        https_port: 8443
+        bind: 127.0.0.1
+        tls: internal                   # for the test only
+        # networks and sites as above
+```
+
+```sh
+compost server deploy --apply
+# on the server:
+curl -k --resolve shop.example.com:8443:127.0.0.1 https://shop.example.com:8443/
+```
+
+When the sites answer, set the ports back to 80 and 443, remove `bind`, set `tls: auto` (and `acme_email`), and switch as below. Changing ports or `bind` recreates Caddy.
+
+### Switching
+
 Check, switch, check:
 
 ```sh

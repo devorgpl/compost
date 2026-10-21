@@ -14,10 +14,10 @@ services:
     env_file: [secrets/crowdsec.env]
 {%- endif %}
     ports:
-      - "{{ http_port }}:80"
+      - "{{ bind }}{{ http_port }}:80"
 {%- if publish_https %}
-      - "{{ https_port }}:443"
-      - "{{ https_port }}:443/udp"
+      - "{{ bind }}{{ https_port }}:443"
+      - "{{ bind }}{{ https_port }}:443/udp"
 {%- endif %}
     volumes:
       # The folder, not single files: compost replaces files, and a file

@@ -6,6 +6,7 @@ mod security;
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
+use std::net::IpAddr;
 
 use anyhow::{Context, Result, bail, ensure};
 use minijinja::context;
@@ -41,6 +42,9 @@ const SECURE_TYPE: &str = "caddysecurebuild";
 struct CaddyConfig {
     http_port: u16,
     https_port: u16,
+    /// The host address the ports are published on, e.g. `127.0.0.1` while
+    /// Caddy runs next to another proxy. Default: every interface.
+    bind: Option<String>,
     tls: Tls,
     acme_email: Option<String>,
     /// Existing docker networks Caddy joins besides compost-ingress, so
@@ -59,6 +63,7 @@ impl Default for CaddyConfig {
         Self {
             http_port: 80,
             https_port: 443,
+            bind: None,
             tls: Tls::Auto,
             acme_email: None,
             networks: Vec::new(),
@@ -257,6 +262,12 @@ impl IngressType for Caddy {
             caddy.http_port != caddy.https_port,
             "http_port and https_port must differ"
         );
+        if let Some(bind) = &caddy.bind {
+            ensure!(
+                bind.parse::<IpAddr>().is_ok(),
+                "bind: `{bind}` is not an IP address like 127.0.0.1"
+            );
+        }
         if let Some(email) = &caddy.acme_email {
             ensure!(
                 email.contains('@')
@@ -450,6 +461,7 @@ impl IngressType for Caddy {
                 service => service_name(&config.name),
                 container => project_name(KIND, &config.name),
                 user,
+                bind => published_on(caddy.bind.as_deref())?,
                 http_port => caddy.http_port,
                 https_port => caddy.https_port,
                 publish_https => caddy.tls != Tls::Off,
@@ -731,6 +743,17 @@ fn response_lines(link: &IngressLink) -> Vec<String> {
         lines.push("}".to_string());
     }
     lines
+}
+
+/// The address part of a published port, e.g. `127.0.0.1:` or `[::1]:`.
+fn published_on(bind: Option<&str>) -> Result<String> {
+    let Some(bind) = bind else {
+        return Ok(String::new());
+    };
+    Ok(match bind.parse::<IpAddr>()? {
+        IpAddr::V4(address) => format!("{address}:"),
+        IpAddr::V6(address) => format!("[{address}]:"),
+    })
 }
 
 /// Compose service of the CrowdSec agent; unique, since Caddy also sits on
@@ -1128,6 +1151,32 @@ mod tests {
 
         let rendered = render("{name: c, type: caddy, configuration: {acme_email: a@b.c}}");
         assert!(file(&rendered, "conf/Caddyfile").contains("\temail a@b.c\n"));
+    }
+
+    #[test]
+    fn binds_the_ports_to_an_address() {
+        let rendered = render(
+            "{name: c, type: caddy, configuration: {http_port: 8080, https_port: 8443, bind: 127.0.0.1}}",
+        );
+        let compose = file(&rendered, "compose.yaml");
+        for port in [
+            r#""127.0.0.1:8080:80""#,
+            r#""127.0.0.1:8443:443""#,
+            r#""127.0.0.1:8443:443/udp""#,
+        ] {
+            assert!(compose.contains(port), "{compose}");
+        }
+        let rendered = render("{name: c, type: caddy, configuration: {bind: '::1', tls: off}}");
+        assert!(
+            file(&rendered, "compose.yaml").contains(r#""[::1]:80:80""#),
+            "{}",
+            file(&rendered, "compose.yaml")
+        );
+        let err = validate("{name: c, type: caddy, configuration: {bind: localhost}}").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bind: `localhost` is not an IP address like 127.0.0.1"
+        );
     }
 
     const SECURE: &str = "{name: caddy-main, type: caddysecurebuild, version: 2, configuration: {security: {crowdsec: {whitelist: [203.0.113.7]}, rate_limits: [{name: login, paths: [/login], methods: [POST], events: 10, window: 1m}]}, sites: [{name: shop, domains: [shop.example.com], config: 'respond ok', security: {appsec: false}}]}}";
