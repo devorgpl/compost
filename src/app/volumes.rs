@@ -8,7 +8,7 @@ use crate::connector::{Connector, shell_quote};
 use crate::shared::ServerCtx;
 
 /// Image of the helper container that reads and writes volume contents.
-const HELPER_IMAGE: &str = "busybox:stable";
+pub const HELPER_IMAGE: &str = "busybox:stable";
 
 /// `docker run` of the helper with the volume mounted at `/v`.
 fn helper(volume: &str, options: &str, command: &str) -> String {

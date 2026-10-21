@@ -20,9 +20,9 @@ use crate::config::check_name;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered,
-    RenderedFile, Role, ServerCtx, SharedAppConfig, app_service, generate_password, is_domain,
-    is_network_name, project_name, render_template, service_name, shared_dir,
+    AppCtx, Bundled, Contribution, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored,
+    Rendered, RenderedFile, Role, ServerCtx, SharedAppConfig, app_service, generate_password,
+    is_domain, is_network_name, project_name, render_template, service_name, shared_dir,
 };
 
 const DEFAULT_VERSION: u32 = 2;
@@ -205,6 +205,17 @@ impl IngressType for Caddy {
             }],
             traces: true,
         })
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        if self.secure {
+            return security::bundled(DEFAULT_VERSION);
+        }
+        vec![Bundled::new(
+            "image",
+            format!("caddy:{DEFAULT_VERSION}-alpine"),
+            "`image`; `version` sets the major",
+        )]
     }
 
     fn generate(&self) -> Generated {

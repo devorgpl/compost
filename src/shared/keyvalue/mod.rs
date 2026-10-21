@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
+    AppCtx, Bundled, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
     RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, app_service,
     check_link_environment, connectors_dir, generate_password, host_address, link_value,
     parse_link, project_name, render_template, resolve_versioned, service_name, shared_dir,
@@ -375,6 +375,15 @@ impl Kind for KeyValueKind {
 
     fn generate(&self, type_name: &str) -> Result<Generated> {
         Ok(generated(Flavor::find(type_name)?))
+    }
+
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>> {
+        let flavor = Flavor::find(type_name)?;
+        Ok(vec![Bundled::new(
+            "image",
+            flavor.image(flavor.default_version()),
+            "`image`; `version` sets the major",
+        )])
     }
 
     fn apply_defaults(&self, config: &mut SharedAppConfig) {

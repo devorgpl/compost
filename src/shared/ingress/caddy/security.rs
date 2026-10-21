@@ -11,7 +11,7 @@ use crate::shared::ingress::security::{
     IgnoreRule, LinkSecurity, RateLimit, ignore_lines, is_address_or_network, is_duration,
     validate_ignore, validate_rate_limits,
 };
-use crate::shared::render_template;
+use crate::shared::{Bundled, render_template};
 
 /// Modules built into Caddy, pinned so a deploy builds the same binary.
 const MODULES: [&str; 3] = [
@@ -28,6 +28,30 @@ const LAYER4_MODULES: [&str; 2] = [
 ];
 
 pub const CROWDSEC_IMAGE: &str = "crowdsecurity/crowdsec:v1.8.1";
+
+/// The images the build starts from, the modules it adds and the agent's image.
+pub fn bundled(version: u32) -> Vec<Bundled> {
+    let mut bundled = vec![
+        Bundled::new(
+            "build base",
+            format!("caddy:{version}-builder"),
+            "`version` sets the major",
+        ),
+        Bundled::new(
+            "build base",
+            format!("caddy:{version}-alpine"),
+            "`version` sets the major",
+        ),
+    ];
+    bundled.extend(MODULES.iter().map(|m| Bundled::new("Go module", *m, "")));
+    bundled.extend(
+        LAYER4_MODULES
+            .iter()
+            .map(|m| Bundled::new("Go module", *m, "with `ban_action: drop`")),
+    );
+    bundled.push(Bundled::new("crowdsec", CROWDSEC_IMAGE, ""));
+    bundled
+}
 
 /// Port of the CrowdSec AppSec component, on the private network.
 const APPSEC_PORT: u16 = 7422;
@@ -770,6 +794,13 @@ mod tests {
             );
         }
         assert!(!dockerfile.contains("layer4"), "{dockerfile}");
+        // `compost images` lists what the build uses.
+        for base in bundled(2).iter().filter(|b| b.what == "build base") {
+            assert!(
+                dockerfile.contains(&format!("FROM {}", base.reference)),
+                "{dockerfile}"
+            );
+        }
         let dropping = super::dockerfile(2, &security("{crowdsec: {ban_action: drop}}")).unwrap();
         for module in LAYER4_MODULES {
             assert!(dropping.contains(&format!("--with {module}")), "{dropping}");

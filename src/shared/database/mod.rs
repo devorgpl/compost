@@ -10,8 +10,8 @@ use anyhow::{Context, Result, bail};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered, Resolution,
-    ServerCtx, SharedAppConfig, parse_link,
+    AppCtx, Bundled, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
+    Resolution, ServerCtx, SharedAppConfig, parse_link,
 };
 use crate::config::app::AppConfig;
 use base::{DatabaseLink, DatabaseRecord, Endpoint, Purge};
@@ -94,6 +94,9 @@ pub trait DatabaseType: Sync {
 
     /// Starter configuration for `server generate`.
     fn generate(&self) -> Generated;
+
+    /// Images and modules at the default version (`compost images`).
+    fn bundled(&self) -> Vec<Bundled>;
 
     fn render(&self, ctx: &ServerCtx, config: &SharedAppConfig) -> Result<Rendered>;
 
@@ -183,6 +186,10 @@ impl Kind for DatabaseKind {
 
     fn generate(&self, type_name: &str) -> Result<Generated> {
         Ok(find_type(type_name)?.generate())
+    }
+
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>> {
+        Ok(find_type(type_name)?.bundled())
     }
 
     fn apply_defaults(&self, config: &mut SharedAppConfig) {

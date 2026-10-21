@@ -6,6 +6,7 @@ mod config;
 mod context;
 mod dev;
 mod generate;
+mod images;
 mod init;
 mod secret;
 mod server;
@@ -79,6 +80,8 @@ pub enum Command {
     /// Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
     #[command(subcommand)]
     Agent(agent::AgentCommand),
+    /// List the images and modules this compost uses unless the config names others
+    Images(images::ImagesArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -310,6 +313,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Secret(command) => secret::run(&home, server, command, &connect),
         Command::Config(command) => config::run(&home, command),
         Command::Agent(command) => agent::run(command),
+        Command::Images(args) => images::run(args),
         Command::Connect { name } => context::connect(&home, &name),
         Command::Disconnect => context::disconnect(&home),
         Command::App(command) => app::run(&home, server, command, &connect),

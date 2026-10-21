@@ -29,6 +29,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Configuration](https://github.com/devorgpl/compost/wiki/Configuration): every key of `compost.yaml`, overlays, `compost-server.yaml`, `servers.yaml`, merge rules, preferences, environment variables
 - [Files and folders](https://github.com/devorgpl/compost/wiki/Files-and-Folders): files on your machine, in app and infrastructure folders, on the server, and Docker names
 - [CLI reference](https://github.com/devorgpl/compost/wiki/CLI-Reference): the `--help` of every command, and exit codes
+- [Bundled images](https://github.com/devorgpl/compost/wiki/Bundled-Images): the image or Go module, with its version, each shared app type uses by default; moving and exact tags
 - [AI agents](https://github.com/devorgpl/compost/wiki/AI-Agents): `llms.txt`, `llms-full.txt` and the compost Agent Skill
 
 ## Optional

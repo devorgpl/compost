@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, Kind, Rendered, RenderedFile, Resolution, ServerCtx,
+    AppCtx, Bundled, Contribution, Generated, Kind, Rendered, RenderedFile, Resolution, ServerCtx,
     SharedAppConfig, shared_dir,
 };
 use crate::config::app::AppConfig;
@@ -282,6 +282,26 @@ impl Kind for CommunicationKind {
             "unknown communication type `{type_name}`"
         );
         Ok(generated(type_name))
+    }
+
+    /// compost's image, built on the server, and the image it starts from.
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>> {
+        ensure!(
+            TYPES.contains(&type_name),
+            "unknown communication type `{type_name}`"
+        );
+        let mut bundled = vec![Bundled::new(
+            "image",
+            builtin_image(),
+            "built on the server; `image`",
+        )];
+        bundled.extend(
+            DOCKERFILE
+                .lines()
+                .filter_map(|line| line.strip_prefix("FROM "))
+                .map(|base| Bundled::new("build base", base.trim(), "")),
+        );
+        Ok(bundled)
     }
 
     fn apply_defaults(&self, _config: &mut SharedAppConfig) {}

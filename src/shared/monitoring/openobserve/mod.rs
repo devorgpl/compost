@@ -13,7 +13,7 @@ use super::base::{self, Endpoint};
 use super::{KIND, MonitoringType};
 use crate::connector::shell_quote;
 use crate::shared::{
-    Generated, ItemReader, ItemWriter, PublicUrl, Rendered, RenderedFile, Role, ServerCtx,
+    Bundled, Generated, ItemReader, ItemWriter, PublicUrl, Rendered, RenderedFile, Role, ServerCtx,
     SharedAppConfig, SharedLinks, app_service, connectors_dir, generate_password, parse_url,
     project_name, render_template, service_name, shared_dir,
 };
@@ -78,6 +78,19 @@ impl MonitoringType for OpenObserve {
 
     fn secret_keys(&self) -> &'static [&'static str] {
         &["root_password"]
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        let image = image(&SharedAppConfig::of_type(self.type_name()))
+            .expect("the default version has an image");
+        vec![
+            Bundled::new("image", image, "`image`"),
+            Bundled::new(
+                "collector",
+                COLLECTOR_IMAGE,
+                "`configuration.collector_image`",
+            ),
+        ]
     }
 
     fn generate(&self) -> Generated {

@@ -13,9 +13,9 @@ use super::base::{self, Endpoint, MapperKind, OidcLink, OidcRecord, Pkce, Public
 use super::{KIND, OidcType};
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Generated, Monitored, Rendered, RenderedFile, ServerCtx, SharedAppConfig, SharedLinks,
-    app_service, connectors_dir, generate_password, project_name, render_template, service_name,
-    shared_dir,
+    AppCtx, Bundled, Generated, Monitored, Rendered, RenderedFile, ServerCtx, SharedAppConfig,
+    SharedLinks, app_service, connectors_dir, generate_password, project_name, render_template,
+    service_name, shared_dir,
 };
 
 pub struct Keycloak;
@@ -87,6 +87,12 @@ impl OidcType for Keycloak {
             metrics: Vec::new(),
             traces: false,
         })
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        let image = image(&SharedAppConfig::of_type(self.type_name()))
+            .expect("the default version has an image");
+        vec![Bundled::new("image", image, "`image`")]
     }
 
     fn generate(&self) -> Generated {

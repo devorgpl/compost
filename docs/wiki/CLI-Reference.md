@@ -26,6 +26,7 @@ Commands:
   secret      Store application secrets on the server for `app deploy`
   config      Set and show preferences, e.g. `deploy.apply`
   agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
+  images      List the images and modules this compost uses unless the config names others
   help        Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1201,6 +1202,21 @@ Usage: compost agent skill [OPTIONS]
 
 Options:
       --dir <DIR>            Skills folder; the skill goes in its `compost` subfolder, e.g. `~/.claude/skills` for all your projects or `.agents/skills` [default: .claude/skills]
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost images`
+
+```text
+List the images and modules this compost uses unless the config names others
+
+Usage: compost images [OPTIONS]
+
+Options:
+      --markdown             Print a Markdown table, as on the wiki page Bundled-Images
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
   -v, --verbose              Print every command run on the server
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]

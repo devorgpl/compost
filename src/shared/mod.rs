@@ -96,6 +96,19 @@ pub struct MetricsEndpoint {
 }
 
 impl SharedAppConfig {
+    /// A shared app of the type with nothing set: what its defaults give.
+    pub fn of_type(type_name: &str) -> Self {
+        Self {
+            name: String::new(),
+            type_name: type_name.to_string(),
+            version: None,
+            image: None,
+            configuration: Value::Null,
+            external: None,
+            monitoring: None,
+        }
+    }
+
     /// compost does not run it: no compose project, nothing to start or stop.
     pub fn is_external(&self) -> bool {
         self.external.is_some()
@@ -302,6 +315,45 @@ pub struct Generated {
     pub requires: &'static [&'static str],
 }
 
+/// An image, or a module built into one, that a type uses unless the config
+/// names another (`compost images`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bundled {
+    /// What it is, e.g. `image`, `build base` or `Go module`.
+    pub what: &'static str,
+    /// Image reference or module path with its version.
+    pub reference: String,
+    /// When it is used or what replaces it, e.g. ``with `ui` ``.
+    pub note: &'static str,
+}
+
+impl Bundled {
+    pub fn new(what: &'static str, reference: impl Into<String>, note: &'static str) -> Self {
+        Self {
+            what,
+            reference: reference.into(),
+            note,
+        }
+    }
+
+    /// The reference can point to another image later: a tag that is not a
+    /// full `X.Y.Z` version, or none. Digests and modules are fixed.
+    pub fn moves(&self) -> bool {
+        if self.what == "Go module" || self.reference.contains("@sha256:") {
+            return false;
+        }
+        let tag = match self.reference.rsplit_once(':') {
+            Some((_, tag)) if !tag.contains('/') => tag,
+            _ => return true,
+        };
+        let parts: Vec<&str> = tag.trim_start_matches('v').split('.').collect();
+        !(parts.len() >= 3
+            && parts
+                .iter()
+                .all(|p| p.starts_with(|c: char| c.is_ascii_digit())))
+    }
+}
+
 /// Links a shared app needs to other shared apps (spec §9.1). Core deploys the
 /// shared app like a small application: [`consumer_app`] with these links.
 #[derive(Debug, Default)]
@@ -322,6 +374,9 @@ pub trait Kind: Sync {
 
     /// Starter configuration of one type.
     fn generate(&self, type_name: &str) -> Result<Generated>;
+
+    /// Images and modules of one type at its default version.
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>>;
 
     /// Fill in defaults the type defines, e.g. a version. Unknown types are
     /// left alone; validation reports them.

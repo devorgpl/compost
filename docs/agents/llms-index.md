@@ -29,4 +29,5 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Configuration](Configuration.md): every key of `compost.yaml`, overlays, `compost-server.yaml`, `servers.yaml`, merge rules, preferences, environment variables
 - [Files and folders](Files-and-Folders.md): files on your machine, in app and infrastructure folders, on the server, and Docker names
 - [CLI reference](CLI-Reference.md): the `--help` of every command, and exit codes
+- [Bundled images](Bundled-Images.md): the image or Go module, with its version, each shared app type uses by default; moving and exact tags
 - [AI agents](AI-Agents.md): `llms.txt`, `llms-full.txt` and the compost Agent Skill

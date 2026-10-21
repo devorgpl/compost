@@ -13,9 +13,9 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role, ServerCtx,
-    SharedAppConfig, app_service, connectors_dir, generate_password, project_name, render_template,
-    service_name, shared_dir,
+    AppCtx, Bundled, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role,
+    ServerCtx, SharedAppConfig, app_service, connectors_dir, generate_password, project_name,
+    render_template, service_name, shared_dir,
 };
 
 pub struct Postgres;
@@ -66,6 +66,14 @@ impl DatabaseType for Postgres {
             metrics: Vec::new(),
             traces: false,
         })
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        vec![Bundled::new(
+            "image",
+            "postgres:<version>",
+            "`version` is required; `image`",
+        )]
     }
 
     fn generate(&self) -> Generated {

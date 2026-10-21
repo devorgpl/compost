@@ -20,7 +20,7 @@ mod sources;
 pub mod state;
 mod steps;
 pub mod stop;
-mod volumes;
+pub mod volumes;
 
 use std::io::{BufRead, IsTerminal, Write};
 

@@ -15,9 +15,9 @@ use crate::config::app::AppConfig;
 use crate::connector::shell_quote;
 use crate::error::CompostError;
 use crate::shared::{
-    AppCtx, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role, ServerCtx,
-    SharedAppConfig, app_service, connectors_dir, generate_password, project_name, render_template,
-    service_name, shared_dir,
+    AppCtx, Bundled, Generated, ItemReader, ItemWriter, Monitored, Rendered, RenderedFile, Role,
+    ServerCtx, SharedAppConfig, app_service, connectors_dir, generate_password, project_name,
+    render_template, service_name, shared_dir,
 };
 
 pub static MARIADB: MySql = MySql {
@@ -185,6 +185,15 @@ impl DatabaseType for MySql {
             metrics: Vec::new(),
             traces: false,
         })
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        let version = self.flavor.default_version();
+        vec![Bundled::new(
+            "image",
+            self.flavor.image(version),
+            "`image`; `version` sets the major",
+        )]
     }
 
     fn generate(&self) -> Generated {

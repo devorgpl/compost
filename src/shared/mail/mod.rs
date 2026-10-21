@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, Kind, PublicUrl, Rendered, RenderedFile, Resolution,
+    AppCtx, Bundled, Contribution, Generated, Kind, PublicUrl, Rendered, RenderedFile, Resolution,
     ServerCtx, SharedAppConfig, SharedLinks, app_service, check_link_environment, connectors_dir,
     generate_password, host_address, link_value, parse_link, parse_url, project_name,
     render_template, service_name, shared_dir,
@@ -129,6 +129,19 @@ impl Kind for MailKind {
 
     fn type_names(&self) -> Vec<&'static str> {
         vec![TYPE]
+    }
+
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>> {
+        check_type(type_name)?;
+        Ok(vec![
+            Bundled::new("image", image(&SharedAppConfig::of_type(TYPE))?, "`image`"),
+            Bundled::new("ses", SES_IMAGE, "`configuration.ses_image`"),
+            Bundled::new(
+                "moto",
+                MOTO_IMAGE,
+                "with `moto: true`; `configuration.moto_image`",
+            ),
+        ])
     }
 
     fn generate(&self, type_name: &str) -> Result<Generated> {

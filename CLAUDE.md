@@ -9,6 +9,7 @@ User documentation is `docs/wiki/*.md`. The release workflow publishes it to the
 When a change is visible to users (a command, option, config key, default, output, file on disk), update the docs in the same commit:
 
 - Commands and options: write the clap `///` doc comments in `src/cli/*.rs` well, then run `just docs` to regenerate `CLI-Reference.md`. Never edit that page by hand; `just ci` fails when it is out of date.
+- Default images and modules: `just docs` regenerates `Bundled-Images.md` from `compost images --markdown` (each type's `bundled`); it is the one page that names versions. Never edit it by hand.
 - Then update the guide pages that describe the behavior:
 
   | Area | Page |

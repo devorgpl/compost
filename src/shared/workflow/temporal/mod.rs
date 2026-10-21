@@ -13,9 +13,9 @@ use super::base::{self, Endpoint, WorkflowLink, WorkflowRecord};
 use super::{KIND, WorkflowType};
 use crate::connector::shell_quote;
 use crate::shared::{
-    AppCtx, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered, RenderedFile,
-    Role, ServerCtx, SharedAppConfig, SharedLinks, app_service, parse_url, project_name,
-    render_template, service_name, shared_dir,
+    AppCtx, Bundled, Generated, ItemReader, ItemWriter, MetricsEndpoint, Monitored, Rendered,
+    RenderedFile, Role, ServerCtx, SharedAppConfig, SharedLinks, app_service, parse_url,
+    project_name, render_template, service_name, shared_dir,
 };
 
 pub struct Temporal;
@@ -128,6 +128,23 @@ impl WorkflowType for Temporal {
             }],
             traces: false,
         })
+    }
+
+    fn bundled(&self) -> Vec<Bundled> {
+        let (server, admin_tools) = images(
+            &SharedAppConfig::of_type(self.type_name()),
+            &TemporalConfig::default(),
+        )
+        .expect("the default version has images");
+        vec![
+            Bundled::new("image", server, "`image`"),
+            Bundled::new(
+                "admin tools",
+                admin_tools,
+                "`configuration.admin_tools_image`",
+            ),
+            Bundled::new("ui", UI_IMAGE, "with `ui`; `configuration.ui.image`"),
+        ]
     }
 
     fn generate(&self) -> Generated {

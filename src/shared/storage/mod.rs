@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 
 use super::{
-    AppCtx, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
+    AppCtx, Bundled, Contribution, Generated, ItemReader, ItemWriter, Kind, Monitored, Rendered,
     RenderedFile, Resolution, Role, ServerCtx, SharedAppConfig, SharedLinks, app_service,
     check_link_environment, connectors_dir, host_address, link_value, parse_link, parse_url,
     project_name, render_template, service_name, shared_dir,
@@ -311,6 +311,22 @@ impl Kind for StorageKind {
 
     fn type_names(&self) -> Vec<&'static str> {
         vec!["garage", "s3"]
+    }
+
+    fn bundled(&self, type_name: &str) -> Result<Vec<Bundled>> {
+        let rclone = Bundled::new("rclone", RCLONE_IMAGE, "for bucket commands");
+        match type_name {
+            "garage" => Ok(vec![
+                Bundled::new(
+                    "image",
+                    garage_image(&SharedAppConfig::of_type(type_name))?,
+                    "`image`",
+                ),
+                rclone,
+            ]),
+            "s3" => Ok(vec![rclone]),
+            _ => bail!("unknown storage type `{type_name}`"),
+        }
     }
 
     fn generate(&self, type_name: &str) -> Result<Generated> {
