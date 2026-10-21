@@ -2266,7 +2266,18 @@ compost server deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [-
 
 Without `--apply`, only steps 1–3 run. `--dry-run` changes nothing and shows, compared with the server: networks to create, the files of each shared app that would be added, changed or removed (files with secrets only named), dropped links and shared apps left out of the config, and what `--apply` would do with each shared app: `created`, `recreated` (its compose files or override changed, `--recreate`, or its last deploy didn't finish), `reloaded without a restart` (Caddy, when only its other files changed), `pulled` (`--pull`) or `unchanged`. `--diff` adds the changed lines of files without secrets. Running it again changes nothing that didn't change: unchanged containers are not recreated. When only Caddy's sites changed, Caddy reloads them without a restart.
 
-`compost images` lists the image each type uses by default, and whether its tag moves ([Bundled images](Bundled-Images.md)). `up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
+`compost images` lists the image each type uses by default, and whether its tag moves ([Bundled images](Bundled-Images.md)). `compost server images` shows what each shared app's containers run:
+
+```text
+ingress caddy-main
+  compost-shared-caddy-main: caddy:2-alpine, version v2.11.7
+    image d8542f48d34a, built 2026-10-05, pulled 2026-10-21 15:28
+    running since 2026-10-21 15:30, deployed with this image 2026-10-21 15:30
+```
+
+The version comes from the image's `org.opencontainers.image.version` label, or the variable official images set (`CADDY_VERSION`, `PG_VERSION`, `MARIADB_VERSION`, …); `version unknown` when it has neither. `pulled` is when Docker last pulled or tagged the image, if it records that; `deployed with this image` is when a `server deploy --apply` first started the container on this image (compost keeps it in `state.yaml`). A line `newer image … pulled for <tag>, not running yet` means the tag points to another image than the container runs, e.g. after a `docker pull`: `server deploy --apply` starts it. Times are UTC.
+
+`up -d` pulls only images that are missing, so a new image behind the same tag is not fetched. To update a shared app, change its `version` or `image`, or add `--pull`: it runs `docker compose pull` for each shared app first, and `up` recreates those whose image changed. An image built on the server ([caddysecurebuild](#caddysecurebuild-ingress)) is rebuilt with `--pull` instead, on the newest base images. `--recreate` recreates every shared app's containers (`--force-recreate`) even when nothing changed; their data is kept, but apps using them lose them while they restart. Both need `--apply`. Mind major versions: Postgres does not start on the data of an older major version.
 
 `--shared <name>` (repeatable or comma-separated; `<kind>/<name>` when two kinds have a shared app with that name) deploys only the shared apps it names, and `--pull` and `--recreate` apply to them only: to update Caddy without pulling a newer Postgres, run `compost server deploy --apply --pull --shared caddy-main`. The others are left as they were last deployed, files and containers alike, and so is their part of the `compost-server.yaml` stored on the server, so apps keep linking to what runs; shared apps removed from the config are not reported. The shared apps a named one links to (Keycloak's database, a monitoring app) must already be deployed, or be named too. It needs a previous full deploy and can't be combined with `--secret`.
 
@@ -4313,7 +4324,7 @@ infra/
 ~/.compost-server/
 ├── manager_key                       key of the compost installation managing this server
 ├── compost-server.yaml               effective server config, without secrets
-├── state.yaml                        status of shared apps and instances, last runs of scheduled backups, notified alerts
+├── state.yaml                        status of shared apps and instances, the image of each shared app's container since its deploy, last runs of scheduled backups, notified alerts
 ├── lock/                             exists while a command changes the server
 ├── bin/compost                       compost itself, for scheduled backups
 ├── logs/backup.log                   output of scheduled backups and notifications
@@ -4496,6 +4507,7 @@ Commands:
   define    Add or replace a server in the local configuration
   list      List defined servers
   state     Check and display server state
+  images    Show the image, version and age of each shared app's containers
   deploy    Deploy shared applications from compost-server.yaml
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
@@ -4573,6 +4585,20 @@ Options:
 Check and display server state
 
 Usage: compost server state [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost server images`
+
+```text
+Show the image, version and age of each shared app's containers
+
+Usage: compost server images [OPTIONS]
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
@@ -5662,7 +5688,7 @@ Options:
 
 <!-- Generated by scripts/docs.sh from `compost images --markdown`; run `just docs` instead of editing. -->
 
-The images and modules compost uses for each shared app type unless `compost-server.yaml` names others, as of the release this wiki shows. `compost images` prints them for the compost you have installed.
+The images and modules compost uses for each shared app type unless `compost-server.yaml` names others, as of the release this wiki shows. `compost images` prints them for the compost you have installed, `compost server images` what runs on a server.
 
 - A **moving tag** (`caddy:2-alpine`, `postgres:18`) points to newer images as they are published: `server deploy --apply --pull` fetches them.
 - An **exact tag** and a **pinned** Go module change only with a compost release; compare this page between releases to see what an upgrade changes.

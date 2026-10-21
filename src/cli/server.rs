@@ -288,6 +288,17 @@ pub fn cmd(
     )
 }
 
+pub fn images(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions) -> Result<()> {
+    let manager = home.require_manager()?;
+    let server = home.resolve_server(server)?;
+    let connector = connector::open(&server, home, connect)?;
+    crate::server::images::report(
+        connector.as_ref(),
+        server.server_home(),
+        &manager.manager_key,
+    )
+}
+
 pub fn state(home: &CompostHome, server: Option<&str>, connect: &ConnectOptions) -> Result<()> {
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;

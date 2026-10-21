@@ -65,6 +65,7 @@ Commands:
   define    Add or replace a server in the local configuration
   list      List defined servers
   state     Check and display server state
+  images    Show the image, version and age of each shared app's containers
   deploy    Deploy shared applications from compost-server.yaml
   backup    Back up shared applications (data, configuration and secrets)
   restore   Restore shared applications from a server backup
@@ -142,6 +143,20 @@ Options:
 Check and display server state
 
 Usage: compost server state [OPTIONS]
+
+Options:
+  -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
+  -v, --verbose              Print every command run on the server
+      --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
+  -h, --help                 Print help
+```
+
+## `compost server images`
+
+```text
+Show the image, version and age of each shared app's containers
+
+Usage: compost server images [OPTIONS]
 
 Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]

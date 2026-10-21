@@ -43,6 +43,18 @@ pub struct SharedRecord {
     /// Hash of the rendered files; a different hash means the config changed.
     pub config_hash: String,
     pub updated_at: String,
+    /// The image each container ran after the last deploy, and since when.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageRecord>,
+}
+
+/// The image a shared app's service runs, and since which deploy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageRecord {
+    pub service: String,
+    pub image_id: String,
+    /// When a deploy first started it with this image (RFC 3339).
+    pub since: String,
 }
 
 /// One application instance.
@@ -229,14 +241,31 @@ impl StateFile {
             status,
             config_hash: config_hash.to_string(),
             updated_at: now(),
+            images: Vec::new(),
         };
         match self
             .shared
             .iter_mut()
             .find(|r| r.kind == kind && r.name == name)
         {
-            Some(existing) => *existing = record,
+            Some(existing) => {
+                let images = std::mem::take(&mut existing.images);
+                *existing = SharedRecord { images, ..record };
+            }
             None => self.shared.push(record),
+        }
+    }
+
+    /// Record the images a shared app's containers run after a deploy; an
+    /// image keeps the time it was first deployed.
+    pub fn set_images(&mut self, kind: &str, name: &str, running: &[super::images::Running]) {
+        let now = now();
+        if let Some(record) = self
+            .shared
+            .iter_mut()
+            .find(|r| r.kind == kind && r.name == name)
+        {
+            record.images = super::images::records(&record.images, running, &now);
         }
     }
 

@@ -144,6 +144,8 @@ fn ssh_key_file_is_checked_before_connecting() {
 /// networks that exist. Containers of a compose project run `FAKE_DOCKER_IMAGE_ID`;
 /// `FAKE_DOCKER_TAGS` lists the tags `image ls` shows, and
 /// `FAKE_DOCKER_MISSING_TAGS=1` makes pinned release images missing.
+/// `container inspect` reports `caddy:2-alpine` running `FAKE_DOCKER_IMAGE_ID`;
+/// `FAKE_DOCKER_TAGGED_ID` is the image that tag points to now.
 /// `build: local`: `FAKE_DOCKER_STALE=1` makes every image look different on
 /// the server, `FAKE_DOCKER_BUILD_FAIL=1` fails `compose build`.
 /// `FAKE_CSCLI_ALERTS` and `FAKE_CSCLI_DECISIONS` are files with what
@@ -214,6 +216,13 @@ case "$*" in
   "image inspect -f "*) if [ -n "$FAKE_DOCKER_STALE" ]; then echo "config $$"; else echo config; fi ;;
   "save "*) printf 'fake image archive' ;;
   "load -q") echo "loaded: $(gzip -dc)" >> "$FAKE_DOCKER_LOG" ;;
+  "container inspect "*)
+    printf '[{"Image":"%s","Config":{"Image":"caddy:2-alpine","Labels":{"com.docker.compose.service":"compost-shared-x"}},"State":{"Running":true,"StartedAt":"2026-10-02T14:03:51Z"}}]\n' \
+      "${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}" ;;
+  "image inspect --format {{json .}} "*)
+    id="${FAKE_DOCKER_IMAGE_ID:-sha256:1111111111111111}"
+    case "$*" in *" caddy:2-alpine") id="${FAKE_DOCKER_TAGGED_ID:-$id}" ;; esac
+    printf '{"Id":"%s","RepoDigests":["caddy@%s"],"Created":"2026-09-30T10:00:00Z","Config":{"Env":["CADDY_VERSION=v2.11.7"]},"Metadata":{"LastTagTime":"2026-10-01T09:00:00Z"}}\n' "$id" "$id" ;;
   "image inspect compost-release/"*) [ -z "$FAKE_DOCKER_MISSING_TAGS" ] ;;
   "image inspect compost-communication:"*) [ -f "$FAKE_DOCKER_LOG.built" ] ;;
   "build "*) touch "$FAKE_DOCKER_LOG.built" ;;
@@ -632,6 +641,51 @@ fn server_deploy_only_selected_shared_apps() {
         .stdout(contains("database   postgres16       updated"));
     let stored = server.read_server_file("compost-server.yaml");
     assert!(stored.contains("postgres:16.9"), "{stored}");
+}
+
+#[test]
+fn server_images_shows_versions_and_newer_pulled_images() {
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:\n  ingress:\n    - {name: caddy-main, type: caddy}\n",
+    );
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    server
+        .run(&["server", "deploy", "--apply"], &running)
+        .success();
+    assert!(
+        server
+            .read_server_file("state.yaml")
+            .contains("image_id: sha256:1111111111111111"),
+    );
+
+    server
+        .run(&["server", "images"], &running)
+        .success()
+        .stdout(contains("ingress caddy-main"))
+        .stdout(contains(
+            "compost-shared-x: caddy:2-alpine, version v2.11.7",
+        ))
+        .stdout(contains(
+            "image 111111111111, built 2026-09-30, pulled 2026-10-01 09:00",
+        ))
+        .stdout(contains(
+            "running since 2026-10-02 14:03, deployed with this image",
+        ))
+        .stdout(contains("newer image").not());
+    server
+        .run(
+            &["server", "images"],
+            &[
+                ("FAKE_DOCKER_RUNNING", "1"),
+                ("FAKE_DOCKER_TAGGED_ID", "sha256:2222222222222222"),
+            ],
+        )
+        .success()
+        .stdout(contains(
+            "newer image 222222222222 pulled for caddy:2-alpine, not running yet",
+        ));
 }
 
 #[test]

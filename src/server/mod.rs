@@ -5,6 +5,7 @@ pub mod backup;
 pub mod compose;
 pub mod deploy;
 pub mod exec;
+pub mod images;
 pub mod links;
 pub mod lock;
 pub mod logs;

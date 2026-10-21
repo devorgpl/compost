@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::compose::wait_until_ready_within;
+use super::images;
 use super::lock::Lock;
 use super::plan::{self as server_plan, FileChange};
 use super::secrets;
@@ -214,6 +215,13 @@ pub fn deploy(
         match apply(&ctx, plan, options.pull, recreate) {
             Ok(()) => {
                 state_file.set_shared(kind, &plan.app.name, DeployStatus::Deployed, &plan.hash);
+                // For `server images`; a deploy does not fail for it.
+                if !plan.app.is_external() && plan.kind.runs_service(plan.app) {
+                    let project = shared::project_name(kind, &plan.app.name);
+                    if let Ok(running) = images::running(connector, &project) {
+                        state_file.set_images(kind, &plan.app.name, &running);
+                    }
+                }
             }
             Err(err) => {
                 state_file.set_shared(kind, &plan.app.name, DeployStatus::Failed, &plan.hash);
