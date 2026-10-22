@@ -40,9 +40,15 @@ pub struct ServerEntry {
     pub connector: ConnectorConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_home: Option<String>,
+    /// Overrides the global `prefix` for this server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
     /// Overrides the global `deploy` settings for this server.
     #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
     pub deploy: DeploySettings,
+    /// Overrides the global `logs` settings for this server.
+    #[serde(default, skip_serializing_if = "LogsSettings::is_empty")]
+    pub logs: LogsSettings,
     /// What `logs/<name>/trace.log` records of the scripts run on the server.
     #[serde(default, skip_serializing_if = "TraceLevel::is_none")]
     pub trace: TraceLevel,
@@ -83,8 +89,13 @@ impl TraceLevel {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    /// Instance prefix when neither `--prefix` nor the config files give one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
     #[serde(default, skip_serializing_if = "DeploySettings::is_empty")]
     pub deploy: DeploySettings,
+    #[serde(default, skip_serializing_if = "LogsSettings::is_empty")]
+    pub logs: LogsSettings,
     #[serde(default, skip_serializing_if = "DevSettings::is_empty")]
     pub dev: DevSettings,
 }
@@ -109,11 +120,152 @@ pub struct DeploySettings {
     /// `deploy` also starts services, as if `--apply` was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apply: Option<bool>,
+    /// An applied `deploy` pulls images again, as if `--pull` was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull: Option<bool>,
+    /// An applied `deploy` recreates every container, as if `--recreate` was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recreate: Option<bool>,
+    /// The backup `app deploy` takes before it changes an instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<BackupDefault>,
 }
 
 impl DeploySettings {
     pub fn is_empty(&self) -> bool {
         self.apply.is_none()
+            && self.pull.is_none()
+            && self.recreate.is_none()
+            && self.backup.is_none()
+    }
+}
+
+/// `deploy.backup`: `false` skips the app's `deployment.backup`, a profile
+/// name replaces it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupDefault {
+    Off,
+    Profile(String),
+}
+
+impl BackupDefault {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "false" | "no" | "off" => Ok(BackupDefault::Off),
+            "true" | "yes" | "on" => Err(config_err(
+                "deploy.backup: `true` is not a profile; give a profile name or `false`",
+            )),
+            name => {
+                crate::config::check_name("backup profile", name)?;
+                Ok(BackupDefault::Profile(name.to_string()))
+            }
+        }
+    }
+
+    /// The profile to back up with, `None` for no backup.
+    pub fn profile(&self) -> Option<&str> {
+        match self {
+            BackupDefault::Off => None,
+            BackupDefault::Profile(name) => Some(name),
+        }
+    }
+}
+
+impl Serialize for BackupDefault {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            BackupDefault::Off => serializer.serialize_bool(false),
+            BackupDefault::Profile(name) => serializer.serialize_str(name),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BackupDefault {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Name(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Bool(false) => Ok(BackupDefault::Off),
+            Raw::Bool(true) => Err(serde::de::Error::custom(
+                "`true` is not a backup profile; give a profile name or `false`",
+            )),
+            Raw::Name(name) => BackupDefault::parse(&name).map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogsSettings {
+    /// Default of `--tail`: a number of lines or `all`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail: Option<String>,
+    /// `logs` shows the time of every line, as if `--timestamps` was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamps: Option<bool>,
+}
+
+impl LogsSettings {
+    pub fn is_empty(&self) -> bool {
+        self.tail.is_none() && self.timestamps.is_none()
+    }
+}
+
+pub const DEFAULT_LOGS_TAIL: &str = "100";
+
+/// `logs.tail`: digits or `all`.
+pub fn check_tail(value: &str) -> Result<()> {
+    if value == "all" || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit())) {
+        Ok(())
+    } else {
+        Err(config_err(format!(
+            "logs.tail: `{value}` is not a number of lines or `all`"
+        )))
+    }
+}
+
+/// The preferences that apply to one server: its own values over the global
+/// ones over the built-in defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Defaults {
+    pub prefix: String,
+    pub apply: bool,
+    pub pull: bool,
+    pub recreate: bool,
+    pub backup: Option<BackupDefault>,
+    pub logs_tail: String,
+    pub logs_timestamps: bool,
+}
+
+impl Defaults {
+    pub fn merge(global: &Settings, server: &ServerEntry) -> Self {
+        let (g, s) = (&global.deploy, &server.deploy);
+        Defaults {
+            prefix: server
+                .prefix
+                .clone()
+                .or_else(|| global.prefix.clone())
+                .unwrap_or_else(crate::config::app::default_prefix),
+            apply: s.apply.or(g.apply).unwrap_or(false),
+            pull: s.pull.or(g.pull).unwrap_or(false),
+            recreate: s.recreate.or(g.recreate).unwrap_or(false),
+            backup: s.backup.clone().or_else(|| g.backup.clone()),
+            logs_tail: server
+                .logs
+                .tail
+                .clone()
+                .or_else(|| global.logs.tail.clone())
+                .unwrap_or_else(|| DEFAULT_LOGS_TAIL.to_string()),
+            logs_timestamps: server
+                .logs
+                .timestamps
+                .or(global.logs.timestamps)
+                .unwrap_or(false),
+        }
     }
 }
 
@@ -246,13 +398,10 @@ impl CompostHome {
         write_yaml(&self.root.join(SETTINGS_FILE), settings)
     }
 
-    /// Whether `deploy` applies without `--apply`/`--no-apply`: the server's
-    /// setting, then the global one, else no.
-    pub fn apply_default(&self, server: &ServerEntry) -> Result<bool> {
-        Ok(match server.deploy.apply {
-            Some(apply) => apply,
-            None => self.settings()?.deploy.apply.unwrap_or(false),
-        })
+    /// The preferences for `server`: its own, then the global ones, else the
+    /// built-in defaults.
+    pub fn defaults(&self, server: &ServerEntry) -> Result<Defaults> {
+        Ok(Defaults::merge(&self.settings()?, server))
     }
 
     pub fn current_context(&self) -> Result<Option<String>> {
@@ -304,4 +453,93 @@ fn write_yaml<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     }
     let text = serde_yaml_ng::to_string(value)?;
     fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server(yaml: &str) -> ServerEntry {
+        serde_yaml_ng::from_str(&format!("{{name: s, connector: {{type: local}}, {yaml}}}"))
+            .unwrap()
+    }
+
+    #[test]
+    fn defaults_take_the_server_over_the_global_values() {
+        let builtin = Defaults::merge(&Settings::default(), &server("trace: none"));
+        assert_eq!(
+            builtin,
+            Defaults {
+                prefix: "main".to_string(),
+                apply: false,
+                pull: false,
+                recreate: false,
+                backup: None,
+                logs_tail: "100".to_string(),
+                logs_timestamps: false,
+            }
+        );
+
+        let global: Settings = serde_yaml_ng::from_str(
+            "{prefix: prod, deploy: {apply: true, pull: true, backup: daily}, logs: {tail: '20'}}",
+        )
+        .unwrap();
+        let own = server(
+            "prefix: staging, deploy: {pull: false, recreate: true, backup: false}, logs: {timestamps: true}",
+        );
+        assert_eq!(
+            Defaults::merge(&global, &own),
+            Defaults {
+                prefix: "staging".to_string(),
+                apply: true,
+                pull: false,
+                recreate: true,
+                backup: Some(BackupDefault::Off),
+                logs_tail: "20".to_string(),
+                logs_timestamps: true,
+            }
+        );
+        assert_eq!(
+            Defaults::merge(&global, &server("trace: none")).backup,
+            Some(BackupDefault::Profile("daily".to_string()))
+        );
+    }
+
+    #[test]
+    fn unset_settings_are_left_out_of_the_files() {
+        let entry = server("trace: none");
+        let text = serde_yaml_ng::to_string(&entry).unwrap();
+        assert!(!text.contains("deploy"), "{text}");
+        assert!(!text.contains("logs"), "{text}");
+        assert!(!text.contains("prefix"), "{text}");
+
+        let entry = server("prefix: staging, deploy: {backup: false}, logs: {tail: all}");
+        let text = serde_yaml_ng::to_string(&entry).unwrap();
+        let back: ServerEntry = serde_yaml_ng::from_str(&text).unwrap();
+        assert_eq!(back.prefix.as_deref(), Some("staging"));
+        assert_eq!(back.deploy.backup, Some(BackupDefault::Off));
+        assert_eq!(back.logs.tail.as_deref(), Some("all"));
+    }
+
+    #[test]
+    fn backup_is_a_profile_or_false() {
+        assert!(serde_yaml_ng::from_str::<DeploySettings>("backup: true").is_err());
+        assert!(serde_yaml_ng::from_str::<DeploySettings>("backup: Daily").is_err());
+        assert!(BackupDefault::parse("true").is_err());
+        assert_eq!(BackupDefault::parse("off").unwrap(), BackupDefault::Off);
+        assert_eq!(
+            BackupDefault::parse("daily").unwrap().profile(),
+            Some("daily")
+        );
+        assert_eq!(BackupDefault::Off.profile(), None);
+    }
+
+    #[test]
+    fn tail_is_a_number_or_all() {
+        assert!(check_tail("all").is_ok());
+        assert!(check_tail("250").is_ok());
+        assert!(check_tail("").is_err());
+        assert!(check_tail("-5").is_err());
+        assert!(check_tail("lots").is_err());
+    }
 }

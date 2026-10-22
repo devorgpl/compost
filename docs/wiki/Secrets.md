@@ -21,7 +21,7 @@ compost secret list
 compost secret remove --app myapp --prefix staging
 ```
 
-The stored overlay must name its app (`name: myapp`). The prefix is `--prefix`, else the file's `prefix`, else `main`. It is kept at `~/.compost-server/secrets/apps/<app>/<prefix>.yaml`.
+The stored overlay must name its app (`name: myapp`). The prefix is `--prefix`, else the file's `prefix`, else the [`prefix` preference](Configuration.md#preferences), else `main`. It is kept at `~/.compost-server/secrets/apps/<app>/<prefix>.yaml`.
 
 `app deploy` merges it right after the first file: `compost.yaml` → stored overlay → other `-f` files. Local overlays can still override stored values.
 

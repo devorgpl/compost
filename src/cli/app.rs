@@ -11,7 +11,7 @@ use super::{BackupOutputArgs, DeployArgs};
 use crate::app::backup::{self, Component, Which};
 use crate::app::instance::Selector;
 use crate::app::{deploy, exec, list, remove, restore, rollback, secrets, state};
-use crate::config::app::{AppConfig, default_prefix};
+use crate::config::app::AppConfig;
 use crate::config::local::{CompostHome, ServerEntry};
 use crate::config::{check_name, merge};
 use crate::connector::{self, ConnectOptions};
@@ -67,7 +67,7 @@ pub struct InstanceArgs {
     /// Application name (instead of config files)
     #[arg(long, requires = "prefix")]
     pub app: Option<String>,
-    /// Instance prefix (overrides the one from the config files)
+    /// Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
     #[arg(long)]
     pub prefix: Option<String>,
 }
@@ -76,7 +76,7 @@ pub struct InstanceArgs {
 pub struct AppDeployArgs {
     #[command(flatten)]
     pub deploy: DeployArgs,
-    /// Instance prefix (overrides the one from the config files)
+    /// Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
     #[arg(long)]
     pub prefix: Option<String>,
     /// Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
@@ -210,7 +210,7 @@ pub struct AppCmdArgs {
     /// Application name (instead of config files)
     #[arg(long, requires = "prefix")]
     pub app: Option<String>,
-    /// Instance prefix (overrides the one from the config files)
+    /// Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
     #[arg(long)]
     pub prefix: Option<String>,
 }
@@ -258,8 +258,7 @@ pub struct AppRollbackArgs {
 #[derive(Deserialize)]
 struct InstanceId {
     name: String,
-    #[serde(default = "default_prefix")]
-    prefix: String,
+    prefix: Option<String>,
 }
 
 pub fn run(
@@ -274,6 +273,7 @@ pub fn run(
     }
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
+    let defaults = home.defaults(&server)?;
     match command {
         AppCommand::Generate(_) => unreachable!("handled above"),
         AppCommand::List => {
@@ -293,7 +293,7 @@ pub fn run(
             connect,
         ),
         AppCommand::State(args) => {
-            let selector = selector(&args)?;
+            let selector = selector(&args, &defaults.prefix)?;
             let connector = connector::open(&server, home, connect)?;
             state::state(
                 connector.as_ref(),
@@ -303,7 +303,7 @@ pub fn run(
             )
         }
         AppCommand::Remove(args) => {
-            let selector = selector(&args.instance)?;
+            let selector = selector(&args.instance, &defaults.prefix)?;
             let connector = connector::open(&server, home, connect)?;
             let options = remove::Options {
                 volumes: args.volumes,
@@ -329,7 +329,7 @@ pub fn run(
             let which = if args.all {
                 Which::All
             } else {
-                Which::One(selector(&args.instance)?)
+                Which::One(selector(&args.instance, &defaults.prefix)?)
             };
             let options = backup::Options {
                 flags: args.output.flags(args.include, args.link)?,
@@ -373,14 +373,14 @@ pub fn run(
             )
         }
         AppCommand::Logs(args) => {
-            let selector = selector(&args.instance)?;
+            let selector = selector(&args.instance, &defaults.prefix)?;
             let connector = connector::open(&server, home, connect)?;
             crate::app::logs::logs(
                 connector.as_ref(),
                 server.server_home(),
                 &manager.manager_key,
                 &selector,
-                &args.logs.options(args.service),
+                &args.logs.options(args.service, &defaults),
             )
         }
         AppCommand::Exec(args) => exec(
@@ -408,12 +408,15 @@ pub fn run(
             let mut words = args.words.into_iter();
             let by_name = !args.files.is_empty() || args.app.is_some() || args.prefix.is_some();
             let instance = if by_name { None } else { words.next() };
-            let selector = selector(&InstanceArgs {
-                instance,
-                files: args.files,
-                app: args.app,
-                prefix: args.prefix,
-            })?;
+            let selector = selector(
+                &InstanceArgs {
+                    instance,
+                    files: args.files,
+                    app: args.app,
+                    prefix: args.prefix,
+                },
+                &defaults.prefix,
+            )?;
             let name = words.next();
             if let Some(name) = name.as_ref() {
                 check_command_name(name)?;
@@ -430,7 +433,7 @@ pub fn run(
             )
         }
         AppCommand::Releases(args) => {
-            let selector = selector(&args)?;
+            let selector = selector(&args, &defaults.prefix)?;
             let connector = connector::open(&server, home, connect)?;
             rollback::releases(
                 connector.as_ref(),
@@ -440,7 +443,7 @@ pub fn run(
             )
         }
         AppCommand::Rollback(args) => {
-            let selector = selector(&args.instance)?;
+            let selector = selector(&args.instance, &defaults.prefix)?;
             let options = rollback::Options {
                 to: args.to,
                 dry_run: args.dry_run,
@@ -467,7 +470,7 @@ fn exec(
     mode: exec::Mode,
     connect: &ConnectOptions,
 ) -> Result<()> {
-    let selector = selector(&args.instance)?;
+    let selector = selector(&args.instance, &home.defaults(server)?.prefix)?;
     let connector = connector::open(server, home, connect)?;
     let options = exec::Options {
         service: args.service,
@@ -499,8 +502,9 @@ pub(super) fn check_command_name(name: &str) -> Result<()> {
 }
 
 /// The positional instance, name and prefix from `--app`/`--prefix`, or the
-/// config files (with `--prefix` replacing theirs).
-fn selector(args: &InstanceArgs) -> Result<Selector> {
+/// config files (with `--prefix` replacing theirs, and `fallback` used when
+/// they have none).
+fn selector(args: &InstanceArgs, fallback: &str) -> Result<Selector> {
     if let Some(instance) = &args.instance {
         return Ok(Selector::Instance(instance.clone()));
     }
@@ -510,17 +514,29 @@ fn selector(args: &InstanceArgs) -> Result<Selector> {
             check_name("prefix", prefix)?;
             (app.clone(), prefix.clone())
         }
-        _ => instance_id(&config_files(&args.files)?, args.prefix.as_deref())?,
+        _ => instance_id(
+            &config_files(&args.files)?,
+            args.prefix.as_deref(),
+            fallback,
+        )?,
     };
     Ok(Selector::Name { name, prefix })
 }
 
-/// App name and prefix from the config files; `prefix` replaces theirs.
-pub(super) fn instance_id(files: &[PathBuf], prefix: Option<&str>) -> Result<(String, String)> {
+/// App name and prefix from the config files; `prefix` replaces theirs, and
+/// `fallback` is used when they have none (the `prefix` setting, else `main`).
+pub(super) fn instance_id(
+    files: &[PathBuf],
+    prefix: Option<&str>,
+    fallback: &str,
+) -> Result<(String, String)> {
     let merged = merge::load_merged(files)?;
     let id: InstanceId = serde_yaml_ng::from_value(merged)
         .map_err(|e| config_err(format!("app configuration: {e}")))?;
-    let prefix = prefix.map_or(id.prefix, str::to_string);
+    let prefix = match prefix {
+        Some(prefix) => prefix.to_string(),
+        None => id.prefix.unwrap_or_else(|| fallback.to_string()),
+    };
     check_name("app name", &id.name)?;
     check_name("prefix", &prefix)?;
     Ok((id.name, prefix))
@@ -568,14 +584,15 @@ pub(super) fn deploy(
     if let Some(profile) = &backup {
         check_name("backup profile", profile)?;
     }
+    let defaults = home.defaults(server)?;
     let mut files = config_files(&args.files)?;
     // The name comes from the files; the prefix may come from --secret, which
     // takes the place of the stored overlay: right after the first file.
-    let (name, mut instance_prefix) = instance_id(&files, prefix.as_deref())?;
+    let (name, mut instance_prefix) = instance_id(&files, prefix.as_deref(), &defaults.prefix)?;
     if secret.is_some() {
         let mut id_files = files.clone();
         id_files.splice(1..1, secret.clone());
-        instance_prefix = instance_id(&id_files, prefix.as_deref())?.1;
+        instance_prefix = instance_id(&id_files, prefix.as_deref(), &defaults.prefix)?.1;
     }
     let overlay = match &secret {
         Some(file) => {
@@ -599,7 +616,9 @@ pub(super) fn deploy(
         )?
         .unzip(),
     };
-    let loaded = AppConfig::load_layers(&files, stored, dev.overlay, prefix.as_deref())?;
+    // The prefix is resolved above, so files without one get the `prefix`
+    // setting rather than `main`.
+    let loaded = AppConfig::load_layers(&files, stored, dev.overlay, Some(&instance_prefix))?;
     // Like the -f files, the secrets file is never uploaded with the sources.
     files.extend(secret);
 
@@ -617,20 +636,24 @@ pub(super) fn deploy(
         };
         out!("  using {what} {path}");
     }
+    // --no-backup, --backup, `deploy.backup`, then the app's `deployment.backup`.
     let backup_profile = if no_backup {
         None
     } else {
-        backup
-            .as_deref()
-            .or(loaded.config.deployment.backup.as_deref())
+        match (backup.as_deref(), &defaults.backup) {
+            (Some(profile), _) => Some(profile),
+            (None, Some(setting)) => setting.profile(),
+            (None, None) => loaded.config.deployment.backup.as_deref(),
+        }
     };
+    let mode = args.mode_with(&defaults)?;
     let options = deploy::Options {
-        apply: args.apply(home, server)?,
+        apply: mode.apply,
         dry_run: args.dry_run,
         diff: args.diff,
         force_unlock: args.force_unlock,
-        pull: args.pull,
-        recreate: args.recreate,
+        pull: mode.pull,
+        recreate: mode.recreate,
         restore: None,
         purge,
         secrets: overlay.as_ref(),
@@ -659,4 +682,32 @@ pub(super) fn deploy(
         manager_key,
         &server.name,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instance_prefix_from_flag_files_or_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("compost.yaml");
+        fs::write(&plain, "name: shop\n").unwrap();
+        let overlay = dir.path().join(".compost-review.yaml");
+        fs::write(&overlay, "prefix: review\n").unwrap();
+
+        let id = |files: &[PathBuf], prefix| instance_id(files, prefix, "staging").unwrap();
+        assert_eq!(
+            id(std::slice::from_ref(&plain), None),
+            ("shop".into(), "staging".into())
+        );
+        assert_eq!(
+            id(&[plain.clone(), overlay.clone()], None),
+            ("shop".into(), "review".into())
+        );
+        assert_eq!(
+            id(&[plain, overlay], Some("other")),
+            ("shop".into(), "other".into())
+        );
+    }
 }

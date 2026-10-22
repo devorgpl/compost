@@ -225,7 +225,7 @@ fn restore_deployment(
     } else {
         let item = format!("{}/{}", plan.dir, secrets::ARCHIVE_ITEM);
         if plan.archive.has(&item) {
-            let overlay = secrets::prepare(&plan.archive.read(&item)?, Some(prefix))?;
+            let overlay = secrets::prepare(&plan.archive.read(&item)?, Some(prefix), prefix)?;
             if overlay.name != *name {
                 bail!("the archived secrets are not for app `{name}`");
             }

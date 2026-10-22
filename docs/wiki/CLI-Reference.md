@@ -24,7 +24,7 @@ Commands:
   backup      Run backup profiles, list and prune backups
   notify      Send notifications through the server's communication apps
   secret      Store application secrets on the server for `app deploy`
-  config      Set and show preferences, e.g. `deploy.apply`
+  config      Set and show preferences, e.g. `deploy.apply` or a server's `prefix`
   agent       Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
   images      List the images and modules this compost uses unless the config names others
   help        Print this message or the help of the given subcommand(s)
@@ -183,8 +183,10 @@ Options:
       --dry-run              Validate and show what would change on the server, without changing it
       --diff                 With --dry-run: also show the changed lines of files without secrets
       --force-unlock         Remove a lock left behind by an interrupted compost command
-      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
-      --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
+      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`; default: `deploy.pull`)
+      --no-pull              Don't pull images again, even when `deploy.pull` is set
+      --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`; default: `deploy.recreate`)
+      --no-recreate          Recreate only changed containers, even when `deploy.recreate` is set
       --secret <FILE>        Overlay with secrets (e.g. .compost-server.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
       --shared <SHARED>      Only this shared app (repeatable or comma-separated; `kind/name` when two kinds have one with the name): the others, and their part of the stored configuration, stay as they were deployed. `--pull` and `--recreate` apply to it only
   -h, --help                 Print help
@@ -244,11 +246,12 @@ Arguments:
 Options:
       --follow               Keep streaming new output until Ctrl-C
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
-      --tail <TAIL>          Lines to show from the end of each container's output, or `all` [default: 100]
+      --tail <TAIL>          Lines to show from the end of each container's output, or `all` (default: `logs.tail`, else 100)
   -v, --verbose              Print every command run on the server
       --since <SINCE>        Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
-      --timestamps           Show the time of every line
+      --timestamps           Show the time of every line (default: `logs.timestamps`)
+      --no-timestamps        Don't show the time of every line, even when `logs.timestamps` is set
   -h, --help                 Print help
 ```
 
@@ -414,9 +417,11 @@ Options:
       --dry-run              Validate and show what would change on the server, without changing it
       --diff                 With --dry-run: also show the changed lines of files without secrets
       --force-unlock         Remove a lock left behind by an interrupted compost command
-      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
-      --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --pull                 Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`; default: `deploy.pull`)
+      --no-pull              Don't pull images again, even when `deploy.pull` is set
+      --recreate             Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`; default: `deploy.recreate`)
+      --no-recreate          Recreate only changed containers, even when `deploy.recreate` is set
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --purge <PURGE>        Also delete the data of links dropped from the config, for these kinds, e.g. `--purge database`
       --secret <FILE>        Overlay with secrets (e.g. .compost.secrets.yaml) to store on the server and deploy with, replacing the stored one; later deploys use it without the file
       --backup <PROFILE>     With --apply, back up the deployed instance with this profile first (default: `deployment.backup`); a failed backup stops the deploy
@@ -439,7 +444,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
@@ -459,13 +464,14 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --service <SERVICE>    Only this compose service (repeatable or comma-separated; default: all)
       --follow               Keep streaming new output until Ctrl-C
-      --tail <TAIL>          Lines to show from the end of each container's output, or `all` [default: 100]
+      --tail <TAIL>          Lines to show from the end of each container's output, or `all` (default: `logs.tail`, else 100)
       --since <SINCE>        Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
-      --timestamps           Show the time of every line
+      --timestamps           Show the time of every line (default: `logs.timestamps`)
+      --no-timestamps        Don't show the time of every line, even when `logs.timestamps` is set
   -h, --help                 Print help
 ```
 
@@ -485,7 +491,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --service <SERVICE>    Compose service whose container runs the command
   -h, --help                 Print help
@@ -507,7 +513,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --service <SERVICE>    Compose service whose container runs the command
       --no-deps              Don't start the services it depends on (`depends_on`)
@@ -529,7 +535,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
@@ -549,7 +555,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --volumes              Also remove the compose project's volumes
       --purge <PURGE>        Delete the instance's data held by these kinds, e.g. `--purge database`
@@ -585,7 +591,7 @@ Options:
           Print every command run on the server
 
       --prefix <PREFIX>
-          Instance prefix (overrides the one from the config files)
+          Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
 
       --ssh-key-file <PATH>
           SSH private key for this command, instead of the server's `identity_file`
@@ -711,7 +717,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
   -h, --help                 Print help
 ```
@@ -731,7 +737,7 @@ Options:
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --app <APP>            Application name (instead of config files)
   -v, --verbose              Print every command run on the server
-      --prefix <PREFIX>      Instance prefix (overrides the one from the config files)
+      --prefix <PREFIX>      Instance prefix (overrides the one from the config files; default: the `prefix` setting, else `main`)
       --ssh-key-file <PATH>  SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
       --to <RELEASE>         Release to deploy, as `app releases` shows it (default: the one before the current release)
       --dry-run              Show what would change without changing anything
@@ -1064,7 +1070,7 @@ Arguments:
   <FILE>  Overlay with the app's `name`, e.g. domains and database passwords
 
 Options:
-      --prefix <PREFIX>      Instance prefix (overrides the one in the file; default `main`)
+      --prefix <PREFIX>      Instance prefix (overrides the one in the file; default: the `prefix` setting, else `main`)
   -s, --server <SERVER>      Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
       --force-unlock         Remove a lock left behind by an interrupted compost command
   -v, --verbose              Print every command run on the server
@@ -1107,12 +1113,12 @@ Options:
 ## `compost config`
 
 ```text
-Set and show preferences, e.g. `deploy.apply`
+Set and show preferences, e.g. `deploy.apply` or a server's `prefix`
 
 Usage: compost config [OPTIONS] <COMMAND>
 
 Commands:
-  set    Set a preference, e.g. `compost config set deploy.apply true`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`
+  set    Set a preference, e.g. `compost config set deploy.apply true`, `compost config set prefix staging --for-server staging`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`
   unset  Remove a preference, so the global value (or the default) applies
   show   Show the preferences
   help   Print this message or the help of the given subcommand(s)
@@ -1127,20 +1133,38 @@ Options:
 ## `compost config set`
 
 ```text
-Set a preference, e.g. `compost config set deploy.apply true`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`
+Set a preference, e.g. `compost config set deploy.apply true`, `compost config set prefix staging --for-server staging`, `compost config set dev.server laptop` or `compost config set trace basic --for-server prod`.
+
+Keys: `prefix`, `deploy.apply`, `deploy.pull`, `deploy.recreate`, `deploy.backup` (a profile or `false`), `logs.tail`, `logs.timestamps`, `dev.server` (global only) and `trace` (per server only)
 
 Usage: compost config set [OPTIONS] <KEY> <VALUE>
 
 Arguments:
-  <KEY>    
-  <VALUE>  
+  <KEY>
+          
+
+  <VALUE>
+          
 
 Options:
-      --for-server <FOR_SERVER>  Only for this server (overrides the global value)
-  -s, --server <SERVER>          Target server (default: `COMPOST_SERVER`, then the current context) [env: COMPOST_SERVER=]
-  -v, --verbose                  Print every command run on the server
-      --ssh-key-file <PATH>      SSH private key for this command, instead of the server's `identity_file` [env: COMPOST_SSH_KEY_FILE=]
-  -h, --help                     Print help
+      --for-server <FOR_SERVER>
+          Only for this server (overrides the global value)
+
+  -s, --server <SERVER>
+          Target server (default: `COMPOST_SERVER`, then the current context)
+          
+          [env: COMPOST_SERVER=]
+
+  -v, --verbose
+          Print every command run on the server
+
+      --ssh-key-file <PATH>
+          SSH private key for this command, instead of the server's `identity_file`
+          
+          [env: COMPOST_SSH_KEY_FILE=]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## `compost config unset`

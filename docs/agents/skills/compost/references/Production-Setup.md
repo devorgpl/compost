@@ -90,6 +90,8 @@ compost config set deploy.apply false --for-server prod   # but not this one
 
 Without `--apply` (and with `deploy.apply` off), deploys only upload and render files; nothing is restarted.
 
+A staging server can also name the prefix of the instances on it, so `compost app deploy` there needs no overlay to say `prefix: staging`: `compost config set prefix staging --for-server staging`. Other preferences turn on `--pull` and `--recreate`, or skip the pre-deploy backup ([Preferences](Configuration.md#preferences)).
+
 ## 6. Backups
 
 Set where backups go in `compost-server.yaml` and deploy it:

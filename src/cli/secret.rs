@@ -18,7 +18,7 @@ pub enum SecretCommand {
     Deploy {
         /// Overlay with the app's `name`, e.g. domains and database passwords
         file: PathBuf,
-        /// Instance prefix (overrides the one in the file; default `main`)
+        /// Instance prefix (overrides the one in the file; default: the `prefix` setting, else `main`)
         #[arg(long)]
         prefix: Option<String>,
         /// Remove a lock left behind by an interrupted compost command
@@ -60,7 +60,8 @@ pub fn run(
         } => {
             let text = fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
-            let overlay = secrets::prepare(&text, prefix.as_deref())?;
+            let fallback = home.defaults(&server)?.prefix;
+            let overlay = secrets::prepare(&text, prefix.as_deref(), &fallback)?;
             let connector = connector::open(&server, home, connect)?;
             secrets::deploy(
                 connector.as_ref(),

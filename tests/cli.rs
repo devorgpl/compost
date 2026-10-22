@@ -1650,6 +1650,109 @@ fn app_deploy_pull_and_recreate() {
 }
 
 #[test]
+fn deploy_settings_pull_and_recreate_by_default() {
+    let server = server_with_app();
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let files = "app/compost.yaml,app/.compost-staging.yaml";
+    for key in ["deploy.pull", "deploy.recreate"] {
+        server
+            .run(&["config", "set", key, "true", "--for-server", "dev"], &[])
+            .success();
+    }
+
+    // Without --apply the settings change nothing, and are no error.
+    server
+        .run(&["app", "deploy", "-f", files], &running)
+        .success();
+    let log = server.take_docker_log();
+    assert!(!log.contains(" up -d"), "{log}");
+
+    server
+        .run(&["app", "deploy", "--apply", "-f", files], &running)
+        .success();
+    let log = server.take_docker_log();
+    assert!(log.contains(" pull -q --ignore-buildable"), "{log}");
+    assert!(log.contains("--force-recreate"), "{log}");
+
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--apply",
+                "--no-pull",
+                "--no-recreate",
+                "-f",
+                files,
+            ],
+            &running,
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(!log.contains(" pull -q"), "{log}");
+    assert!(!log.contains("--force-recreate"), "{log}");
+}
+
+#[test]
+fn prefix_setting_names_instances_without_a_prefix() {
+    let server = server_with_web_app("name: web\n");
+    server.write_work_file(
+        "web/docker-compose.yaml",
+        "services: {app: {image: 'nginx:1'}}",
+    );
+    server
+        .run(
+            &["config", "set", "prefix", "Bad", "--for-server", "dev"],
+            &[],
+        )
+        .code(2)
+        .stderr(contains("prefix"));
+    server
+        .run(
+            &["config", "set", "prefix", "staging", "--for-server", "dev"],
+            &[],
+        )
+        .success();
+    server
+        .run(
+            &["app", "deploy", "--dry-run", "-f", "web/compost.yaml"],
+            &[],
+        )
+        .success()
+        .stdout(contains("Deploying web-staging to dev"));
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--dry-run",
+                "--prefix",
+                "other",
+                "-f",
+                "web/compost.yaml",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("Deploying web-other to dev"));
+    // A prefix in the files wins over the setting.
+    server.write_work_file("web/.compost-review.yaml", "prefix: review\n");
+    server
+        .run(
+            &[
+                "app",
+                "deploy",
+                "--dry-run",
+                "-f",
+                "web/compost.yaml,web/.compost-review.yaml",
+            ],
+            &[],
+        )
+        .success()
+        .stdout(contains("Deploying web-review to dev"));
+}
+
+#[test]
 fn app_deploy_builds_locally_and_sends_the_images() {
     let server = server_with_web_app("name: web\ndeployment: {build: local}\n");
     server.write_work_file(
@@ -2080,6 +2183,34 @@ fn app_and_server_logs() {
         log.contains("docker compose -p compost-ingress-caddy-main logs --tail 10 --no-color"),
         "{log}"
     );
+    // `logs.tail` and `logs.timestamps` replace the defaults, not the flags.
+    server
+        .run(&["config", "set", "logs.tail", "all"], &[])
+        .success();
+    server
+        .run(&["config", "set", "logs.timestamps", "true"], &[])
+        .success();
+    server.run(&["server", "logs", "caddy-main"], &[]).success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("logs --tail all --timestamps --no-color"),
+        "{log}"
+    );
+    server
+        .run(
+            &[
+                "server",
+                "logs",
+                "caddy-main",
+                "--tail",
+                "5",
+                "--no-timestamps",
+            ],
+            &[],
+        )
+        .success();
+    let log = server.take_docker_log();
+    assert!(log.contains("logs --tail 5 --no-color"), "{log}");
     server
         .run(&["server", "logs", "nope"], &[])
         .code(2)
@@ -3169,6 +3300,37 @@ fn backup_profiles_targets_and_retention() {
         .run(&[&deploy[..], &["--no-backup"]].concat(), &running)
         .success()
         .stdout(contains("profile predeploy").not());
+    // `deploy.backup: false` skips it too, unless --backup names a profile.
+    server
+        .run(
+            &[
+                "config",
+                "set",
+                "deploy.backup",
+                "false",
+                "--for-server",
+                "dev",
+            ],
+            &[],
+        )
+        .success();
+    server
+        .run(&[&deploy[..], &["--dry-run"]].concat(), &running)
+        .success()
+        .stdout(contains("profile predeploy").not());
+    server
+        .run(
+            &[&deploy[..], &["--dry-run", "--backup", "predeploy"]].concat(),
+            &running,
+        )
+        .success()
+        .stdout(contains("with profile predeploy"));
+    server
+        .run(
+            &["config", "unset", "deploy.backup", "--for-server", "dev"],
+            &[],
+        )
+        .success();
     server
         .run(&["backup", "list", "--source", "nas"], &running)
         .success()
@@ -4662,7 +4824,32 @@ fn config_set_show_unset() {
     env.compost(&["config", "show"])
         .success()
         .stdout(contains("deploy.apply = true\n"))
-        .stdout(contains("deploy.apply = false  (server prod1)"));
+        .stdout(contains("deploy.apply = false  (server prod1)"))
+        .stdout(contains("prefix = main (default)"))
+        .stdout(contains("logs.tail = 100 (default)"));
+    env.compost(&["config", "set", "deploy.backup", "true"])
+        .code(2)
+        .stderr(contains("profile name or `false`"));
+    env.compost(&["config", "set", "logs.tail", "lots"])
+        .code(2)
+        .stderr(contains("number of lines"));
+    env.compost(&[
+        "config",
+        "set",
+        "deploy.backup",
+        "false",
+        "--for-server",
+        "prod1",
+    ])
+    .success();
+    env.compost(&["config", "set", "logs.tail", "all"])
+        .success();
+    env.compost(&["config", "show"])
+        .success()
+        .stdout(contains("deploy.backup = false  (server prod1)"))
+        .stdout(contains("logs.tail = all\n"));
+    env.compost(&["config", "unset", "deploy.backup", "--for-server", "prod1"])
+        .success();
 
     // Redefining the server keeps its settings.
     env.compost(&[

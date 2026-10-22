@@ -5,7 +5,6 @@ use anyhow::{Context, Result};
 use serde_yaml_ng::Value;
 
 use super::state::initialized_server;
-use crate::config::app::default_prefix;
 use crate::config::check_name;
 use crate::connector::{Connector, shell_quote};
 use crate::error::config_err;
@@ -32,10 +31,11 @@ pub struct Overlay {
     pub text: String,
 }
 
-/// Read `name` and `prefix` of an overlay; `prefix` replaces the file's own.
-/// The stored copy always names its prefix.
-pub fn prepare(text: &str, prefix: Option<&str>) -> Result<Overlay> {
-    prepare_value(parse(text)?, prefix)
+/// Read `name` and `prefix` of an overlay; `prefix` replaces the file's own,
+/// and `fallback` is used when there is neither. The stored copy always
+/// names its prefix.
+pub fn prepare(text: &str, prefix: Option<&str>, fallback: &str) -> Result<Overlay> {
+    prepare_value(parse(text)?, prefix, fallback)
 }
 
 /// The overlay of `app deploy --secret` for instance `name`-`prefix`. It may
@@ -55,14 +55,14 @@ pub fn for_instance(text: &str, name: &str, prefix: &str) -> Result<Overlay> {
             Some(_) => {}
         }
     }
-    prepare_value(value, Some(prefix))
+    prepare_value(value, Some(prefix), prefix)
 }
 
 fn parse(text: &str) -> Result<Value> {
     serde_yaml_ng::from_str(text).map_err(|e| config_err(format!("secrets file: {e}")))
 }
 
-fn prepare_value(mut value: Value, prefix: Option<&str>) -> Result<Overlay> {
+fn prepare_value(mut value: Value, prefix: Option<&str>, fallback: &str) -> Result<Overlay> {
     let Value::Mapping(map) = &mut value else {
         return Err(config_err("secrets file: expected a mapping with `name`"));
     };
@@ -74,7 +74,7 @@ fn prepare_value(mut value: Value, prefix: Option<&str>) -> Result<Overlay> {
     let prefix = match prefix {
         Some(prefix) => prefix.to_string(),
         None => match map.get("prefix") {
-            None => default_prefix(),
+            None => fallback.to_string(),
             Some(value) => value
                 .as_str()
                 .ok_or_else(|| config_err("secrets file: `prefix` must be a string"))?
@@ -226,19 +226,24 @@ mod tests {
 
     #[test]
     fn prefix_from_flag_file_or_default() {
-        let overlay = prepare("{name: app, prefix: staging}", None).unwrap();
+        let overlay = prepare("{name: app, prefix: staging}", None, "main").unwrap();
         assert_eq!(
             (overlay.name.as_str(), overlay.prefix.as_str()),
             ("app", "staging")
         );
 
-        let overlay = prepare("{name: app, prefix: staging}", Some("review")).unwrap();
+        let overlay = prepare("{name: app, prefix: staging}", Some("review"), "main").unwrap();
         assert_eq!(overlay.prefix, "review");
         assert!(overlay.text.contains("prefix: review"), "{}", overlay.text);
 
-        let overlay = prepare("name: app", None).unwrap();
+        let overlay = prepare("name: app", None, "main").unwrap();
         assert_eq!(overlay.prefix, "main");
         assert!(overlay.text.contains("prefix: main"), "{}", overlay.text);
+
+        let overlay = prepare("name: app", None, "staging").unwrap();
+        assert_eq!(overlay.prefix, "staging");
+        let overlay = prepare("{name: app, prefix: review}", None, "staging").unwrap();
+        assert_eq!(overlay.prefix, "review");
     }
 
     #[test]
@@ -267,7 +272,7 @@ mod tests {
             ("name: Bad", "invalid app name"),
             ("{name: a, prefix: 1}", "must be a string"),
         ] {
-            let err = format!("{:#}", prepare(text, None).unwrap_err());
+            let err = format!("{:#}", prepare(text, None, "main").unwrap_err());
             assert!(err.contains(expected), "{text}: {err}");
         }
     }

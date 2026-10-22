@@ -211,7 +211,7 @@ deployment:
   backup: predeploy
 ```
 
-The backup uses the deployed instance's data and links, with the profile as the config being deployed defines it. If it fails, the deploy stops before changing anything. `--backup <profile>` picks another profile for one deploy, `--no-backup` skips it, and `--dry-run` says which one would run. `app restore` and `app rollback` don't take this backup.
+The backup uses the deployed instance's data and links, with the profile as the config being deployed defines it. If it fails, the deploy stops before changing anything. `--backup <profile>` picks another profile for one deploy, `--no-backup` skips it, and `--dry-run` says which one would run. The `deploy.backup` [preference](Configuration.md#preferences) does the same for every deploy to a server: `false` skips it (e.g. on a test server), a profile name replaces `deployment.backup`. `app restore` and `app rollback` don't take this backup.
 
 ## Formats
 

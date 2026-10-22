@@ -201,7 +201,7 @@ impl Project {
                 .unwrap_or(DEFAULT_PREFIX)
                 .to_string(),
         };
-        let (name, prefix) = instance_id(&files, Some(&prefix))?;
+        let (name, prefix) = instance_id(&files, Some(&prefix), &prefix)?;
         Ok(Self {
             files,
             name,
@@ -393,7 +393,9 @@ fn up(
             diff: false,
             force_unlock: args.force_unlock,
             pull: args.pull,
+            no_pull: false,
             recreate: args.recreate,
+            no_recreate: false,
         },
         prefix: Some(project.prefix.clone()),
         purge: Vec::new(),

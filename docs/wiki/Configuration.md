@@ -208,7 +208,7 @@ Details and examples: [Applications](Applications.md).
 
 ## Overlays
 
-Same schema as `compost.yaml`, plus `prefix` (default `main`; `local` for [`dev` commands](Local-Development.md#starting-an-app-dev-up)). Typically:
+Same schema as `compost.yaml`, plus `prefix` (default: the [`prefix` preference](#preferences), else `main`; `local` for [`dev` commands](Local-Development.md#starting-an-app-dev-up)). Typically:
 
 ```yaml
 prefix: staging
@@ -316,8 +316,15 @@ servers:
       user: compostuser                # default
       identity_file: ~/.ssh/id_ed25519 # optional; default: ssh config, agent, ~/.ssh/id_*; --ssh-key-file wins
     server_home: ~/.compost-server     # default
+    prefix: prod                       # optional; this and the keys below are preferences, see below
     deploy:
-      apply: false                     # optional, see below
+      apply: false
+      pull: false
+      recreate: false
+      backup: false                    # or a backup profile
+    logs:
+      tail: "100"                      # or all
+      timestamps: false
     trace: basic                       # optional: none (default), command, basic, verbose; see below
   - name: dev
     connector:
@@ -329,6 +336,8 @@ servers:
 ```sh
 compost config set deploy.apply true [--for-server prod]
 compost config unset deploy.apply [--for-server prod]
+compost config set prefix staging --for-server staging
+compost config set deploy.backup false --for-server dev
 compost config set dev.server laptop
 compost config set trace basic --for-server prod
 compost config show
@@ -336,11 +345,17 @@ compost config show
 
 | Key | Default | Meaning |
 |---|---|---|
+| `prefix` | `main` | Instance prefix when neither `--prefix` nor `prefix` in the config files or the `--secret` overlay names one ([Overlays](#overlays)). Used by `app` commands that find the instance from the files, and by `secret deploy` |
 | `deploy.apply` | `false` | `server deploy` and `app deploy` start services without `--apply` |
+| `deploy.pull` | `false` | Deploys that apply pull images as with `--pull`; `--no-pull` skips it once. Ignored when a deploy doesn't apply |
+| `deploy.recreate` | `false` | Deploys that apply recreate every container as with `--recreate`; `--no-recreate` skips it once. Ignored when a deploy doesn't apply |
+| `deploy.backup` | – | `false` skips the backup of [`deployment.backup`](Backup-and-Restore.md#before-a-deploy) before `app deploy --apply`; a profile name takes that one instead. `--backup <profile>` and `--no-backup` win |
+| `logs.tail` | `100` | Default of `--tail` for `app logs` and `server logs`: a number of lines or `all` |
+| `logs.timestamps` | `false` | `app logs` and `server logs` show the time of every line; `--no-timestamps` turns it off once |
 | `dev.server` | – | The local server `dev` commands use; global only. See [Local development](Local-Development.md#which-machine) |
 | `trace` | `none` | What compost records of the commands it runs on a server, in `~/.compost/logs/<server>/trace.log`; per server only (`--for-server`). See [Tracing commands](#tracing-commands) |
 
-`--apply`/`--no-apply` win over the server's value, which wins over the global one in `~/.compost/config.yaml`.
+A flag (`--apply`/`--no-apply`, `--prefix`, `--pull`/`--no-pull`, …) wins over the server's value, which wins over the global one in `~/.compost/config.yaml`, which wins over the default. `compost config show` lists them all.
 
 ### Tracing commands
 

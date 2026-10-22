@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use super::{BackupOutputArgs, DeployArgs};
-use crate::config::local::{CompostHome, ConnectorConfig, DeploySettings, ServerEntry, TraceLevel};
+use crate::config::local::{
+    CompostHome, ConnectorConfig, DeploySettings, LogsSettings, ServerEntry, TraceLevel,
+};
 use crate::config::{check_name, server::ServerConfig};
 use crate::connector::{self, ConnectOptions};
 use crate::error::{CompostError, config_err};
@@ -132,7 +134,9 @@ pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
         name: args.name,
         connector,
         server_home: args.server_home,
+        prefix: None,
         deploy: DeploySettings::default(),
+        logs: LogsSettings::default(),
         trace: TraceLevel::None,
     };
 
@@ -145,9 +149,10 @@ pub fn define(home: &CompostHome, args: DefineArgs) -> Result<()> {
         }
         Some(existing) => {
             // Settings made with `compost config` survive a redefinition.
-            let deploy = std::mem::take(&mut existing.deploy);
             *existing = ServerEntry {
-                deploy,
+                prefix: existing.prefix.take(),
+                deploy: std::mem::take(&mut existing.deploy),
+                logs: std::mem::take(&mut existing.logs),
                 trace: existing.trace,
                 ..entry.clone()
             };
@@ -215,7 +220,7 @@ pub fn logs(
         server.server_home(),
         &manager.manager_key,
         &args.name,
-        &args.logs.options(Vec::new()),
+        &args.logs.options(Vec::new(), &home.defaults(&server)?),
     )
 }
 
@@ -438,7 +443,7 @@ pub fn deploy(
     } = args;
     let manager = home.require_manager()?;
     let server = home.resolve_server(server)?;
-    let apply = args.apply(home, &server)?;
+    let mode = args.mode(home, &server)?;
     let mut files = if args.files.is_empty() {
         default_files()?
     } else {
@@ -484,12 +489,12 @@ pub fn deploy(
         out!("  secrets of {app} not used: it is not in the configuration");
     }
     let options = Options {
-        apply,
+        apply: mode.apply,
         dry_run: args.dry_run,
         diff: args.diff,
         force_unlock: args.force_unlock,
-        pull: args.pull,
-        recreate: args.recreate,
+        pull: mode.pull,
+        recreate: mode.recreate,
         secrets: text.as_deref(),
         shared: &shared,
     };
@@ -509,7 +514,7 @@ pub fn deploy(
         )?;
     }
 
-    if apply && !args.dry_run {
+    if mode.apply && !args.dry_run {
         out!();
         return state(home, Some(&server.name), connect);
     }

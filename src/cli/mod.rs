@@ -18,7 +18,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::backup::Format;
 use crate::backup::profile::Flags;
-use crate::config::local::{CompostHome, ServerEntry};
+use crate::config::local::{CompostHome, Defaults, ServerEntry};
 use crate::connector::ConnectOptions;
 use crate::error::config_err;
 
@@ -74,7 +74,7 @@ pub enum Command {
     /// Store application secrets on the server for `app deploy`
     #[command(subcommand)]
     Secret(secret::SecretCommand),
-    /// Set and show preferences, e.g. `deploy.apply`
+    /// Set and show preferences, e.g. `deploy.apply` or a server's `prefix`
     #[command(subcommand)]
     Config(config::ConfigCommand),
     /// Documentation for AI agents: llms.txt, llms-full.txt and an Agent Skill
@@ -184,25 +184,34 @@ pub struct LogsArgs {
     /// Keep streaming new output until Ctrl-C
     #[arg(long)]
     pub follow: bool,
-    /// Lines to show from the end of each container's output, or `all`
-    #[arg(long, default_value = "100")]
-    pub tail: String,
+    /// Lines to show from the end of each container's output, or `all` (default: `logs.tail`, else 100)
+    #[arg(long)]
+    pub tail: Option<String>,
     /// Only output since this time: a duration like `10m` or a time like `2026-10-17T12:00:00`
     #[arg(long)]
     pub since: Option<String>,
-    /// Show the time of every line
-    #[arg(long)]
+    /// Show the time of every line (default: `logs.timestamps`)
+    #[arg(long, conflicts_with = "no_timestamps")]
     pub timestamps: bool,
+    /// Don't show the time of every line, even when `logs.timestamps` is set
+    #[arg(long)]
+    pub no_timestamps: bool,
 }
 
 impl LogsArgs {
-    pub fn options(self, services: Vec<String>) -> crate::app::logs::Options {
+    /// The options, with `logs.tail` and `logs.timestamps` from `defaults`
+    /// where no flag is given.
+    pub fn options(self, services: Vec<String>, defaults: &Defaults) -> crate::app::logs::Options {
         crate::app::logs::Options {
             services,
             follow: self.follow,
-            tail: self.tail,
+            tail: self.tail.unwrap_or_else(|| defaults.logs_tail.clone()),
             since: self.since,
-            timestamps: self.timestamps,
+            timestamps: if self.timestamps || self.no_timestamps {
+                self.timestamps
+            } else {
+                defaults.logs_timestamps
+            },
         }
     }
 }
@@ -228,28 +237,58 @@ pub struct DeployArgs {
     /// Remove a lock left behind by an interrupted compost command
     #[arg(long)]
     pub force_unlock: bool,
-    /// Pull images again, even when their tags did not change, and build images that compost builds on newer base images (needs `--apply`)
-    #[arg(long)]
+    /// Pull images again, even when their tags did not change, and build images that compost builds on newer base images
+    /// (needs `--apply`; default: `deploy.pull`)
+    #[arg(long, conflicts_with = "no_pull")]
     pub pull: bool,
-    /// Recreate every container, even unchanged ones; data in volumes is kept (needs `--apply`)
+    /// Don't pull images again, even when `deploy.pull` is set
     #[arg(long)]
+    pub no_pull: bool,
+    /// Recreate every container, even unchanged ones; data in volumes is kept
+    /// (needs `--apply`; default: `deploy.recreate`)
+    #[arg(long, conflicts_with = "no_recreate")]
+    pub recreate: bool,
+    /// Recreate only changed containers, even when `deploy.recreate` is set
+    #[arg(long)]
+    pub no_recreate: bool,
+}
+
+/// What a deploy does, from the flags and the configured defaults.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DeployMode {
+    pub apply: bool,
+    pub pull: bool,
     pub recreate: bool,
 }
 
 impl DeployArgs {
-    /// `--apply`/`--no-apply`, else the configured default.
-    pub fn apply(&self, home: &CompostHome, server: &ServerEntry) -> Result<bool> {
-        let apply = if self.apply || self.no_apply {
-            self.apply
-        } else {
-            home.apply_default(server)?
-        };
-        if !apply && (self.pull || self.recreate) {
-            return Err(config_err(
-                "--pull and --recreate start services: add --apply",
-            ));
+    /// `--apply`/`--no-apply`, `--pull`/`--no-pull` and `--recreate`/`--no-recreate`,
+    /// else the configured defaults.
+    pub fn mode(&self, home: &CompostHome, server: &ServerEntry) -> Result<DeployMode> {
+        self.mode_with(&home.defaults(server)?)
+    }
+
+    pub fn mode_with(&self, defaults: &Defaults) -> Result<DeployMode> {
+        let flag = |on: bool, off: bool, default: bool| if on || off { on } else { default };
+        let apply = flag(self.apply, self.no_apply, defaults.apply);
+        if !apply {
+            if self.pull || self.recreate {
+                return Err(config_err(
+                    "--pull and --recreate start services: add --apply",
+                ));
+            }
+            // `deploy.pull` and `deploy.recreate` only matter when services start.
+            return Ok(DeployMode {
+                apply,
+                pull: false,
+                recreate: false,
+            });
         }
-        Ok(apply)
+        Ok(DeployMode {
+            apply,
+            pull: flag(self.pull, self.no_pull, defaults.pull),
+            recreate: flag(self.recreate, self.no_recreate, defaults.recreate),
+        })
     }
 }
 
@@ -360,5 +399,83 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Backup(BackupCommand::List { source }) => {
             server::backup_list(&home, server, source.as_deref(), &connect)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deploy_args(flags: &[&str]) -> DeployArgs {
+        #[derive(Parser)]
+        struct Test {
+            #[command(flatten)]
+            deploy: DeployArgs,
+        }
+        let args = std::iter::once("test").chain(flags.iter().copied());
+        Test::try_parse_from(args).unwrap().deploy
+    }
+
+    fn defaults(apply: bool, pull: bool, recreate: bool) -> Defaults {
+        Defaults {
+            prefix: "main".to_string(),
+            apply,
+            pull,
+            recreate,
+            backup: None,
+            logs_tail: "100".to_string(),
+            logs_timestamps: false,
+        }
+    }
+
+    fn mode(apply: bool, pull: bool, recreate: bool) -> DeployMode {
+        DeployMode {
+            apply,
+            pull,
+            recreate,
+        }
+    }
+
+    #[test]
+    fn flags_win_over_the_deploy_settings() {
+        let all = defaults(true, true, true);
+        assert_eq!(
+            deploy_args(&[]).mode_with(&all).unwrap(),
+            mode(true, true, true)
+        );
+        assert_eq!(
+            deploy_args(&["--no-pull", "--no-recreate"])
+                .mode_with(&all)
+                .unwrap(),
+            mode(true, false, false)
+        );
+        let none = defaults(false, false, false);
+        assert_eq!(
+            deploy_args(&["--apply", "--pull"])
+                .mode_with(&none)
+                .unwrap(),
+            mode(true, true, false)
+        );
+    }
+
+    #[test]
+    fn pull_and_recreate_settings_wait_for_apply() {
+        // The settings don't stop a deploy that only uploads files…
+        let no_apply = defaults(false, true, true);
+        assert_eq!(
+            deploy_args(&[]).mode_with(&no_apply).unwrap(),
+            mode(false, false, false)
+        );
+        assert_eq!(
+            deploy_args(&["--no-apply"])
+                .mode_with(&defaults(true, true, true))
+                .unwrap(),
+            mode(false, false, false)
+        );
+        // …but the flags still need --apply.
+        let error = deploy_args(&["--recreate"])
+            .mode_with(&no_apply)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("add --apply"), "{error:#}");
     }
 }

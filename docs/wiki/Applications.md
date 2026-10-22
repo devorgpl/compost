@@ -640,11 +640,11 @@ AWS SDKs read `AWS_ENDPOINT_URL_<SERVICE>` for one service and `AWS_ENDPOINT_URL
 ## Deploying
 
 ```sh
-compost app deploy [--apply | --no-apply] [--pull] [--recreate] [-f files] [--secret <file>] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
+compost app deploy [--apply | --no-apply] [--pull | --no-pull] [--recreate | --no-recreate] [-f files] [--secret <file>] [--prefix <prefix>] [--purge <kind>] [--dry-run [--diff]]
                    [--backup <profile> | --no-backup]
 ```
 
-`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default `main`). On your own machine, [`compost dev up`](Local-Development.md) does such a deploy and also adds the shared apps the app's links need.
+`-f` defaults to `compost.yaml`. Pass an instance's overlay with `--secret .compost-staging.yaml`: it is stored on the server and merged right after the first file, now and on later deploys without it ([Secrets](Secrets.md)). Other overlays go in `-f compost.yaml,.compost-local.yaml`; they are not stored. `--prefix` overrides the prefix from the files (default: the [`prefix` preference](Configuration.md#preferences), else `main`). `--pull` and `--recreate` can also be on by default, with the `deploy.pull` and `deploy.recreate` preferences. On your own machine, [`compost dev up`](Local-Development.md) does such a deploy and also adds the shared apps the app's links need.
 
 A deploy:
 
@@ -729,7 +729,7 @@ compost app logs myapp-staging --service backend --follow   # stream until Ctrl-
 compost app logs myapp-staging --since 1h --timestamps --tail all
 ```
 
-`app logs` runs `docker compose logs` on the server with the instance's compose files, so you don't need to know its project or files. `--service` (repeatable or comma-separated) picks compose services; an unknown one exits 2 and lists the instance's services. `--tail` is the number of lines per container (default `100`, or `all`), `--since` a duration (`10m`) or time (`2026-10-17T12:00:00`). On a terminal the output keeps compose's colors, and Ctrl-C ends `--follow` normally (exit 0); piped, it is plain text, e.g. `compost app logs myapp-staging | grep ERROR`.
+`app logs` runs `docker compose logs` on the server with the instance's compose files, so you don't need to know its project or files. `--service` (repeatable or comma-separated) picks compose services; an unknown one exits 2 and lists the instance's services. `--tail` is the number of lines per container (default `100`, or `all`; the `logs.tail` [preference](Configuration.md#preferences) changes it, and `logs.timestamps` turns on `--timestamps`), `--since` a duration (`10m`) or time (`2026-10-17T12:00:00`). On a terminal the output keeps compose's colors, and Ctrl-C ends `--follow` normally (exit 0); piped, it is plain text, e.g. `compost app logs myapp-staging | grep ERROR`.
 
 It shows what Docker still keeps for the current containers: a recreated container starts with empty logs. A [monitoring link](#monitoring-links) keeps the history in OpenObserve.
 

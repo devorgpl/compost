@@ -49,7 +49,7 @@ Commands that change a server run these checks first, and stop on `UNREACHABLE`,
 The output of a shared app's containers, like [`app logs`](Applications.md#logs) for apps:
 
 ```sh
-compost server logs caddy-main [--follow] [--tail 100] [--since 10m] [--timestamps]
+compost server logs caddy-main [--follow] [--tail 100] [--since 10m] [--timestamps | --no-timestamps]
 compost server logs database/postgres18     # <kind>/<name> when two kinds use the name
 ```
 
