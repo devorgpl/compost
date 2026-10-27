@@ -12,7 +12,7 @@ The Note column says when an image is used and which key replaces it.
 
 | Type | What | Image or module | Tag | Note |
 |---|---|---|---|---|
-| `communication/webhook, slack, mattermost, discord, matrix, email` | image | `compost-communication:532488d1109b` | built | built on the server; `image` |
+| `communication/webhook, slack, mattermost, discord, matrix, email` | image | `compost-communication:c7cab48fcd3e` | built | built on the server; `image` |
 | `communication/webhook, slack, mattermost, discord, matrix, email` | build base | `alpine:3.24` | moving tag |  |
 | `database/postgres` | image | `postgres:<version>` | moving tag | `version` is required; `image` |
 | `database/mariadb` | image | `mariadb:11` | moving tag | `image`; `version` sets the major |

@@ -121,6 +121,7 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
     else {
         return Ok(());
     };
+    let server = notify::server_label(ctx, Some(notifications), server_name);
     let state = StateFile::load(ctx)?;
     let mut checks = backup_checks(&state);
     if let Some(disk) = prune::disk(ctx)? {
@@ -185,23 +186,15 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
         } else {
             detail
         };
-        send(
-            ctx,
-            notifications,
-            server_name,
-            event,
-            severity,
-            title,
-            body,
-        );
+        send(ctx, notifications, &server, event, severity, title, body);
     }
-    if let Err(err) = report_bans(ctx, server_name, &config, notifications) {
+    if let Err(err) = report_bans(ctx, &server, &config, notifications) {
         eprintln!("error: bans notifications: {err:#}");
     }
-    if let Err(err) = report_updates(ctx, server_name, notifications) {
+    if let Err(err) = report_updates(ctx, &server, notifications) {
         eprintln!("error: updates notifications: {err:#}");
     }
-    if let Err(err) = report_status(ctx, server_name, manager_key, &config, notifications) {
+    if let Err(err) = report_status(ctx, &server, manager_key, &config, notifications) {
         eprintln!("error: status notifications: {err:#}");
     }
     Ok(())
@@ -211,7 +204,7 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
 /// all is fine, so that silence means something is wrong.
 fn report_status(
     ctx: &ServerCtx,
-    server_name: &str,
+    server: &str,
     manager_key: &str,
     config: &ServerConfig,
     notifications: &Notifications,
@@ -238,7 +231,7 @@ fn report_status(
     send(
         ctx,
         notifications,
-        server_name,
+        server,
         Event::Status,
         severity,
         title,
@@ -249,7 +242,7 @@ fn report_status(
 
 /// `updates`: once a day at `daily_at`, ask the registries and GitHub what is
 /// newer than what runs, and send it when something wasn't reported before.
-fn report_updates(ctx: &ServerCtx, server_name: &str, notifications: &Notifications) -> Result<()> {
+fn report_updates(ctx: &ServerCtx, server: &str, notifications: &Notifications) -> Result<()> {
     if !notifications.wants(Event::Updates) {
         return Ok(());
     }
@@ -288,7 +281,7 @@ fn report_updates(ctx: &ServerCtx, server_name: &str, notifications: &Notificati
         send(
             ctx,
             notifications,
-            server_name,
+            server,
             Event::Updates,
             Severity::Info,
             title,
@@ -311,7 +304,7 @@ fn save_updates(ctx: &ServerCtx, record: UpdatesRecord) -> Result<()> {
 fn send(
     ctx: &ServerCtx,
     notifications: &Notifications,
-    server_name: &str,
+    server: &str,
     event: Event,
     severity: Severity,
     title: String,
@@ -326,7 +319,7 @@ fn send(
             severity,
             title,
             body,
-            server: server_name.to_string(),
+            server: server.to_string(),
         },
     );
 }
@@ -336,7 +329,7 @@ fn send(
 /// `daily_at`. Only recipients that ask for them get them.
 fn report_bans(
     ctx: &ServerCtx,
-    server_name: &str,
+    server: &str,
     config: &ServerConfig,
     notifications: &Notifications,
 ) -> Result<()> {
@@ -428,7 +421,7 @@ fn report_bans(
         send(
             ctx,
             notifications,
-            server_name,
+            server,
             event,
             severity,
             message.title,

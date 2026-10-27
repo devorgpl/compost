@@ -43,6 +43,10 @@ pub struct Notifications {
     /// in the server's time zone.
     #[serde(default = "default_daily_at")]
     pub daily_at: String,
+    /// How messages name the server, with its hostname; default the name
+    /// `compost server define` gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 fn default_disk_free_below() -> u8 {
@@ -691,6 +695,13 @@ impl ServerConfig {
                     "notifications.disk_free_below: a percentage from 1 to 99",
                 ));
             }
+            if let Some(label) = &notifications.label {
+                if label.trim().is_empty() || label.contains('\n') {
+                    return Err(config_err(
+                        "notifications.label: a name on one line, or leave it out",
+                    ));
+                }
+            }
             if notifications.daily_time().is_none() {
                 return Err(config_err(format!(
                     "notifications.daily_at: `{}` is not a time like 08:00",
@@ -954,6 +965,9 @@ shared:
         );
         assert!(
             error(&format!("{chat}notifications: {{disk_free_below: 0}}")).contains("from 1 to 99")
+        );
+        assert!(
+            error(&format!("{chat}notifications: {{label: ' '}}")).contains("notifications.label")
         );
     }
 

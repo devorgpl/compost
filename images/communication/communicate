@@ -105,9 +105,11 @@ matrix() {
     token=$(need COMMUNICATION_ACCESS_TOKEN)
     conf header "Authorization: Bearer $token"
     text >"$tmp/text"
-    jq -n --rawfile text "$tmp/text" --arg title "$title" --rawfile message "$tmp/body" \
+    jq -n --rawfile text "$tmp/text" --arg title "$title" --arg server "$server" \
+        --rawfile message "$tmp/body" \
         '{msgtype: "m.text", body: $text, format: "org.matrix.custom.html",
           formatted_body: ("<b>" + ($title | @html) + "</b>"
+            + (if $server == "" then "" else " (" + ($server | @html) + ")" end)
             + (if $message == "" then "" else "<br>" + ($message | @html | gsub("\n"; "<br>")) end))}' \
         >"$tmp/payload"
     deliver PUT

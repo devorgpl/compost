@@ -291,6 +291,7 @@ notifications:
   send_to: [ops-chat, {to: ops-mail, events: [backup, disk]}]   # communication apps; events: backup, health, disk, bans, bans_daily, updates, status
   disk_free_below: 10                                           # percent
   daily_at: "08:00"                                             # when bans_daily and status are sent and updates checked
+  label: prod                                                   # names the server in messages, with its hostname
 ```
 
 See [Notifications](Notifications.md#what-is-sent).

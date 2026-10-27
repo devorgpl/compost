@@ -20,6 +20,7 @@ notifications:
     - {to: security, events: [bans_daily, updates, status]}  # bans, updates and status only go to who lists them
   disk_free_below: 10                           # percent, default 10
   daily_at: "08:00"                             # when bans_daily and status are sent and updates checked, default 08:00
+  label: prod                                   # how messages name the server, default its `server define` name
 ```
 
 | Event | Sent when | Severity |
@@ -31,6 +32,8 @@ notifications:
 | `bans_daily` | Every day at `daily_at` (the server's time zone): how many addresses were banned in the last 24 hours, their alerts by scenario, the addresses with the most alerts, and how many bans are in force | `info`, also on a day without bans |
 | `updates` | Checked every day at `daily_at`: a shared app's tag has a newer image in its registry, or compost has a newer release, that wasn't reported before. One message lists all of them, each shared app with the command that updates it | `info` |
 | `status` | Every day at `daily_at`: a [summary of the server](#daily-status), also when all is fine | `info`, or `warning` when the server isn't `OK` or an alert is notified |
+
+Every message names the server it comes from, after its title: `label` and the host's name (`uname -n`) when it differs, e.g. `❌ Disk space low: 8% free on / (prod on vps-1234)`, so that channels several servers send to tell them apart. Without `label`, it is the name `compost server define` gave the server on the machine that last deployed it. Set `label` in an environment's overlay (e.g. `compost-server.prod.yaml`) or in the stored `.compost-server.secrets.yaml` when servers share one `compost-server.yaml`. Email has it in the subject, `webhook` in `server`.
 
 `bans` and `bans_daily` need a `caddysecurebuild` ingress, and only go to channels that list them in `events`: a server facing the internet bans scanners many times a day. Bans you add yourself (`caddy-main.ban`) and the community blocklist's aren't reported, only those of the server's own scenarios. Neither is an address that was banned already: CrowdSec still reads the requests the bans block, so a scanner that keeps going sets off more scenarios with requests that get 403, and each extends its ban. The first check after you subscribe to `bans` only notes where CrowdSec's alerts are, so older bans aren't sent; the first `bans_daily` comes at the first check after `daily_at`, which can be right away.
 
@@ -149,6 +152,6 @@ docker run --rm <image> describe
 
 - `send` reads the message from stdin (it can have several lines) and exits with `0` once the message is delivered; otherwise with another status and the reason on stderr.
 - `describe` prints JSON with at least `"api": 1`; deploys fail without it.
-- `--event` is `backup`, `health`, `disk`, `bans`, `bans_daily`, `updates` or `status` (none for `notify test`), `--server` the server's name as `compost server define` gave it.
+- `--event` is `backup`, `health`, `disk`, `bans`, `bans_daily`, `updates` or `status` (none for `notify test`), `--server` the server as messages name it (`label` and the hostname, see [What is sent](#what-is-sent)).
 - The env file has `COMMUNICATION_API=1`, `COMMUNICATION_TYPE`, and each configuration key as `COMMUNICATION_<KEY>` in capitals (`to` as a comma-separated list, each header as `COMMUNICATION_HEADER_<n>=Name: value`).
 - Keep credentials off command lines inside the container, where the host's `ps` shows them: compost's image passes them to `curl` in a config file.

@@ -38,8 +38,32 @@ pub struct Notification {
     pub severity: Severity,
     pub title: String,
     pub body: String,
-    /// The server's name, as `server define` gave it.
+    /// The server as messages name it ([`server_label`]).
     pub server: String,
+}
+
+/// How messages name the server: `notifications.label`, else `server_name`
+/// (as `server define` gave it), and the host's name when it differs, e.g.
+/// `prod on vps-1234`, so that channels several servers send to tell them
+/// apart.
+pub fn server_label(
+    ctx: &ServerCtx,
+    notifications: Option<&Notifications>,
+    server_name: &str,
+) -> String {
+    let label = notifications
+        .and_then(|n| n.label.as_deref())
+        .unwrap_or(server_name);
+    let host = ctx.connector.exec("uname -n").unwrap_or_default();
+    with_host(label, host.trim())
+}
+
+fn with_host(label: &str, host: &str) -> String {
+    if host.is_empty() || host == label {
+        label.to_string()
+    } else {
+        format!("{label} on {host}")
+    }
 }
 
 /// Send `notification` through the communication app `name`.
@@ -132,7 +156,7 @@ pub fn test(
         body: message
             .unwrap_or("compost can send notifications to this channel.")
             .to_string(),
-        server: server_name.to_string(),
+        server: server_label(&ctx, config.notifications.as_ref(), server_name),
     };
     let mut failed = 0;
     for name in &names {
@@ -148,4 +172,16 @@ pub fn test(
         bail!("{failed} of {} channels failed", names.len());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn label_names_the_host_once() {
+        assert_eq!(with_host("prod", "vps-1234"), "prod on vps-1234");
+        assert_eq!(with_host("prod", "prod"), "prod");
+        assert_eq!(with_host("prod", ""), "prod");
+    }
 }

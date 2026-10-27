@@ -309,6 +309,16 @@ impl LocalServer {
         )
         .unwrap();
         fs::set_permissions(bin.join("curl"), fs::Permissions::from_mode(0o755)).unwrap();
+        // The host is `vps-1`, for the server's name in notifications.
+        fs::write(
+            bin.join("uname"),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = -n ]; then echo vps-1; else PATH='{}' exec uname \"$@\"; fi\n",
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(bin.join("uname"), fs::Permissions::from_mode(0o755)).unwrap();
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
         let server_home = env.work.path().join("server-home");
@@ -3767,7 +3777,9 @@ fn communication_apps_are_built_on_the_server_and_send_tests() {
         .stdout(contains("ops-chat: sent"));
     let log = server.take_docker_log();
     assert!(
-        log.contains("send --severity info --title Test message from compost --server dev"),
+        log.contains(
+            "send --severity info --title Test message from compost --server dev on vps-1"
+        ),
         "{log}"
     );
     assert!(log.contains("send body: hello there"), "{log}");
@@ -3778,6 +3790,22 @@ fn communication_apps_are_built_on_the_server_and_send_tests() {
         .stderr(contains(
             "--to nope: no such communication app (known: ops-chat)",
         ));
+
+    // `label` names the server, also from the stored secrets file.
+    server.write_work_file("label.yaml", "notifications: {label: prod}");
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "label.yaml"],
+            &running,
+        )
+        .success();
+    server.take_docker_log();
+    server
+        .run(&["notify", "test"], &running)
+        .success()
+        .stdout(contains("ops-chat: sent"));
+    let log = server.take_docker_log();
+    assert!(log.contains("--server prod on vps-1"), "{log}");
     server
         .run(
             &["notify", "test"],
@@ -3863,7 +3891,7 @@ notifications:
     assert_eq!(
         sent(&log),
         [
-            "security: --severity info --title 1 address banned in the last 24h, 1 more would have been (simulated) --server dev --event bans_daily"
+            "security: --severity info --title 1 address banned in the last 24h, 1 more would have been (simulated) --server dev on vps-1 --event bans_daily"
         ]
     );
     assert!(
@@ -3884,7 +3912,9 @@ notifications:
     let log = server.take_docker_log();
     assert_eq!(
         sent(&log),
-        ["security: --severity warning --title 1 address banned --server dev --event bans"]
+        [
+            "security: --severity warning --title 1 address banned --server dev on vps-1 --event bans"
+        ]
     );
     assert!(
         log.contains("203.0.113.9  crowdsecurity/http-probing (alert 5)"),
@@ -3993,7 +4023,7 @@ notifications:
     let log = server.take_docker_log();
     assert!(
         log.contains(
-            "send --severity info --title Newer images for caddy-main --server dev --event updates"
+            "send --severity info --title Newer images for caddy-main --server dev on vps-1 --event updates"
         ),
         "{log}"
     );
@@ -4068,7 +4098,9 @@ notifications:
     server.run(&tick, &running).success();
     let log = server.take_docker_log();
     assert!(
-        log.contains("send --severity info --title Daily status: OK --server dev --event status"),
+        log.contains(
+            "send --severity info --title Daily status: OK --server dev on vps-1 --event status"
+        ),
         "{log}"
     );
     assert!(log.contains("ingress caddy-main: running"), "{log}");
@@ -4174,7 +4206,9 @@ notifications:
     let log = server.take_docker_log();
     assert_eq!(
         sent(&log),
-        ["--severity warning --title Disk space low: 5% free on /srv --server dev --event disk"]
+        [
+            "--severity warning --title Disk space low: 5% free on /srv --server dev on vps-1 --event disk"
+        ]
     );
     assert!(
         log.contains("send body: Disk /srv: 5.1 MB free of 102.4 MB (95% used)"),
@@ -4193,7 +4227,7 @@ notifications:
     assert_eq!(
         sent(&server.take_docker_log()),
         [
-            "--severity ok --title Disk space is fine again: 20% free on /srv --server dev --event disk"
+            "--severity ok --title Disk space is fine again: 20% free on /srv --server dev on vps-1 --event disk"
         ]
     );
 
@@ -4209,7 +4243,7 @@ notifications:
     assert_eq!(
         sent(&log),
         [
-            "--severity error --title Scheduled backup failed: profile nightly of the shared apps --server dev --event backup"
+            "--severity error --title Scheduled backup failed: profile nightly of the shared apps --server dev on vps-1 --event backup"
         ]
     );
     assert!(
@@ -4227,7 +4261,7 @@ notifications:
     assert_eq!(
         sent(&server.take_docker_log()),
         [
-            "--severity ok --title Scheduled backup works again: profile nightly of the shared apps --server dev --event backup"
+            "--severity ok --title Scheduled backup works again: profile nightly of the shared apps --server dev on vps-1 --event backup"
         ]
     );
 
@@ -4241,7 +4275,7 @@ notifications:
     let log = server.take_docker_log();
     assert_eq!(
         sent(&log),
-        ["--severity error --title Shared apps are down --server dev --event health"]
+        ["--severity error --title Shared apps are down --server dev on vps-1 --event health"]
     );
     assert!(
         log.contains(
@@ -4252,7 +4286,7 @@ notifications:
     server.run(&tick, &running).success();
     assert_eq!(
         sent(&server.take_docker_log()),
-        ["--severity ok --title Shared apps run again --server dev --event health"]
+        ["--severity ok --title Shared apps run again --server dev on vps-1 --event health"]
     );
 }
 
