@@ -233,16 +233,27 @@ impl Drop for Sink<'_> {
     }
 }
 
+/// A finished backup: the target it went to, and its size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub target: String,
+    pub size: Option<u64>,
+}
+
 /// The target `name` (a `--target`/`--source` flag or a profile's), else the
 /// server's `backup.target`, else `local`.
+pub fn target_name<'a>(settings: Option<&'a BackupSettings>, name: Option<&'a str>) -> &'a str {
+    name.or_else(|| settings.and_then(|s| s.target.as_deref()))
+        .unwrap_or("local")
+}
+
+/// The [`Destination`] of [`target_name`].
 pub fn resolve_target(
     ctx: &ServerCtx,
     settings: Option<&BackupSettings>,
     name: Option<&str>,
 ) -> Result<Destination> {
-    let name = name
-        .or_else(|| settings.and_then(|s| s.target.as_deref()))
-        .unwrap_or("local");
+    let name = target_name(settings, name);
     let absolute = |path: &str| {
         if path.starts_with('/') {
             path.to_string()

@@ -42,6 +42,19 @@ impl std::fmt::Display for Location {
 }
 
 impl Location {
+    /// The archive's size in bytes, if it can be read.
+    pub fn size(&self, connector: &dyn Connector) -> Option<u64> {
+        match self {
+            Location::Local(path) => fs::metadata(path).ok().map(|m| m.len()),
+            Location::Server(path) => connector
+                .exec(&format!("stat -c %s {}", shell_quote(path)))
+                .ok()?
+                .trim()
+                .parse()
+                .ok(),
+        }
+    }
+
     /// The folder the archive is in, for retention.
     pub fn store<'c>(&self, connector: &'c dyn Connector) -> super::retention::Store<'c> {
         use super::retention::Store;

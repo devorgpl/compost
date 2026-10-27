@@ -69,7 +69,7 @@ pub fn backup(
     manager_key: &str,
     which: &Which,
     options: &Options,
-) -> Result<()> {
+) -> Result<Vec<backup::Written>> {
     let ctx = initialized_server(connector, server_home, manager_key)?;
     let server_config = instance::server_config(&ctx)?;
     let settings = server_config.backup.as_ref();
@@ -148,14 +148,19 @@ pub fn backup(
                 )?;
             }
             let location = backup.finish(&format!("apps-{}", backup::timestamp()))?;
+            let size = location.size(connector);
             let (location, _) = sink.deliver(location)?;
             out!("Backup written to {location}");
-            Ok(())
+            Ok(vec![backup::Written {
+                target: backup::target_name(settings, flags.target.as_deref()).to_string(),
+                size,
+            }])
         }
         _ => {
+            let mut written = Vec::new();
             let mut failed = Vec::new();
             for (instance, run) in &runs {
-                let written = write_one(
+                let one = write_one(
                     &ctx,
                     &server_config,
                     server_name,
@@ -165,17 +170,17 @@ pub fn backup(
                     options.output.as_ref(),
                     options.stop,
                 );
-                match written {
+                match one {
                     Err(err) if runs.len() == 1 => return Err(err),
                     Err(err) => {
                         eprintln!("error: {}: {err:#}", instance.app.instance());
                         failed.push(instance.app.instance());
                     }
-                    Ok(()) => {}
+                    Ok(one) => written.push(one),
                 }
             }
             if failed.is_empty() {
-                Ok(())
+                Ok(written)
             } else {
                 bail!("the backup failed for {}", failed.join(", "))
             }
@@ -195,7 +200,7 @@ pub fn write_one(
     profile: Option<&str>,
     path: Option<&PathBuf>,
     stop: bool,
-) -> Result<()> {
+) -> Result<backup::Written> {
     let (output, sink) = output(ctx, server_config, run.target.as_deref(), path)?;
     let mut manifest = Manifest::new(Scope::App, server_name);
     manifest.profile = profile.map(String::from);
@@ -211,12 +216,17 @@ pub fn write_one(
         None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
+    let size = location.size(ctx.connector);
     let (location, store) = sink.deliver(location)?;
     out!("Backup written to {location}");
     if let (Some(profile), Some(keep)) = (profile, run.keep) {
         retention::apply(&store, &owner, profile, keep)?;
     }
-    Ok(())
+    Ok(backup::Written {
+        target: backup::target_name(server_config.backup.as_ref(), run.target.as_deref())
+            .to_string(),
+        size,
+    })
 }
 
 /// Where the backup goes: the `target` (a flag's or a profile's), else the

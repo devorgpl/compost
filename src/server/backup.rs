@@ -68,7 +68,7 @@ pub fn backup(
     server_home: &str,
     manager_key: &str,
     options: &BackupOptions,
-) -> Result<()> {
+) -> Result<backup::Written> {
     let ctx = app::state::initialized_server(connector, server_home, manager_key)?;
     let config = instance::server_config(&ctx)?;
     let selected = select(&config, &options.shared)?;
@@ -153,6 +153,7 @@ pub fn backup(
         None => format!("{owner}-{}", backup::timestamp()),
     };
     let location = backup.finish(&stem)?;
+    let size = location.size(connector);
     let (location, store) = sink.deliver(location)?;
     out!("Backup written to {location}");
     out!("It holds secrets (passwords of the shared apps and their links): keep it safe.");
@@ -160,7 +161,10 @@ pub fn backup(
     {
         retention::apply(&store, &owner, profile, keep)?;
     }
-    Ok(())
+    Ok(backup::Written {
+        target: backup::target_name(config.backup.as_ref(), run.target.as_deref()).to_string(),
+        size,
+    })
 }
 
 pub fn restore(

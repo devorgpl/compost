@@ -346,6 +346,7 @@ pub fn run(
                 &which,
                 &options,
             )
+            .map(drop)
         }
         AppCommand::Restore(args) => {
             if let Some(prefix) = &args.prefix {

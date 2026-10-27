@@ -4029,6 +4029,62 @@ notifications:
 }
 
 #[test]
+fn status_is_sent_once_a_day() {
+    let running = [("FAKE_DOCKER_RUNNING", "1")];
+    let server = LocalServer::new();
+    server.write_work_file(
+        "compost-server.yaml",
+        "shared:
+  ingress:
+    - {name: caddy-main, type: caddy}
+  communication:
+    - {name: hook, type: webhook}
+notifications:
+  send_to: [hook, {to: hook, events: [status]}]
+  daily_at: '00:00'
+",
+    );
+    server.write_work_file(
+        "secrets.yaml",
+        "shared: {communication: [{name: hook, configuration: {url: 'https://hooks.example.com/x'}}]}",
+    );
+    server
+        .run(
+            &["server", "deploy", "--apply", "--secret", "secrets.yaml"],
+            &running,
+        )
+        .success();
+    server.take_docker_log();
+    let home = server.server_home.display().to_string();
+    let tick = [
+        "backup",
+        "tick",
+        "--server-home",
+        home.as_str(),
+        "--server-name",
+        "dev",
+    ];
+
+    server.run(&tick, &running).success();
+    let log = server.take_docker_log();
+    assert!(
+        log.contains("send --severity info --title Daily status: OK --server dev --event status"),
+        "{log}"
+    );
+    assert!(log.contains("ingress caddy-main: running"), "{log}");
+    assert!(log.contains("communication hook: on demand"), "{log}");
+    assert!(log.contains("Uptime: "), "{log}");
+    assert!(log.contains("\nDisk /"), "{log}");
+    let state = fs::read_to_string(server.server_home.join("state.yaml")).unwrap();
+    assert!(state.contains("status:"), "{state}");
+
+    // Once a day.
+    server.run(&tick, &running).success();
+    let log = server.take_docker_log();
+    assert!(!log.contains("--event status"), "{log}");
+}
+
+#[test]
 fn notifications_report_changes_from_the_tick() {
     use chrono::Timelike;
     use std::os::unix::fs::PermissionsExt;

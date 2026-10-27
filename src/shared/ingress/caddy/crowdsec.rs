@@ -162,7 +162,7 @@ pub struct ActiveBans {
 }
 
 impl ActiveBans {
-    fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         let local: usize = self.scenarios.values().sum();
         let mut parts = Vec::new();
         if local > 0 {

@@ -15,6 +15,7 @@ pub mod schedule;
 pub mod secrets;
 pub mod state;
 pub mod state_file;
+pub mod status;
 pub mod teardown;
 pub mod updates;
 

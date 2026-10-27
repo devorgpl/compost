@@ -33,6 +33,9 @@ pub struct StateFile {
     /// What the `updates` notifications reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updates: Option<UpdatesRecord>,
+    /// When the `status` summary was last sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<StatusRecord>,
     /// Sections this version does not know, kept unchanged.
     #[serde(flatten)]
     pub other: Mapping,
@@ -107,6 +110,25 @@ pub struct UpdatesRecord {
     pub reported: Vec<String>,
 }
 
+/// The last `status` summary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusRecord {
+    /// When it was last sent (`YYYY-MM-DD`, the server's date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_daily: Option<String>,
+    /// The CPU counters then, for the average utilisation until the next one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<CpuTimes>,
+}
+
+/// The first line of `/proc/stat`: CPU time since boot, in clock ticks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuTimes {
+    pub total: u64,
+    /// Idle and waiting for I/O.
+    pub idle: u64,
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -122,6 +144,12 @@ pub struct BackupRecord {
     pub status: BackupStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The size of the archive the last run wrote, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// The target it was written to, e.g. `server` or `offsite`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl BackupRecord {
@@ -208,6 +236,7 @@ impl Default for StateFile {
             alerts: Vec::new(),
             bans: None,
             updates: None,
+            status: None,
             other: Mapping::new(),
         }
     }

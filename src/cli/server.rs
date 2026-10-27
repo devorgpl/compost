@@ -559,6 +559,7 @@ pub fn backup(
         &manager.manager_key,
         &options,
     )
+    .map(drop)
 }
 
 pub fn restore(

@@ -3,8 +3,9 @@
 //! disk space. The cron tick checks every few minutes; a notification goes out
 //! when something breaks and when it is fine again, never on every check.
 //! Besides, CrowdSec's new bans, and a daily summary of them (see
-//! [`report_bans`]), and once a day, newer images and releases (see
-//! [`report_updates`]).
+//! [`report_bans`]), once a day, newer images and releases (see
+//! [`report_updates`]), and a daily summary of the server (see
+//! [`report_status`]).
 
 use std::time::Duration;
 
@@ -13,7 +14,8 @@ use anyhow::{Context, Result};
 use super::lock::Lock;
 use super::prune;
 use super::state::{self as server_state, Status};
-use super::state_file::{AlertRecord, BackupStatus, StateFile, UpdatesRecord};
+use super::state_file::{AlertRecord, BackupStatus, StateFile, StatusRecord, UpdatesRecord};
+use super::status;
 use super::updates;
 use crate::app::{instance, state as app_state};
 use crate::config::server::{Event, Notifications, ServerConfig};
@@ -199,6 +201,49 @@ pub fn evaluate(ctx: &ServerCtx, server_name: &str, manager_key: &str) -> Result
     if let Err(err) = report_updates(ctx, server_name, notifications) {
         eprintln!("error: updates notifications: {err:#}");
     }
+    if let Err(err) = report_status(ctx, server_name, manager_key, &config, notifications) {
+        eprintln!("error: status notifications: {err:#}");
+    }
+    Ok(())
+}
+
+/// `status`: once a day at `daily_at`, how the server is doing, also when
+/// all is fine, so that silence means something is wrong.
+fn report_status(
+    ctx: &ServerCtx,
+    server_name: &str,
+    manager_key: &str,
+    config: &ServerConfig,
+    notifications: &Notifications,
+) -> Result<()> {
+    if !notifications.wants(Event::Status) {
+        return Ok(());
+    }
+    let record = StateFile::load(ctx)?.status.unwrap_or_default();
+    let Some(due) = daily_due(notifications, record.last_daily.as_deref()) else {
+        return Ok(());
+    };
+    let summary = status::collect(ctx, config, manager_key, record.cpu)?;
+    let updated = StatusRecord {
+        last_daily: Some(due),
+        cpu: summary.host.as_ref().map(|h| h.cpu).or(record.cpu),
+    };
+    {
+        let _lock = lock(ctx)?;
+        let mut state = StateFile::load(ctx)?;
+        state.status = Some(updated);
+        state.save(ctx)?;
+    }
+    let (severity, title, body) = status::message(&summary);
+    send(
+        ctx,
+        notifications,
+        server_name,
+        Event::Status,
+        severity,
+        title,
+        body,
+    );
     Ok(())
 }
 

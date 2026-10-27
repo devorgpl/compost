@@ -206,9 +206,14 @@ impl Disk {
 
 /// `df` of the disk with the server's compost folder.
 pub fn disk(ctx: &ServerCtx) -> Result<Option<Disk>> {
+    disk_of(ctx, &ctx.home)
+}
+
+/// `df` of the disk with `path` on the server.
+pub fn disk_of(ctx: &ServerCtx, path: &str) -> Result<Option<Disk>> {
     let df = ctx
         .connector
-        .exec(&format!("df -Pk {} | tail -n 1", shell_quote(&ctx.home)))?;
+        .exec(&format!("df -Pk {} | tail -n 1", shell_quote(path)))?;
     // Filesystem 1024-blocks Used Available Capacity Mounted-on
     let fields: Vec<&str> = df.split_whitespace().collect();
     let [_, total, used, available, _, mount, ..] = fields[..] else {

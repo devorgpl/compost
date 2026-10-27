@@ -39,8 +39,8 @@ pub struct Notifications {
     /// Percent of free disk space below which `disk` is sent.
     #[serde(default = "default_disk_free_below")]
     pub disk_free_below: u8,
-    /// When `bans_daily` is sent and `updates` checked, `HH:MM` in the
-    /// server's time zone.
+    /// When `bans_daily` and `status` are sent and `updates` checked, `HH:MM`
+    /// in the server's time zone.
     #[serde(default = "default_daily_at")]
     pub daily_at: String,
 }
@@ -81,6 +81,8 @@ pub enum Event {
     BansDaily,
     /// Shared apps' tags have newer images, or compost a newer release.
     Updates,
+    /// A daily summary: state, uptime, disk, CPU, memory, backups and bans.
+    Status,
 }
 
 impl Event {
@@ -92,13 +94,18 @@ impl Event {
             Event::Bans => "bans",
             Event::BansDaily => "bans_daily",
             Event::Updates => "updates",
+            Event::Status => "status",
         }
     }
 
     /// Sent only to recipients that list it: a server facing the internet
-    /// bans scanners many times a day, and moving tags get new images often.
+    /// bans scanners many times a day, moving tags get new images often, and
+    /// `status` comes every day, also when all is fine.
     pub fn opt_in(self) -> bool {
-        matches!(self, Event::Bans | Event::BansDaily | Event::Updates)
+        matches!(
+            self,
+            Event::Bans | Event::BansDaily | Event::Updates | Event::Status
+        )
     }
 }
 
@@ -894,6 +901,14 @@ shared:
         assert!(notifications.send_to[0].wants(Event::Backup));
         assert!(!notifications.send_to[1].wants(Event::Backup));
         assert!(notifications.send_to[1].wants(Event::Disk));
+        // `status` only goes to who lists it, and needs no ingress.
+        let config = parse(&format!(
+            "{chat}notifications: {{send_to: [chat, {{to: chat, events: [status]}}]}}"
+        ))
+        .unwrap();
+        let notifications = config.notifications.unwrap();
+        assert!(!notifications.send_to[0].wants(Event::Status));
+        assert!(notifications.send_to[1].wants(Event::Status));
         assert!(
             error("notifications: {send_to: [chat]}")
                 .contains("not a communication app (known: none")
@@ -927,6 +942,7 @@ shared:
         assert!(!notifications.send_to[0].wants(Event::BansDaily));
         assert!(notifications.send_to[1].wants(Event::Bans));
         assert!(notifications.send_to[1].wants(Event::BansDaily));
+        assert!(!notifications.send_to[0].wants(Event::Status));
         assert_eq!(
             notifications.daily_time(),
             chrono::NaiveTime::from_hms_opt(7, 30, 0)

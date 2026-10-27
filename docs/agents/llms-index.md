@@ -23,7 +23,7 @@ The pages below are the user documentation (the source is `docs/wiki` in the rep
 - [Backup and restore](Backup-and-Restore.md): app and server backups, targets, formats, restoring, copies, moving to a new server
 - [Admin commands](Admin-Commands.md): `server exec`, named commands in compost-server.yaml and compost.yaml (`server cmd`, `app cmd`): typed arguments, secrets through `env`, confirmation, dry run; built-in commands per shared-app type (`caddy-main.unban`, `postgres18.psql`); history
 - [Updates](Updates.md): what changes and how (moving and exact tags, built images, compost releases), `server images` and `--check`, the daily `updates` notification, updating one shared app with `--pull --shared`, pinning, major versions, updating compost
-- [Notifications](Notifications.md): failed scheduled backups, health and disk alerts; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
+- [Notifications](Notifications.md): failed scheduled backups, health and disk alerts, CrowdSec bans, updates, the daily `status` summary; communication apps (webhook, Slack, Mattermost, Discord, Matrix, email), test messages, the contract for your own image
 
 ## Reference
 

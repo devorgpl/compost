@@ -18,6 +18,7 @@ use super::state_file::{BackupRecord, BackupStatus, StateFile};
 use crate::app::backup::{self as app_backup, Which};
 use crate::app::instance::{self, Selector};
 use crate::app::state::initialized_server;
+use crate::backup::Written;
 use crate::backup::profile::{self, Flags};
 use crate::backup::schedule::Schedule;
 use crate::connector::local::Local as LocalConnector;
@@ -409,15 +410,20 @@ pub fn tick(server_home: &str, server_name: &str) -> Result<()> {
             job.describe()
         );
         let result = run(&connector, &ctx.home, server_name, manager_key.trim(), job);
-        let (status, error) = match result {
-            Ok(()) => (BackupStatus::Ok, None),
+        let (status, error, written) = match result {
+            Ok(written) => (BackupStatus::Ok, None, written),
             Err(err) => {
                 eprintln!("error: {err:#}");
-                (BackupStatus::Failed, Some(format!("{err:#}")))
+                (BackupStatus::Failed, Some(format!("{err:#}")), None)
             }
         };
         out!("[{}] {status}", Local::now().format("%Y-%m-%d %H:%M:%S"));
-        updates.push(record_of(job, started, status, error));
+        let mut record = record_of(job, started, status, error);
+        if let Some(written) = written {
+            record.size = written.size;
+            record.target = Some(written.target);
+        }
+        updates.push(record);
     }
     let recorded = record(&ctx, &jobs, updates);
     if let Err(err) = super::alerts::evaluate(&ctx, server_name, manager_key.trim()) {
@@ -438,6 +444,8 @@ fn record_of(
         last_run: time.to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
         status,
         error,
+        size: None,
+        target: None,
     }
 }
 
@@ -447,7 +455,7 @@ fn run(
     server_name: &str,
     manager_key: &str,
     job: &Job,
-) -> Result<()> {
+) -> Result<Option<Written>> {
     let flags = Flags {
         profile: Some(job.profile.clone()),
         ..Flags::default()
@@ -464,7 +472,8 @@ fn run(
                 output: None,
                 force_unlock: false,
             },
-        ),
+        )
+        .map(Some),
         Some((name, prefix)) => app_backup::backup(
             connector,
             server_name,
@@ -480,7 +489,8 @@ fn run(
                 stop: false,
                 force_unlock: false,
             },
-        ),
+        )
+        .map(|written| written.into_iter().next()),
     }
 }
 
