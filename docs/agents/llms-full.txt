@@ -295,6 +295,8 @@ compost server state
 
 Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. `--secret` also stores the file on the server, so later deploys, from any machine, need only `-f compost-server.yaml,compost-server.prod.yaml`; deploy with `--secret` again to replace it ([Secrets](Secrets.md#stored-on-the-server)).
 
+If `compost-server.yaml` should never be deployed on its own, add `partial: true` to it and `partial: false` to `compost-server.prod.yaml`. A deploy that leaves out the overlay then stops with an error and doesn't install the local settings on the real server ([Partial files](Configuration.md#partial-files)).
+
 ## 4. Your app
 
 In the app's repository, next to `docker-compose.yaml`:
@@ -4108,6 +4110,29 @@ services:
 ```
 
 Without `-f`: `server deploy` loads `compost-server.yaml` and `.compost-server.secrets.yaml` (if present); `app deploy` loads `compost.yaml`; `dev` commands load `compost.yaml` and `.compost-local.yaml` (if present). Overlays stored on the server ([Secrets](Secrets.md)) are merged right after the first file. The merge result plus defaults is the **effective configuration**, which is validated, shown by `--dry-run` and stored on the server without secrets.
+
+### Partial files
+
+A `compost.yaml` or `compost-server.yaml` that is incomplete without the overlay of an environment can say so with the top-level `partial` key. Then a command that loads it without that overlay stops before it changes anything. Without the key, it would deploy the defaults:
+
+```yaml
+# compost-server.yaml
+partial: add compost-server.prod.yaml or compost-server.staging.yaml with -f   # or: true
+shared: …
+```
+
+```yaml
+# compost-server.prod.yaml
+partial: false                         # completes compost-server.yaml
+shared: …
+```
+
+```text
+$ compost server deploy --apply
+error: compost-server.yaml is partial and needs the overlay of an environment: add compost-server.prod.yaml or compost-server.staging.yaml with -f (the overlay sets `partial: false`)
+```
+
+`partial` merges like any other value, so the configuration is complete when the last file that sets `partial` sets it to `false`. Files loaded without `-f` (`.compost-server.secrets.yaml`, `.compost-local.yaml`) and stored overlays complete it only if they set `partial: false` too. `partial` is not part of the effective configuration. Every command that loads the files checks it, including the `app` commands that find the instance from them.
 
 ## compost.yaml
 

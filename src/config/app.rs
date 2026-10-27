@@ -376,6 +376,7 @@ impl AppConfig {
         if let Some(last) = last {
             merge::merge(&mut merged, last);
         }
+        merge::take_partial(&mut merged, files)?;
         let mut config: AppConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("app configuration: {e}")))?;
         if let Some(prefix) = prefix {

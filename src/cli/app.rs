@@ -531,7 +531,8 @@ pub(super) fn instance_id(
     prefix: Option<&str>,
     fallback: &str,
 ) -> Result<(String, String)> {
-    let merged = merge::load_merged(files)?;
+    let mut merged = merge::load_merged(files)?;
+    merge::take_partial(&mut merged, files)?;
     let id: InstanceId = serde_yaml_ng::from_value(merged)
         .map_err(|e| config_err(format!("app configuration: {e}")))?;
     let prefix = match prefix {

@@ -62,7 +62,7 @@ compost app state myapp-staging
 
 compost starts every service of the compose files; `app_services` only names link targets and doesn't select services. When the project should also run with plain `docker compose up`, put the services compost replaces with shared apps (database, cache) in `docker-compose.override.yaml`, which compost never reads, or in a Compose profile, with `required: false` on `depends_on` ([With and without compost](references/Applications.md#with-and-without-compost)).
 
-Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stores the overlay on the server, so later deploys from any machine or CI need only `compost.yaml` and the prefix (`compost app deploy --apply --prefix staging`), and a new `--secret` replaces the stored copy as a whole. `-f compost.yaml,.compost-local.yaml` (nothing stored, every deploy needs the file) is for instances on this machine and throwaway copies.
+Deploy an instance's overlay with `--secret`, not as a second `-f` file: it stores the overlay on the server, so later deploys from any machine or CI need only `compost.yaml` and the prefix (`compost app deploy --apply --prefix staging`), and a new `--secret` replaces the stored copy as a whole. `-f compost.yaml,.compost-local.yaml` (nothing stored, every deploy needs the file) is for instances on this machine and throwaway copies. An error that a file "is partial" means it needs an environment's overlay with `-f` ([Partial files](references/Configuration.md#partial-files)). Ask which environment is meant. Don't remove `partial` or set it to `false` to get past the error.
 
 **Local development** ([Local development](references/Local-Development.md)), in the app's folder:
 

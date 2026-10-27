@@ -411,6 +411,7 @@ impl ServerConfig {
             merge::merge(&mut merged, stored);
         }
         merge::merge_files(&mut merged, &files[split..])?;
+        merge::take_partial(&mut merged, files)?;
         let config: ServerConfig = serde_yaml_ng::from_value(merged)
             .map_err(|e| config_err(format!("server configuration: {e}")))?;
         Ok((config.complete()?, skipped))
@@ -831,6 +832,32 @@ mod tests {
 
         let (config, _) = ServerConfig::load_with(&[base, local], Some(stored)).unwrap();
         assert_eq!(password(&config), Value::from("local"));
+    }
+
+    #[test]
+    fn partial_file_needs_an_environment_overlay() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        let base = write(
+            "compost-server.yaml",
+            "partial: true\nshared: {database: [{name: pg, type: postgres, version: 16}]}",
+        );
+        let secrets = write(
+            ".compost-server.secrets.yaml",
+            "shared: {database: [{name: pg, configuration: {root_password: x}}]}",
+        );
+        let prod = write("compost-server.prod.yaml", "partial: false");
+
+        let error = ServerConfig::load(&[base.clone(), secrets.clone()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("compost-server.yaml is partial"), "{error}");
+        let config = ServerConfig::load(&[base, prod, secrets]).unwrap();
+        assert_eq!(config.shared_apps().count(), 1);
     }
 
     #[test]

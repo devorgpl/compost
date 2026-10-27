@@ -28,6 +28,35 @@ pub fn merge_files(merged: &mut Value, files: &[impl AsRef<Path>]) -> Result<()>
     Ok(())
 }
 
+/// Remove the top-level `partial` key from the merged files, and fail when it
+/// is still set: a file with `partial: true` (or a hint) needs a later file,
+/// the overlay of an environment, with `partial: false`.
+pub fn take_partial(merged: &mut Value, files: &[impl AsRef<Path>]) -> Result<()> {
+    let Some(partial) = merged
+        .as_mapping_mut()
+        .and_then(|map| map.remove("partial"))
+    else {
+        return Ok(());
+    };
+    let hint = match partial {
+        Value::Bool(false) | Value::Null => return Ok(()),
+        Value::Bool(true) => format!("pass it with -f after {}", first(files)),
+        Value::String(hint) => hint,
+        _ => return Err(config_err("partial: true, false or a hint (text)")),
+    };
+    Err(config_err(format!(
+        "{} is partial and needs the overlay of an environment: {hint} (the overlay sets `partial: false`)",
+        first(files)
+    )))
+}
+
+fn first(files: &[impl AsRef<Path>]) -> String {
+    files.first().map_or_else(
+        || "the configuration".to_string(),
+        |f| f.as_ref().display().to_string(),
+    )
+}
+
 /// Merge `overlay` into `base`:
 /// 1. maps merge key by key, recursively;
 /// 2. lists whose items all have a `name` key merge by `name` (new items are appended);
@@ -106,5 +135,25 @@ mod tests {
     #[test]
     fn empty_list_replaces_named_list() {
         assert_eq!(merged("db: [{name: pg}]", "db: []"), yaml("db: []"));
+    }
+
+    #[test]
+    fn partial_needs_an_overlay_that_completes_it() {
+        let files = ["compost-server.yaml"];
+        let mut value = yaml("{partial: true, shared: {}}");
+        let error = take_partial(&mut value, &files).unwrap_err().to_string();
+        assert!(error.contains("compost-server.yaml is partial"), "{error}");
+        assert!(error.contains("-f after compost-server.yaml"), "{error}");
+
+        let mut value = yaml("{partial: 'add compost-server.prod.yaml'}");
+        let error = take_partial(&mut value, &files).unwrap_err().to_string();
+        assert!(error.contains(": add compost-server.prod.yaml"), "{error}");
+
+        let mut value = merged("{partial: true, shared: {}}", "partial: false");
+        take_partial(&mut value, &files).unwrap();
+        assert_eq!(value, yaml("shared: {}"));
+
+        let mut value = yaml("partial: 1");
+        assert!(take_partial(&mut value, &files).is_err());
     }
 }

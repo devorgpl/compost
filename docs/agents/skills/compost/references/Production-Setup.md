@@ -53,6 +53,8 @@ compost server state
 
 Generated passwords are kept on the server and reused. The Postgres `root_password` and Keycloak `admin_password` can't change after the first deploy. `--secret` also stores the file on the server, so later deploys, from any machine, need only `-f compost-server.yaml,compost-server.prod.yaml`; deploy with `--secret` again to replace it ([Secrets](Secrets.md#stored-on-the-server)).
 
+If `compost-server.yaml` should never be deployed on its own, add `partial: true` to it and `partial: false` to `compost-server.prod.yaml`. A deploy that leaves out the overlay then stops with an error and doesn't install the local settings on the real server ([Partial files](Configuration.md#partial-files)).
+
 ## 4. Your app
 
 In the app's repository, next to `docker-compose.yaml`:
